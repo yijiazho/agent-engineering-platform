@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/resources/v1/evaluation.schema.json",
+  "title": "Evaluation Resource",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "./resource-definitions.schema.json#/$defs/apiVersion" },
+    "kind": { "const": "Evaluation" },
+    "metadata": { "$ref": "./resource-definitions.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["schema", "patch", "build", "test", "artifact-exists", "acceptance"] },
+        "inputSchema": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
+        "successCriteria": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "toolRef": { "$ref": "./resource-definitions.schema.json#/$defs/toolRef" },
+        "policyRefs": { "$ref": "./resource-definitions.schema.json#/$defs/policyRefList" }
+      }
+    }
+  }
+}

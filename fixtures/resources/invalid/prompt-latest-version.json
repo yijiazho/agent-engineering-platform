@@ -1,0 +1,11 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Prompt",
+  "metadata": {
+    "name": "issue-analysis",
+    "version": "latest"
+  },
+  "spec": {
+    "system": "Analyze the issue."
+  }
+}

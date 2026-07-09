@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/resources/v1/tool.schema.json",
+  "title": "Tool Resource",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "./resource-definitions.schema.json#/$defs/apiVersion" },
+    "kind": { "const": "Tool" },
+    "metadata": { "$ref": "./resource-definitions.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "capabilities", "inputSchema", "outputSchema"],
+      "not": {
+        "required": ["provider"]
+      },
+      "properties": {
+        "category": { "type": "string", "enum": ["data-source", "execution", "external-service"] },
+        "capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "inputSchema": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
+        "outputSchema": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
+        "permissions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image"],
+          "properties": {
+            "image": { "type": "string", "minLength": 1 },
+            "command": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "timeoutMs": { "$ref": "./resource-definitions.schema.json#/$defs/durationMs" },
+        "retryPolicy": { "$ref": "./resource-definitions.schema.json#/$defs/retryPolicy" }
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Task",
+  "metadata": {
+    "name": "analyze-issue",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "objective": "Classify a GitHub issue.",
+    "agentRef": {
+      "kind": "Agent",
+      "name": "issue-analyzer",
+      "version": "latest"
+    },
+    "outputs": {
+      "type": "object"
+    }
+  }
+}

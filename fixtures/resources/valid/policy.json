@@ -1,0 +1,19 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Policy",
+  "metadata": {
+    "name": "default-publication",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "type": "publication",
+    "rules": [
+      {
+        "effect": "allow",
+        "conditions": {
+          "requiredEvaluationStatus": "passed"
+        }
+      }
+    ]
+  }
+}

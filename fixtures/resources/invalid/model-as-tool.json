@@ -1,0 +1,18 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Model",
+  "metadata": {
+    "name": "default-reasoning",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "category": "execution",
+    "capabilities": ["model.invoke"],
+    "inputSchema": {
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  }
+}

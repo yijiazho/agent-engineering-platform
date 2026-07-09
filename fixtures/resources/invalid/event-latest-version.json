@@ -1,0 +1,15 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Event",
+  "metadata": {
+    "name": "github-issue-created",
+    "version": "latest"
+  },
+  "spec": {
+    "source": "github",
+    "type": "github.issue.created",
+    "schema": {
+      "type": "object"
+    }
+  }
+}

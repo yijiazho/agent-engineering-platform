@@ -1,0 +1,19 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Tool",
+  "metadata": {
+    "name": "openai-tool",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "provider": "openai",
+    "category": "external-service",
+    "capabilities": ["model.invoke"],
+    "inputSchema": {
+      "type": "object"
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  }
+}

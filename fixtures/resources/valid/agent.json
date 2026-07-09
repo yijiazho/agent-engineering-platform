@@ -1,0 +1,31 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "issue-analyzer",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "role": "Issue Analyzer",
+    "promptRef": {
+      "kind": "Prompt",
+      "name": "issue-analysis",
+      "version": "1.0.0"
+    },
+    "modelRef": {
+      "kind": "Model",
+      "name": "default-reasoning",
+      "version": "1.0.0"
+    },
+    "toolRefs": [
+      {
+        "kind": "Tool",
+        "name": "github-read-issue",
+        "version": "1.0.0"
+      }
+    ],
+    "outputSchema": {
+      "type": "object"
+    }
+  }
+}

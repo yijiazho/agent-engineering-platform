@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/resources/v1/model.schema.json",
+  "title": "Model Resource",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "./resource-definitions.schema.json#/$defs/apiVersion" },
+    "kind": { "const": "Model" },
+    "metadata": { "$ref": "./resource-definitions.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "model"],
+      "properties": {
+        "provider": { "type": "string", "enum": ["openai", "anthropic", "google", "local"] },
+        "model": { "type": "string", "minLength": 1 },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "number", "integer", "boolean", "null"]
+          }
+        },
+        "tokenLimit": { "type": "integer", "minimum": 1 },
+        "timeoutMs": { "$ref": "./resource-definitions.schema.json#/$defs/durationMs" },
+        "retryPolicy": { "$ref": "./resource-definitions.schema.json#/$defs/retryPolicy" }
+      }
+    }
+  }
+}
