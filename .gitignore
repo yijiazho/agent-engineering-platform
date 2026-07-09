@@ -1,0 +1,92 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor and IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node and frontend tooling
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.pnpm-store/
+.next/
+.nuxt/
+coverage/
+
+# Java and JVM
+target/
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+build/
+
+# Go
+bin/
+*.test
+coverage.out
+
+# Rust
+target/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+
+# Containers and local runtime state
+.docker/
+docker-compose.override.yml
+
+# Kubernetes and local cluster output
+.kube/
+kubeconfig*
+
+# Generated artifacts and temporary output
+tmp/
+temp/
+.tmp/
+artifacts/
+generated/
+
+# AEP local runtime state
+.aep/
+.ai/runtime/
+.ai/artifacts/
