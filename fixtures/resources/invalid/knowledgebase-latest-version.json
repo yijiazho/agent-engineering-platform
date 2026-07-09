@@ -1,0 +1,19 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "KnowledgeBase",
+  "metadata": {
+    "name": "repository-docs",
+    "version": "latest"
+  },
+  "spec": {
+    "sources": [
+      {
+        "type": "docs",
+        "path": "docs/"
+      }
+    ],
+    "indexing": {
+      "strategy": "documentation"
+    }
+  }
+}

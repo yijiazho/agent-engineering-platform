@@ -1,0 +1,43 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "issue-to-pr",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "triggers": [
+      {
+        "eventRef": {
+          "kind": "Event",
+          "name": "github-issue-created",
+          "version": "1.0.0"
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "taskRef": {
+          "kind": "Task",
+          "name": "analyze-issue",
+          "version": "1.0.0"
+        }
+      },
+      {
+        "taskRef": {
+          "kind": "Task",
+          "name": "generate-patch",
+          "version": "1.0.0"
+        },
+        "dependsOn": [
+          {
+            "kind": "Task",
+            "name": "analyze-issue",
+            "version": "1.0.0"
+          }
+        ]
+      }
+    ],
+    "parallelism": 1
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/resources/v1/task.schema.json",
+  "title": "Task Resource",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": { "$ref": "./resource-definitions.schema.json#/$defs/apiVersion" },
+    "kind": { "const": "Task" },
+    "metadata": { "$ref": "./resource-definitions.schema.json#/$defs/metadata" },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["objective", "outputs"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1 },
+        "agentRef": { "$ref": "./resource-definitions.schema.json#/$defs/agentRef" },
+        "inputs": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
+        "outputs": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
+        "requiredContext": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "knowledgeBases": { "$ref": "./resource-definitions.schema.json#/$defs/knowledgeBaseRefList" },
+        "evaluations": { "$ref": "./resource-definitions.schema.json#/$defs/evaluationRefList" },
+        "policies": { "$ref": "./resource-definitions.schema.json#/$defs/policyRefList" }
+      }
+    }
+  }
+}

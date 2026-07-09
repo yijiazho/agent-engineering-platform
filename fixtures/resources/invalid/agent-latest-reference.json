@@ -1,0 +1,20 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "issue-analyzer",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "promptRef": {
+      "kind": "Prompt",
+      "name": "issue-analysis",
+      "version": "latest"
+    },
+    "modelRef": {
+      "kind": "Model",
+      "name": "default-reasoning",
+      "version": "1.0.0"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # AEP-001: Define Resource Schemas
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 

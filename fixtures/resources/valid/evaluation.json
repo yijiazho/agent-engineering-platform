@@ -1,0 +1,16 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Evaluation",
+  "metadata": {
+    "name": "issue-analysis-schema",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "type": "schema",
+    "inputSchema": {
+      "type": "object",
+      "required": ["summary"]
+    },
+    "successCriteria": ["output validates against schema"]
+  }
+}

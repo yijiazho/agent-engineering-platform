@@ -1,0 +1,31 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Task",
+  "metadata": {
+    "name": "analyze-issue",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "objective": "Classify a GitHub issue and extract acceptance criteria.",
+    "agentRef": {
+      "kind": "Agent",
+      "name": "issue-analyzer",
+      "version": "1.0.0"
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "outputs": {
+      "type": "object",
+      "required": ["summary"]
+    },
+    "requiredContext": ["issue", "repository-inventory"],
+    "evaluations": [
+      {
+        "kind": "Evaluation",
+        "name": "issue-analysis-schema",
+        "version": "1.0.0"
+      }
+    ]
+  }
+}

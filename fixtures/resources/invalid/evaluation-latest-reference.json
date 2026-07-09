@@ -1,0 +1,16 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Evaluation",
+  "metadata": {
+    "name": "docker-build",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "type": "build",
+    "toolRef": {
+      "kind": "Tool",
+      "name": "docker-run-validation",
+      "version": "latest"
+    }
+  }
+}

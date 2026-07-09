@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/resources/v1/resource-definitions.schema.json",
+  "title": "AEP resource schema definitions",
+  "$defs": {
+    "apiVersion": {
+      "type": "string",
+      "const": "aep.dev/v1alpha1"
+    },
+    "resourceKind": {
+      "type": "string",
+      "enum": [
+        "Workspace",
+        "Workflow",
+        "Task",
+        "Agent",
+        "Prompt",
+        "Model",
+        "Tool",
+        "KnowledgeBase",
+        "Policy",
+        "Evaluation",
+        "Event"
+      ]
+    },
+    "resourceName": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+      "minLength": 1,
+      "maxLength": 63
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^v?(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "not": {
+        "const": "latest"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/resourceName"
+        },
+        "version": {
+          "$ref": "#/$defs/semver"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "name",
+        "version"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/resourceKind"
+        },
+        "name": {
+          "$ref": "#/$defs/resourceName"
+        },
+        "version": {
+          "$ref": "#/$defs/semver"
+        }
+      }
+    },
+    "resourceRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resourceRef"
+      },
+      "uniqueItems": true
+    },
+    "workspaceRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Workspace"
+            }
+          }
+        }
+      ]
+    },
+    "workflowRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Workflow"
+            }
+          }
+        }
+      ]
+    },
+    "taskRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Task"
+            }
+          }
+        }
+      ]
+    },
+    "agentRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Agent"
+            }
+          }
+        }
+      ]
+    },
+    "promptRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Prompt"
+            }
+          }
+        }
+      ]
+    },
+    "modelRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Model"
+            }
+          }
+        }
+      ]
+    },
+    "toolRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Tool"
+            }
+          }
+        }
+      ]
+    },
+    "knowledgeBaseRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "KnowledgeBase"
+            }
+          }
+        }
+      ]
+    },
+    "policyRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Policy"
+            }
+          }
+        }
+      ]
+    },
+    "evaluationRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Evaluation"
+            }
+          }
+        }
+      ]
+    },
+    "eventRef": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/resourceRef"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "Event"
+            }
+          }
+        }
+      ]
+    },
+    "taskRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/taskRef"
+      },
+      "uniqueItems": true
+    },
+    "toolRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/toolRef"
+      },
+      "uniqueItems": true
+    },
+    "knowledgeBaseRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/knowledgeBaseRef"
+      },
+      "uniqueItems": true
+    },
+    "policyRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/policyRef"
+      },
+      "uniqueItems": true
+    },
+    "evaluationRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evaluationRef"
+      },
+      "uniqueItems": true
+    },
+    "jsonSchema": {
+      "type": "object",
+      "minProperties": 1
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "retryPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxAttempts"
+      ],
+      "properties": {
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "backoffMs": {
+          "$ref": "#/$defs/durationMs"
+        }
+      }
+    }
+  }
+}
