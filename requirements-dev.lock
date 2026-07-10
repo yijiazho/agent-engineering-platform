@@ -1,0 +1,18 @@
+# Generated from .venv with:
+# .\.venv\Scripts\python.exe -m pip list --format=freeze
+agent-engineering-platform==0.1.0
+attrs==26.1.0
+colorama==0.4.6
+iniconfig==2.3.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+packaging==26.2
+pip==23.2.1
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==9.1.1
+PyYAML==6.0.3
+referencing==0.37.0
+ripgrep==15.1.0
+rpds-py==2026.6.3
+typing_extensions==4.16.0

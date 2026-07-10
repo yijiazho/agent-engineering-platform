@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-engineering-platform"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "jsonschema>=4.23",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+]
+yaml = [
+  "PyYAML>=6.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

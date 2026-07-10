@@ -1,6 +1,6 @@
 # AEP-003: Build Resource Loader
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 

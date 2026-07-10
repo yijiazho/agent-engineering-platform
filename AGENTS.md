@@ -10,17 +10,29 @@ This repository is currently documentation-first. Core product and architecture 
 * `docs/tasks/` contains one implementation task per file.
 * `docs/execution-plan.md` tracks topological task order and status.
 
-There is no application source tree yet. When implementation begins, keep source code, tests, and deployment assets in clearly named top-level directories such as `src/`, `tests/`, and `deploy/`.
+Implementation code lives under `src/`, with automated tests under `tests/`. Keep future source code, tests, and deployment assets in clearly named top-level directories such as `src/`, `tests/`, and `deploy/`.
+
+## Documentation Synchronization
+
+Every code change must include matching documentation updates when behavior, setup, commands, configuration, or public APIs change. Review `README.md` first, then update related task files, architecture notes, ADRs, schemas, fixtures, or execution-plan status as appropriate.
+
+Do not leave documentation describing stale project structure, commands, or task status. If no documentation update is needed for a code change, note that decision in the final handoff or pull request description.
 
 ## Build, Test, and Development Commands
 
-No build or test toolchain is defined yet. For now, use documentation and repository checks:
+Use the local Python test suite and repository checks:
 
+* `python -m venv .venv` creates the repo-local virtual environment.
+* `.\.venv\Scripts\Activate.ps1` activates it on Windows PowerShell.
+* `python -m pip install -e ".[dev,yaml]"` installs local development dependencies.
+* `python -m pytest` runs the current automated tests.
 * `rg --files docs` lists all project documents.
 * `git status --short` reviews changed and untracked files.
 * `git log --oneline -5` checks recent commit style.
 
-Add concrete build and test commands here when the first implementation stack is introduced.
+Use the virtual environment for local development. Docker and Kubernetes remain the runtime and Tool execution isolation boundary; they do not replace a local Python venv for contributor workflows.
+
+Add concrete build and test commands here when additional implementation stacks are introduced.
 
 ## Coding Style & Naming Conventions
 

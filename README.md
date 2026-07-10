@@ -39,7 +39,31 @@ docs/
   adr/
   architecture/
   tasks/
+schemas/
+  resources/
+  runtime/
+fixtures/
+  resources/
+  runtime/
+src/
+  aep/
+tests/
 ```
+
+## Local Development
+
+Use a repository-local virtual environment for Python development. This isolates local test and tooling dependencies from the host interpreter and does not conflict with Docker or Kubernetes; containers remain the planned runtime and Tool execution isolation boundary.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev,yaml]"
+python -m pytest
+```
+
+`PyYAML` is optional for full YAML parsing in local `.ai/` resource files. JSON content in `.yaml` files works without that extra dependency.
+
+Installed development package versions are captured in [requirements-dev.lock](requirements-dev.lock). Refresh it after dependency changes with `.\.venv\Scripts\python.exe -m pip list --format=freeze`.
 
 ## Key Documents
 
@@ -52,11 +76,11 @@ docs/
 
 ## Current Status
 
-This repository is currently documentation-first.
+This repository is currently transitioning from documentation-first contracts into Python implementation.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
-All tasks currently start as `Not Started` in [docs/execution-plan.md](docs/execution-plan.md).
+Task status is tracked in [docs/execution-plan.md](docs/execution-plan.md).
 
 ## MVP Scope
 
