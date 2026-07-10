@@ -1,0 +1,36 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "TaskExecution",
+  "id": "taskexecution-000000000002",
+  "traceId": "trace-issue-to-pr-0002",
+  "createdAt": "2026-07-09T11:00:00Z",
+  "updatedAt": "2026-07-09T11:01:00Z",
+  "provenance": {
+    "actor": "task-executor",
+    "workflowExecutionId": "workflowexecution-000000000002",
+    "parentId": "workflowexecution-000000000002",
+    "repositoryRevision": "def5678",
+    "resourceRefs": [
+      {
+        "kind": "Task",
+        "name": "generate-patch",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "workflowExecutionId": "workflowexecution-000000000002",
+  "taskRef": {
+    "kind": "Task",
+    "name": "generate-patch",
+    "version": "1.0.0"
+  },
+  "attempt": 1,
+  "status": "FAILED",
+  "startedAt": "2026-07-09T11:00:00Z",
+  "completedAt": "2026-07-09T11:01:00Z",
+  "failure": {
+    "class": "CONFIGURATION",
+    "message": "Required context package was not available.",
+    "retryable": false
+  }
+}

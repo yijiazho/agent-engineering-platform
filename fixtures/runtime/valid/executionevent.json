@@ -1,0 +1,29 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ExecutionEvent",
+  "id": "executionevent-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:00Z",
+  "updatedAt": "2026-07-09T10:00:00Z",
+  "provenance": {
+    "actor": "workflow-controller",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Workflow",
+        "name": "issue-to-pr",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "eventType": "WorkflowExecutionStarted",
+  "subject": {
+    "kind": "WorkflowExecution",
+    "id": "workflowexecution-000000000001"
+  },
+  "sequence": 1,
+  "emittedAt": "2026-07-09T10:00:00Z",
+  "payload": {
+    "status": "RUNNING"
+  }
+}

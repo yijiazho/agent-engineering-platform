@@ -1,0 +1,38 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ModelInvocation",
+  "id": "modelinvocation-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:20Z",
+  "updatedAt": "2026-07-09T10:01:00Z",
+  "provenance": {
+    "actor": "model-adapter",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Model",
+        "name": "gpt-4o-mini",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "agentInvocationId": "agentinvocation-000000000001",
+  "modelRef": {
+    "kind": "Model",
+    "name": "gpt-4o-mini",
+    "version": "1.0.0"
+  },
+  "status": "SUCCEEDED",
+  "inputAddress": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "outputAddress": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "tokenUsage": {
+    "input": 1200,
+    "output": 220
+  },
+  "latencyMs": 40000,
+  "cost": 0.03,
+  "schemaValidation": "PASSED",
+  "startedAt": "2026-07-09T10:00:20Z",
+  "completedAt": "2026-07-09T10:01:00Z"
+}

@@ -1,0 +1,57 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ContextPackage",
+  "id": "contextpackage-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:10Z",
+  "updatedAt": "2026-07-09T10:00:10Z",
+  "provenance": {
+    "actor": "context-builder",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "repositoryRevision": "abc1234",
+    "resourceRefs": [
+      {
+        "kind": "Task",
+        "name": "analyze-issue",
+        "version": "1.0.0"
+      },
+      {
+        "kind": "KnowledgeBase",
+        "name": "repository-docs",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "taskRef": {
+    "kind": "Task",
+    "name": "analyze-issue",
+    "version": "1.0.0"
+  },
+  "repositoryRevision": "abc1234",
+  "elements": [
+    {
+      "type": "event",
+      "content": {
+        "issueNumber": 42,
+        "title": "Add runtime schemas"
+      },
+      "provenance": {
+        "actor": "context-builder",
+        "resourceRefs": [
+          {
+            "kind": "Event",
+            "name": "github-issue-created",
+            "version": "1.0.0"
+          }
+        ]
+      },
+      "tokenCount": 48,
+      "truncated": false
+    }
+  ],
+  "tokenBudget": 32000,
+  "tokenCount": 48,
+  "truncation": "NONE"
+}

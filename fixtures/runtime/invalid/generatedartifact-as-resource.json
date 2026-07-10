@@ -1,0 +1,11 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "GeneratedArtifact",
+  "metadata": {
+    "name": "implementation-plan",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "artifactType": "IMPLEMENTATION_PLAN"
+  }
+}

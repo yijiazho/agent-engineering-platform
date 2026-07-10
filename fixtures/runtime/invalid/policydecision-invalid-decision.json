@@ -1,0 +1,32 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "PolicyDecision",
+  "id": "policydecision-000000000003",
+  "traceId": "trace-invalid-decision",
+  "createdAt": "2026-07-09T12:05:00Z",
+  "updatedAt": "2026-07-09T12:05:00Z",
+  "provenance": {
+    "actor": "policy-engine",
+    "resourceRefs": [
+      {
+        "kind": "Policy",
+        "name": "publication-policy",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "gate": "PUBLICATION",
+  "policyRefs": [
+    {
+      "kind": "Policy",
+      "name": "publication-policy",
+      "version": "1.0.0"
+    }
+  ],
+  "action": "github.create_pr",
+  "decision": "APPROVE",
+  "reason": "Invalid decision enum.",
+  "approvalRequired": false,
+  "evaluatedAt": "2026-07-09T12:05:00Z"
+}

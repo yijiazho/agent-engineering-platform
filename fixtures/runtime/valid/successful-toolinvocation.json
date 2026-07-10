@@ -1,0 +1,41 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ToolInvocation",
+  "id": "toolinvocation-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:02:00Z",
+  "updatedAt": "2026-07-09T10:02:10Z",
+  "provenance": {
+    "actor": "tool-runtime",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Tool",
+        "name": "github",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "agentInvocationId": "agentinvocation-000000000001",
+  "toolRef": {
+    "kind": "Tool",
+    "name": "github",
+    "version": "1.0.0"
+  },
+  "status": "SUCCEEDED",
+  "input": {
+    "operation": "read_issue",
+    "number": 42
+  },
+  "output": {
+    "title": "Add runtime schemas"
+  },
+  "policyDecisionId": "policydecision-000000000001",
+  "metrics": {
+    "durationMs": 10000
+  },
+  "startedAt": "2026-07-09T10:02:00Z",
+  "completedAt": "2026-07-09T10:02:10Z"
+}

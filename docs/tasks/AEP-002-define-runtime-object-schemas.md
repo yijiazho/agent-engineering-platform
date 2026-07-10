@@ -1,6 +1,6 @@
 # AEP-002: Define Runtime Object Schemas
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 

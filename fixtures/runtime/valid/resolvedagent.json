@@ -1,0 +1,67 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ResolvedAgent",
+  "id": "resolvedagent-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:12Z",
+  "updatedAt": "2026-07-09T10:00:12Z",
+  "provenance": {
+    "actor": "agent-resolver",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Agent",
+        "name": "issue-analyzer",
+        "version": "1.0.0"
+      },
+      {
+        "kind": "Prompt",
+        "name": "issue-analysis",
+        "version": "1.0.0"
+      },
+      {
+        "kind": "Model",
+        "name": "gpt-4o-mini",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "agentRef": {
+    "kind": "Agent",
+    "name": "issue-analyzer",
+    "version": "1.0.0"
+  },
+  "promptRef": {
+    "kind": "Prompt",
+    "name": "issue-analysis",
+    "version": "1.0.0"
+  },
+  "modelRef": {
+    "kind": "Model",
+    "name": "gpt-4o-mini",
+    "version": "1.0.0"
+  },
+  "toolRefs": [
+    {
+      "kind": "Tool",
+      "name": "github",
+      "version": "1.0.0"
+    }
+  ],
+  "policyRefs": [
+    {
+      "kind": "Policy",
+      "name": "publication-policy",
+      "version": "1.0.0"
+    }
+  ],
+  "modelParameters": {
+    "temperature": 0.2
+  },
+  "outputSchema": {
+    "type": "object"
+  },
+  "resolvedAt": "2026-07-09T10:00:12Z"
+}

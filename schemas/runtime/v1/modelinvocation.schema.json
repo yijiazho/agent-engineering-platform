@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/runtime/v1/modelinvocation.schema.json",
+  "title": "ModelInvocation Runtime Object",
+  "$ref": "./runtime-definitions.schema.json#/$defs/ModelInvocation"
+}

@@ -26,7 +26,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Order | Task | Status |
 | -----: | ---- | ------ |
 | 1 | [AEP-001: Define Resource Schemas](tasks/AEP-001-define-resource-schemas.md) | Completed |
-| 2 | [AEP-002: Define Runtime Object Schemas](tasks/AEP-002-define-runtime-object-schemas.md) | Not Started |
+| 2 | [AEP-002: Define Runtime Object Schemas](tasks/AEP-002-define-runtime-object-schemas.md) | Completed |
 | 3 | [AEP-015: Build MVP Repository Scanner](tasks/AEP-015-build-mvp-repository-scanner.md) | Not Started |
 | 4 | [AEP-003: Build Resource Loader](tasks/AEP-003-build-resource-loader.md) | Not Started |
 | 5 | [AEP-004: Build Runtime Object Store Interface](tasks/AEP-004-build-runtime-object-store-interface.md) | Not Started |
@@ -70,7 +70,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Task | Depends On | Status |
 | ---- | ---------- | ------ |
 | AEP-001 | None | Completed |
-| AEP-002 | None | Not Started |
+| AEP-002 | None | Completed |
 | AEP-003 | AEP-001 | Not Started |
 | AEP-004 | AEP-002 | Not Started |
 | AEP-005 | AEP-001 | Not Started |
