@@ -1,0 +1,26 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Approval",
+  "id": "approval-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:04:00Z",
+  "updatedAt": "2026-07-09T10:04:00Z",
+  "provenance": {
+    "actor": "policy-engine",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Policy",
+        "name": "publication-policy",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "policyDecisionId": "policydecision-000000000002",
+  "requester": "workflow-controller",
+  "status": "PENDING",
+  "reason": "Publication requires human approval.",
+  "requestedAt": "2026-07-09T10:04:00Z",
+  "expiresAt": "2026-07-10T10:04:00Z"
+}

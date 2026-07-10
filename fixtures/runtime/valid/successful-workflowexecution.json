@@ -1,0 +1,42 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "WorkflowExecution",
+  "id": "workflowexecution-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:00Z",
+  "updatedAt": "2026-07-09T10:05:00Z",
+  "provenance": {
+    "actor": "workflow-controller",
+    "repositoryRevision": "abc1234",
+    "resourceRefs": [
+      {
+        "kind": "Workflow",
+        "name": "issue-to-pr",
+        "version": "1.0.0"
+      },
+      {
+        "kind": "Event",
+        "name": "github-issue-created",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "workflowRef": {
+    "kind": "Workflow",
+    "name": "issue-to-pr",
+    "version": "1.0.0"
+  },
+  "eventRef": {
+    "kind": "Event",
+    "name": "github-issue-created",
+    "version": "1.0.0"
+  },
+  "repositoryRevision": "abc1234",
+  "knowledgeGraphVersion": "kg-20260709-0001",
+  "status": "SUCCEEDED",
+  "startedAt": "2026-07-09T10:00:00Z",
+  "completedAt": "2026-07-09T10:05:00Z",
+  "taskExecutionIds": [
+    "taskexecution-000000000001"
+  ]
+}

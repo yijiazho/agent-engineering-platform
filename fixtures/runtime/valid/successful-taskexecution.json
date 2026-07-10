@@ -1,0 +1,45 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "TaskExecution",
+  "id": "taskexecution-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:05Z",
+  "updatedAt": "2026-07-09T10:04:50Z",
+  "provenance": {
+    "actor": "task-executor",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "parentId": "workflowexecution-000000000001",
+    "repositoryRevision": "abc1234",
+    "resourceRefs": [
+      {
+        "kind": "Task",
+        "name": "analyze-issue",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "workflowExecutionId": "workflowexecution-000000000001",
+  "taskRef": {
+    "kind": "Task",
+    "name": "analyze-issue",
+    "version": "1.0.0"
+  },
+  "attempt": 1,
+  "status": "SUCCEEDED",
+  "contextPackageId": "contextpackage-000000000001",
+  "resolvedAgentId": "resolvedagent-000000000001",
+  "agentInvocationIds": [
+    "agentinvocation-000000000001"
+  ],
+  "generatedArtifactIds": [
+    "generatedartifact-000000000001"
+  ],
+  "evaluationResultIds": [
+    "evaluationresult-000000000001"
+  ],
+  "policyDecisionIds": [
+    "policydecision-000000000001"
+  ],
+  "startedAt": "2026-07-09T10:00:05Z",
+  "completedAt": "2026-07-09T10:04:50Z"
+}

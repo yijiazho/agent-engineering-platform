@@ -1,0 +1,34 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "PolicyDecision",
+  "id": "policydecision-000000000002",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:04:00Z",
+  "updatedAt": "2026-07-09T10:04:00Z",
+  "provenance": {
+    "actor": "policy-engine",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Policy",
+        "name": "publication-policy",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "gate": "PUBLICATION",
+  "policyRefs": [
+    {
+      "kind": "Policy",
+      "name": "publication-policy",
+      "version": "1.0.0"
+    }
+  ],
+  "action": "github.create_pr",
+  "decision": "REQUIRE_APPROVAL",
+  "reason": "Opening a pull request requires approval.",
+  "approvalRequired": true,
+  "evaluatedAt": "2026-07-09T10:04:00Z"
+}

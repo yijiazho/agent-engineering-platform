@@ -1,0 +1,31 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "WorkflowExecution",
+  "id": "workflowexecution-000000000003",
+  "traceId": "trace-invalid-latest",
+  "createdAt": "2026-07-09T12:00:00Z",
+  "updatedAt": "2026-07-09T12:00:00Z",
+  "provenance": {
+    "actor": "workflow-controller",
+    "resourceRefs": [
+      {
+        "kind": "Workflow",
+        "name": "issue-to-pr",
+        "version": "latest"
+      }
+    ]
+  },
+  "workflowRef": {
+    "kind": "Workflow",
+    "name": "issue-to-pr",
+    "version": "latest"
+  },
+  "eventRef": {
+    "kind": "Event",
+    "name": "github-issue-created",
+    "version": "1.0.0"
+  },
+  "repositoryRevision": "abc1234",
+  "status": "PENDING",
+  "taskExecutionIds": []
+}

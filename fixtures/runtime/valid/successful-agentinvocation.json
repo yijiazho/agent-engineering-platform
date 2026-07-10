@@ -1,0 +1,38 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "AgentInvocation",
+  "id": "agentinvocation-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:00:15Z",
+  "updatedAt": "2026-07-09T10:01:05Z",
+  "provenance": {
+    "actor": "agent-invoker",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Agent",
+        "name": "issue-analyzer",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "resolvedAgentId": "resolvedagent-000000000001",
+  "contextPackageId": "contextpackage-000000000001",
+  "status": "SUCCEEDED",
+  "modelInvocationIds": [
+    "modelinvocation-000000000001"
+  ],
+  "output": {
+    "summary": "Runtime schemas are required."
+  },
+  "outputSchemaValidation": "PASSED",
+  "tokenUsage": {
+    "input": 1200,
+    "output": 220
+  },
+  "cost": 0.03,
+  "startedAt": "2026-07-09T10:00:15Z",
+  "completedAt": "2026-07-09T10:01:05Z"
+}

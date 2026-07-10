@@ -1,0 +1,33 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "GeneratedArtifact",
+  "id": "generatedartifact-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:03:30Z",
+  "updatedAt": "2026-07-09T10:03:30Z",
+  "provenance": {
+    "actor": "artifact-store",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "repositoryRevision": "abc1234",
+    "resourceRefs": [
+      {
+        "kind": "Task",
+        "name": "analyze-issue",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "artifactType": "IMPLEMENTATION_PLAN",
+  "contentAddress": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "repositoryRevision": "abc1234",
+  "mediaType": "text/markdown",
+  "evaluationResultIds": [
+    "evaluationresult-000000000001"
+  ],
+  "policyDecisionIds": [
+    "policydecision-000000000001"
+  ],
+  "publishedAt": "2026-07-09T10:03:30Z"
+}

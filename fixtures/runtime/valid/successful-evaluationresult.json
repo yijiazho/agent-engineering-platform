@@ -1,0 +1,39 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "EvaluationResult",
+  "id": "evaluationresult-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:03:00Z",
+  "updatedAt": "2026-07-09T10:03:20Z",
+  "provenance": {
+    "actor": "evaluation-engine",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Evaluation",
+        "name": "issue-analysis-schema",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "evaluationRef": {
+    "kind": "Evaluation",
+    "name": "issue-analysis-schema",
+    "version": "1.0.0"
+  },
+  "target": {
+    "type": "GeneratedArtifact",
+    "id": "generatedartifact-000000000001"
+  },
+  "status": "SUCCEEDED",
+  "outcome": "PASS",
+  "metrics": {
+    "checks": 3,
+    "passed": 3
+  },
+  "evidenceAddress": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "startedAt": "2026-07-09T10:03:00Z",
+  "completedAt": "2026-07-09T10:03:20Z"
+}

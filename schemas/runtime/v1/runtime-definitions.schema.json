@@ -1,0 +1,477 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/runtime/v1/runtime-definitions.schema.json",
+  "title": "AEP runtime object schema definitions",
+  "$defs": {
+    "apiVersion": {
+      "type": "string",
+      "const": "aep.dev/v1alpha1"
+    },
+    "runtimeKind": {
+      "type": "string",
+      "enum": [
+        "WorkflowExecution",
+        "TaskExecution",
+        "ContextPackage",
+        "ResolvedAgent",
+        "AgentInvocation",
+        "ModelInvocation",
+        "ToolInvocation",
+        "EvaluationResult",
+        "PolicyDecision",
+        "Approval",
+        "GeneratedArtifact",
+        "ExecutionEvent"
+      ]
+    },
+    "runtimeId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*-[0-9a-f]{12,}$"
+    },
+    "traceId": {
+      "type": "string",
+      "minLength": 8
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repositoryRevision": {
+      "type": "string",
+      "minLength": 7
+    },
+    "contentAddress": {
+      "type": "string",
+      "pattern": "^(sha256|sha512):[0-9a-f]{64,128}$"
+    },
+    "jsonObject": {
+      "type": "object"
+    },
+    "resourceRef": {
+      "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/resourceRef"
+    },
+    "resourceRefList": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/resourceRef"
+      },
+      "uniqueItems": true
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generatedArtifactId", "contentAddress"],
+      "properties": {
+        "generatedArtifactId": {
+          "$ref": "#/$defs/runtimeId"
+        },
+        "contentAddress": {
+          "$ref": "#/$defs/contentAddress"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["PENDING", "QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED", "AWAITING_APPROVAL"]
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "message"],
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": ["RECOVERABLE", "CONFIGURATION", "EVALUATION", "POLICY", "PERMANENT"]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "resourceRefs"],
+      "properties": {
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "caller": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parentId": {
+          "$ref": "#/$defs/runtimeId"
+        },
+        "workflowExecutionId": {
+          "$ref": "#/$defs/runtimeId"
+        },
+        "taskExecutionId": {
+          "$ref": "#/$defs/runtimeId"
+        },
+        "repositoryRevision": {
+          "$ref": "#/$defs/repositoryRevision"
+        },
+        "knowledgeGraphVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resourceRefs": {
+          "$ref": "#/$defs/resourceRefList"
+        },
+        "inputArtifactRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifactRef"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "runtimeBase": {
+      "type": "object",
+      "required": ["apiVersion", "kind", "id", "traceId", "createdAt", "updatedAt", "provenance"],
+      "properties": {
+        "apiVersion": {
+          "$ref": "#/$defs/apiVersion"
+        },
+        "kind": {
+          "$ref": "#/$defs/runtimeKind"
+        },
+        "id": {
+          "$ref": "#/$defs/runtimeId"
+        },
+        "traceId": {
+          "$ref": "#/$defs/traceId"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "updatedAt": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "WorkflowExecution": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "workflowRef", "eventRef", "repositoryRevision", "status", "taskExecutionIds"],
+          "properties": {
+            "kind": { "const": "WorkflowExecution" },
+            "workflowRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/workflowRef" },
+            "eventRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/eventRef" },
+            "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
+            "knowledgeGraphVersion": { "type": "string", "minLength": 1 },
+            "status": { "$ref": "#/$defs/status" },
+            "startedAt": { "$ref": "#/$defs/timestamp" },
+            "completedAt": { "$ref": "#/$defs/timestamp" },
+            "taskExecutionIds": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/runtimeId" },
+              "uniqueItems": true
+            },
+            "failure": { "$ref": "#/$defs/failure" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "TaskExecution": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "workflowExecutionId", "taskRef", "attempt", "status"],
+          "properties": {
+            "kind": { "const": "TaskExecution" },
+            "workflowExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "taskRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/taskRef" },
+            "attempt": { "type": "integer", "minimum": 1 },
+            "status": { "$ref": "#/$defs/status" },
+            "dependencyTaskExecutionIds": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/runtimeId" },
+              "uniqueItems": true
+            },
+            "contextPackageId": { "$ref": "#/$defs/runtimeId" },
+            "resolvedAgentId": { "$ref": "#/$defs/runtimeId" },
+            "agentInvocationIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "toolInvocationIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "generatedArtifactIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "evaluationResultIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "policyDecisionIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "startedAt": { "$ref": "#/$defs/timestamp" },
+            "completedAt": { "$ref": "#/$defs/timestamp" },
+            "failure": { "$ref": "#/$defs/failure" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "ContextPackage": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "taskRef", "repositoryRevision", "elements", "tokenBudget", "tokenCount"],
+          "properties": {
+            "kind": { "const": "ContextPackage" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "taskRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/taskRef" },
+            "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
+            "elements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "content", "provenance"],
+                "properties": {
+                  "type": { "type": "string", "enum": ["repository", "knowledge", "artifact", "event", "policy", "task"] },
+                  "content": {},
+                  "provenance": { "$ref": "#/$defs/provenance" },
+                  "tokenCount": { "type": "integer", "minimum": 0 },
+                  "truncated": { "type": "boolean" }
+                }
+              }
+            },
+            "tokenBudget": { "type": "integer", "minimum": 1 },
+            "tokenCount": { "type": "integer", "minimum": 0 },
+            "truncation": { "type": "string", "enum": ["NONE", "SUMMARIZED", "PRUNED"] }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "ResolvedAgent": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "agentRef", "promptRef", "modelRef", "toolRefs", "policyRefs", "resolvedAt"],
+          "properties": {
+            "kind": { "const": "ResolvedAgent" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "agentRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/agentRef" },
+            "promptRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/promptRef" },
+            "modelRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/modelRef" },
+            "toolRefs": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/toolRefList" },
+            "policyRefs": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/policyRefList" },
+            "modelParameters": { "$ref": "#/$defs/jsonObject" },
+            "outputSchema": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/jsonSchema" },
+            "resolvedAt": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "AgentInvocation": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "resolvedAgentId", "contextPackageId", "status"],
+          "properties": {
+            "kind": { "const": "AgentInvocation" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "resolvedAgentId": { "$ref": "#/$defs/runtimeId" },
+            "contextPackageId": { "$ref": "#/$defs/runtimeId" },
+            "status": { "$ref": "#/$defs/status" },
+            "modelInvocationIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "toolInvocationIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "output": {},
+            "outputSchemaValidation": { "type": "string", "enum": ["NOT_RUN", "PASSED", "FAILED"] },
+            "tokenUsage": { "$ref": "#/$defs/jsonObject" },
+            "cost": { "type": "number", "minimum": 0 },
+            "startedAt": { "$ref": "#/$defs/timestamp" },
+            "completedAt": { "$ref": "#/$defs/timestamp" },
+            "failure": { "$ref": "#/$defs/failure" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "ModelInvocation": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "agentInvocationId", "modelRef", "status"],
+          "properties": {
+            "kind": { "const": "ModelInvocation" },
+            "agentInvocationId": { "$ref": "#/$defs/runtimeId" },
+            "modelRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/modelRef" },
+            "status": { "$ref": "#/$defs/status" },
+            "inputAddress": { "$ref": "#/$defs/contentAddress" },
+            "outputAddress": { "$ref": "#/$defs/contentAddress" },
+            "tokenUsage": { "$ref": "#/$defs/jsonObject" },
+            "latencyMs": { "type": "integer", "minimum": 0 },
+            "cost": { "type": "number", "minimum": 0 },
+            "schemaValidation": { "type": "string", "enum": ["NOT_RUN", "PASSED", "FAILED"] },
+            "startedAt": { "$ref": "#/$defs/timestamp" },
+            "completedAt": { "$ref": "#/$defs/timestamp" },
+            "failure": { "$ref": "#/$defs/failure" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "ToolInvocation": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "toolRef", "status", "input"],
+          "properties": {
+            "kind": { "const": "ToolInvocation" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "agentInvocationId": { "$ref": "#/$defs/runtimeId" },
+            "toolRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/toolRef" },
+            "status": { "$ref": "#/$defs/status" },
+            "input": {},
+            "output": {},
+            "policyDecisionId": { "$ref": "#/$defs/runtimeId" },
+            "logsAddress": { "$ref": "#/$defs/contentAddress" },
+            "metrics": { "$ref": "#/$defs/jsonObject" },
+            "failure": { "$ref": "#/$defs/failure" },
+            "startedAt": { "$ref": "#/$defs/timestamp" },
+            "completedAt": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "EvaluationResult": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "evaluationRef", "target", "status", "outcome"],
+          "properties": {
+            "kind": { "const": "EvaluationResult" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "evaluationRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/evaluationRef" },
+            "target": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "id"],
+              "properties": {
+                "type": { "type": "string", "enum": ["TaskExecution", "GeneratedArtifact"] },
+                "id": { "$ref": "#/$defs/runtimeId" }
+              }
+            },
+            "status": { "$ref": "#/$defs/status" },
+            "outcome": { "type": "string", "enum": ["PASS", "FAIL", "PENDING"] },
+            "metrics": { "$ref": "#/$defs/jsonObject" },
+            "evidenceAddress": { "$ref": "#/$defs/contentAddress" },
+            "failure": { "$ref": "#/$defs/failure" },
+            "startedAt": { "$ref": "#/$defs/timestamp" },
+            "completedAt": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "PolicyDecision": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "gate", "policyRefs", "action", "decision", "reason"],
+          "properties": {
+            "kind": { "const": "PolicyDecision" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "gate": { "type": "string", "enum": ["PRE_EXECUTION_CAPABILITY", "PUBLICATION"] },
+            "policyRefs": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/policyRefList" },
+            "action": { "type": "string", "minLength": 1 },
+            "decision": { "type": "string", "enum": ["ALLOW", "DENY", "REQUIRE_APPROVAL"] },
+            "reason": { "type": "string", "minLength": 1 },
+            "approvalRequired": { "type": "boolean" },
+            "evaluatedAt": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "Approval": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "policyDecisionId", "requester", "status", "requestedAt"],
+          "properties": {
+            "kind": { "const": "Approval" },
+            "policyDecisionId": { "$ref": "#/$defs/runtimeId" },
+            "requester": { "type": "string", "minLength": 1 },
+            "approver": { "type": "string", "minLength": 1 },
+            "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "EXPIRED"] },
+            "reason": { "type": "string", "minLength": 1 },
+            "requestedAt": { "$ref": "#/$defs/timestamp" },
+            "decidedAt": { "$ref": "#/$defs/timestamp" },
+            "expiresAt": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "GeneratedArtifact": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "taskExecutionId", "artifactType", "contentAddress", "repositoryRevision"],
+          "properties": {
+            "kind": { "const": "GeneratedArtifact" },
+            "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
+            "artifactType": {
+              "type": "string",
+              "enum": ["IMPLEMENTATION_PLAN", "DESIGN_DOCUMENT", "PATCH", "PULL_REQUEST_DESCRIPTION", "REVIEW_REPORT", "EVALUATION_REPORT"]
+            },
+            "contentAddress": { "$ref": "#/$defs/contentAddress" },
+            "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
+            "mediaType": { "type": "string", "minLength": 1 },
+            "evaluationResultIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "policyDecisionIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "publishedAt": { "$ref": "#/$defs/timestamp" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "ExecutionEvent": {
+      "allOf": [
+        { "$ref": "#/$defs/runtimeBase" },
+        {
+          "type": "object",
+          "required": ["kind", "eventType", "subject", "sequence", "emittedAt"],
+          "properties": {
+            "kind": { "const": "ExecutionEvent" },
+            "eventType": { "type": "string", "pattern": "^[A-Z][A-Za-z0-9]+$" },
+            "subject": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "id"],
+              "properties": {
+                "kind": { "$ref": "#/$defs/runtimeKind" },
+                "id": { "$ref": "#/$defs/runtimeId" }
+              }
+            },
+            "sequence": { "type": "integer", "minimum": 1 },
+            "emittedAt": { "$ref": "#/$defs/timestamp" },
+            "payload": { "$ref": "#/$defs/jsonObject" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  }
+}

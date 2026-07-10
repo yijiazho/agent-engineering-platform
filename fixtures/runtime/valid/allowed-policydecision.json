@@ -1,0 +1,34 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "PolicyDecision",
+  "id": "policydecision-000000000001",
+  "traceId": "trace-issue-to-pr-0001",
+  "createdAt": "2026-07-09T10:02:00Z",
+  "updatedAt": "2026-07-09T10:02:00Z",
+  "provenance": {
+    "actor": "policy-engine",
+    "workflowExecutionId": "workflowexecution-000000000001",
+    "taskExecutionId": "taskexecution-000000000001",
+    "resourceRefs": [
+      {
+        "kind": "Policy",
+        "name": "publication-policy",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "gate": "PRE_EXECUTION_CAPABILITY",
+  "policyRefs": [
+    {
+      "kind": "Policy",
+      "name": "publication-policy",
+      "version": "1.0.0"
+    }
+  ],
+  "action": "github.read_issue",
+  "decision": "ALLOW",
+  "reason": "Read-only GitHub issue access is allowed.",
+  "approvalRequired": false,
+  "evaluatedAt": "2026-07-09T10:02:00Z"
+}
