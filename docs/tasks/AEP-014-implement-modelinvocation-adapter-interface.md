@@ -1,6 +1,6 @@
 # AEP-014: Implement ModelInvocation Adapter Interface
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,18 @@ Define a ModelInvocation adapter package that:
 * ModelInvocation records modelRef and execution metadata.
 * Adapter errors are classified as recoverable or permanent.
 * Tests do not require network access.
+
+## Implementation
+
+`src/aep/model_invocation.py` defines immutable provider-neutral configuration,
+request, response, usage, and classified-error types. `ModelAdapter` is the
+extension boundary for vendor SDK integrations: implementations translate the
+assembled input and resolved Model configuration into their provider request,
+then normalize output and execution evidence without exposing SDK types.
+
+`FakeModelAdapter` supplies ordered deterministic outcomes for tests and local
+execution, including recoverable and permanent failures. The
+`model_invocation_record` helper converts a successful normalized response into
+the existing ModelInvocation runtime schema, including its immutable `modelRef`,
+parent invocation, trace, timestamps, usage, latency, provider metadata, content
+addresses, validation result, and optional cost.
