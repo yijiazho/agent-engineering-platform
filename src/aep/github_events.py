@@ -107,7 +107,7 @@ def _require_object(
 def _require_fields(
     value: Mapping[str, Any],
     prefix: str,
-    fields: tuple[tuple[str, Callable[..., object]], ...],
+    fields: tuple[tuple[str, type[int] | type[str]], ...],
     issues: list[ValidationIssue],
 ) -> None:
     for field, expected_type in fields:
