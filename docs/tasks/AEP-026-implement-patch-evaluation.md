@@ -4,11 +4,19 @@
 
 ## Context
 
-GeneratePatch must produce changes that apply cleanly and stay within allowed workspace boundaries.
+A generated patch must be technically safe to validate before build or test commands run. Patch Evaluation verifies that the patch applies to the expected repository revision and that every changed path remains inside the configured workspace and Task scope.
+
+This is deterministic correctness checking, not permission to write, push, or publish. Its immutable EvaluationResult supplies evidence to later acceptance and Publication Policy decisions.
 
 ## Deliverable
 
-Implement patch validation Evaluation.
+Implement patch Evaluation that:
+
+* accepts a patch artifact, expected repository revision, and allowed path rules;
+* uses the Git adapter to test clean applicability without publishing changes;
+* records changed files, applicability diagnostics, and boundary checks as evidence;
+* fails deterministically for conflicts, malformed patches, revision mismatch, or disallowed paths; and
+* tests clean, conflicting, empty, and out-of-scope patches.
 
 ## Dependencies
 

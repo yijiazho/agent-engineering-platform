@@ -4,11 +4,19 @@
 
 ## Context
 
-The MVP may use simplified Repository Intelligence before full AST and symbol graph support exists.
+The long-term Repository Intelligence design compiles ASTs, symbols, and relationships into a versioned Repository Knowledge Graph. ADR-003 deliberately permits a simpler MVP scanner, provided its output remains revision-bound, deterministic, provenance-rich, and replaceable behind a stable query API.
+
+This task establishes that initial compiled knowledge snapshot. It inventories repository structure and useful engineering signals without performing reasoning, prompt construction, or semantic retrieval.
 
 ## Deliverable
 
-Implement repository scanning for file inventory, language detection, README/docs index, dependency manifests, and test command hints.
+Implement an MVP repository scanner that:
+
+* walks a repository at a specified revision using deterministic inclusion and exclusion rules;
+* records files, detected languages, documentation, dependency manifests, and test-command hints;
+* attaches source paths, revision, timestamps, and scanner version as provenance;
+* publishes a versioned immutable snapshot suitable for AEP-016 queries; and
+* tests common layouts, ignored vendor/generated paths, and repeatable output.
 
 ## Dependencies
 

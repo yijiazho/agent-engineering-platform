@@ -4,11 +4,19 @@
 
 ## Context
 
-Workflow Resources orchestrate Task Resources through a deterministic DAG.
+A Workflow orchestrates explicitly versioned Task Resources as a directed acyclic graph. Before scheduling, the platform must convert that declarative graph into a validated, deterministic execution plan without allowing an Agent or model to choose execution order.
+
+The resolver validates graph structure and dependencies only. It does not create TaskExecutions or execute handlers.
 
 ## Deliverable
 
-Resolve a Workflow Resource into an executable Task DAG.
+Implement a Task DAG resolver that:
+
+* loads and validates every referenced Task;
+* rejects missing nodes, duplicate identities, and cycles with structured errors;
+* produces stable topological order and dependency metadata;
+* exposes parallel-ready Task groups; and
+* tests linear, branched, missing-reference, and cyclic graphs.
 
 ## Dependencies
 

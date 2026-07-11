@@ -4,11 +4,19 @@
 
 ## Context
 
-EvaluateAcceptance combines deterministic evaluations before publication.
+`EvaluateAcceptance` aggregates deterministic evidence produced by earlier Tasks and determines whether the implementation satisfies the MVP workflow's required technical criteria. It does not use an LLM and does not itself authorize publication.
+
+The handler verifies that required artifacts and EvaluationResults exist, correspond to the same execution and repository revision, and have acceptable outcomes. Its summary becomes the principal evidence consumed by Publication Policy.
 
 ## Deliverable
 
-Implement acceptance evaluation Task handler.
+Implement the `EvaluateAcceptance` Task handler that:
+
+* loads the Workflow's required GeneratedArtifacts and EvaluationResults;
+* validates execution, revision, provenance, completeness, and pass/fail consistency;
+* persists a final acceptance-summary EvaluationResult with supporting references;
+* fails deterministically without invoking a model; and
+* tests all-pass, failed, missing, stale-revision, and inconsistent evidence.
 
 ## Dependencies
 

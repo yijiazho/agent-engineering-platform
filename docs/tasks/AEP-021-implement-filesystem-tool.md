@@ -4,11 +4,19 @@
 
 ## Context
 
-GeneratePatch needs controlled filesystem read/write against a workspace checkout.
+Patch generation requires controlled access to a WorkflowExecution's working checkout. Direct host filesystem access would bypass Tool schemas, policy, audit, and workspace isolation, so reads and writes must pass through the Tool Runtime boundary.
+
+The MVP adapter must resolve paths relative to an explicitly configured workspace, reject traversal and symlink escapes, and require capability authorization for mutation. It does not provide repository knowledge retrieval to Agents.
 
 ## Deliverable
 
-Implement filesystem Tool adapter.
+Implement a Filesystem Tool adapter that:
+
+* defines structured read and write inputs and outputs;
+* confines all resolved paths to the configured workspace boundary;
+* evaluates `filesystem.write` before mutation and records ToolInvocation evidence;
+* classifies schema, boundary, missing-file, and I/O failures; and
+* tests allowed operations, traversal and escape denial, invalid input, logs, and output metadata.
 
 ## Dependencies
 

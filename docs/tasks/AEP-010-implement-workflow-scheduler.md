@@ -4,11 +4,19 @@
 
 ## Context
 
-The Workflow Runtime schedules TaskExecutions based on dependencies and status.
+The Workflow Runtime advances a WorkflowExecution by scheduling Tasks only when their declared dependencies have reached the required state. Scheduling remains separate from Agent reasoning, context retrieval, and task-specific handler logic.
+
+The scheduler consumes a validated DAG and persisted runtime state. Its decisions must be retry-safe, observable through ExecutionEvents, and testable without real models or external systems.
 
 ## Deliverable
 
-Implement a scheduler that transitions ready Tasks into TaskExecutions.
+Implement an MVP scheduler that:
+
+* computes ready Tasks from the DAG and current TaskExecution states;
+* creates one idempotent TaskExecution attempt per ready Task;
+* blocks dependents until prerequisites succeed and numbers retries;
+* records queued, started, succeeded, and failed events; and
+* tests parallel readiness, dependency blocking, retries, and failures with fake executors.
 
 ## Dependencies
 

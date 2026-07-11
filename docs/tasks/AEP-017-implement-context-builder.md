@@ -4,11 +4,19 @@
 
 ## Context
 
-The Context Builder constructs deterministic ContextPackages. Agents never retrieve repository knowledge directly.
+The Context Builder is the only subsystem permitted to assemble repository, documentation, event, policy, workflow-history, and prior-artifact information for an Agent. It constructs the minimum sufficient context for a Task; it does not reason, execute Tools, or optimize Agent behavior.
+
+For the MVP, construction combines the simplified knowledge API with loaded Resources and stored runtime artifacts. The result must be immutable, deterministic for identical inputs, budget-aware, and provenance-complete so the runtime can validate it before invocation.
 
 ## Deliverable
 
-Implement ContextPackage construction for MVP Tasks.
+Implement MVP ContextPackage construction that:
+
+* resolves each Task's mandatory and optional context requirements;
+* retrieves repository knowledge only through AEP-016 and prior artifacts through AEP-018;
+* assembles Task, Event, repository, knowledge, policy, and artifact sections with provenance;
+* records budget, selection, truncation, and token-estimate metadata; and
+* validates completeness and determinism with fixtures for every MVP Task type.
 
 ## Dependencies
 

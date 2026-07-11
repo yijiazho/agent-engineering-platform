@@ -4,11 +4,19 @@
 
 ## Context
 
-The MVP reads issue data and creates pull requests.
+GitHub is both the MVP event source and the external publication target. Interactions must use a Tool adapter so issue reads and pull-request creation have stable schemas, policy decisions, retry classification, trace metadata, and auditable responses.
+
+Reading issue data is distinct from publishing a PR. PR creation may occur only after technical evaluation, Publication Policy, and pre-execution authorization; branch creation and push remain responsibilities of the Git Tool.
 
 ## Deliverable
 
-Implement GitHub Tool adapter for read issue and create pull request.
+Implement a GitHub Tool adapter that:
+
+* defines structured operations for reading an issue and creating a pull request;
+* maps provider responses and errors into stable AEP result and failure types;
+* requires both Publication Policy and `github.create_pr` authorization for PR creation;
+* records repository, issue or PR identifiers, URLs, provider request IDs, and trace metadata; and
+* uses a fake client to test reads, successful publication, denial, invalid input, rate limits, and provider failures.
 
 ## Dependencies
 

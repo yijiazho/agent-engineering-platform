@@ -4,11 +4,19 @@
 
 ## Context
 
-The MVP needs branch creation, diff inspection, and push.
+The issue-to-PR workflow needs deterministic Git operations against one execution-specific working branch. Git must be exposed as a non-model Tool so branch creation, diff inspection, status, and push are capability-controlled and fully recorded rather than issued directly by an Agent.
+
+Local read operations and externally mutating push operations have different risk. The adapter must produce structured repository evidence, preserve workspace boundaries, avoid leaking credentials, and leave PR creation to the GitHub Tool.
 
 ## Deliverable
 
-Implement Git Tool adapter.
+Implement a Git Tool adapter that:
+
+* defines structured operations for create branch, status, diff, and push branch;
+* runs only against the configured repository and expected revision/working branch;
+* requires `git.push` authorization before remote mutation;
+* returns changed-file, diff, branch, revision, and command-result metadata with redacted logs; and
+* tests operations in a local fixture repository, including invalid state, denied push, and command failure.
 
 ## Dependencies
 

@@ -4,11 +4,19 @@
 
 ## Context
 
-TaskExecution is the retry, observability, and failure-classification unit.
+`TaskExecution` represents one attempt to perform a Task and is the primary boundary for retries, evidence, failure classification, and observability. Runtime status may change while an attempt is active, but completed evidence must remain immutable under ADR-002.
+
+The lifecycle must distinguish recoverable, configuration, evaluation, and policy failures and reject transitions that would rewrite terminal execution history.
 
 ## Deliverable
 
-Implement TaskExecution lifecycle state transitions.
+Implement a TaskExecution lifecycle component that:
+
+* defines supported statuses and an explicit transition table;
+* persists transitions atomically with concurrency checks;
+* records attempt, timestamps, failure class, and trace provenance;
+* prevents mutation after terminal completion; and
+* tests success, cancellation, approval waiting, retry, invalid transitions, and each failure class.
 
 ## Dependencies
 

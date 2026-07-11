@@ -4,11 +4,19 @@
 
 ## Context
 
-Model providers are represented by Model Resources and are not Tools.
+Model providers are accessed through Model Resources during AgentInvocation and are not part of the Tool Platform. A provider-neutral boundary keeps vendor SDKs and network behavior outside the orchestration contract.
+
+The adapter consumes assembled model input and immutable Model configuration, then normalizes output, usage, latency, metadata, and errors for persistence and retry decisions.
 
 ## Deliverable
 
-Define a model provider adapter interface and fake implementation.
+Define a ModelInvocation adapter package that:
+
+* specifies provider-neutral request and response types;
+* returns structured output, usage, latency, and provider metadata;
+* classifies errors as recoverable or permanent;
+* supplies data needed for the ModelInvocation runtime record; and
+* includes a deterministic configurable fake and extension guidance for real providers.
 
 ## Dependencies
 

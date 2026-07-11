@@ -4,11 +4,19 @@
 
 ## Context
 
-AnalyzeIssue and BuildImplementationPlan require structured outputs.
+AnalyzeIssue, BuildImplementationPlan, and other model-backed Tasks declare structured output contracts. Schema Evaluation provides deterministic technical validation of those outputs before they become trusted artifacts or inputs to downstream Tasks.
+
+This evaluator produces immutable EvaluationResult evidence and never calls an LLM. It validates the declared schema version, target content, and failure details while remaining independent of publication authorization.
 
 ## Deliverable
 
-Implement Evaluation for JSON/schema validation.
+Implement schema Evaluation that:
+
+* accepts an Evaluation reference, target artifact or invocation output, and declared JSON Schema;
+* returns and persists an EvaluationResult with pass/fail, evidence, logs, provenance, and trace data;
+* reports stable, actionable validation paths and messages;
+* performs no model or policy decisions; and
+* tests valid output, missing fields, invalid types, malformed schemas, and deterministic error ordering.
 
 ## Dependencies
 

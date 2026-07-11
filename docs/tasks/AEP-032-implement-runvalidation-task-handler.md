@@ -4,11 +4,19 @@
 
 ## Context
 
-RunValidation executes deterministic build and test commands in Docker.
+`RunValidation` performs deterministic build and test commands against the generated working tree. It is intentionally non-cognitive: execution occurs through the Docker Tool, while technical interpretation occurs through Build and Test Evaluations.
+
+The handler must preserve command evidence even on failure, distinguish Tool failure from evaluation failure, and stop downstream publication when required validation is incomplete or unsuccessful.
 
 ## Deliverable
 
-Implement validation Task handler.
+Implement the `RunValidation` Task handler that:
+
+* resolves configured image, commands, mount, limits, and timeout from Task context;
+* authorizes and invokes the Docker validation Tool;
+* persists a validation-report GeneratedArtifact and complete ToolInvocation evidence;
+* creates build and test EvaluationResults and updates TaskExecution state; and
+* tests passing commands, build/test failure, timeout, denial, and malformed output.
 
 ## Dependencies
 

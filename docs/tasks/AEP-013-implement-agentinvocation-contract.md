@@ -4,11 +4,19 @@
 
 ## Context
 
-AgentInvocation binds ResolvedAgent to ContextPackage and records model-backed cognitive work.
+`AgentInvocation` is the runtime boundary for one bounded unit of model-backed reasoning. It combines an immutable `ResolvedAgent` and `ContextPackage`, assembles model input, records ModelInvocations, and validates structured output.
+
+Agents cannot bypass deterministic context construction. Repository knowledge retrieval is prohibited during invocation, and any allowed non-knowledge Tool remains constrained by the ResolvedAgent and policy.
 
 ## Deliverable
 
-Implement AgentInvocation orchestration with a mock model provider.
+Implement the AgentInvocation coordinator and contract that:
+
+* persists invocation identity, inputs, status, and trace fields;
+* assembles deterministic model input and calls the Model adapter;
+* records usage, latency, cost, provider metadata, and structured output;
+* validates output schema and blocks direct knowledge retrieval; and
+* tests success, provider failure, and invalid output with a deterministic fake.
 
 ## Dependencies
 
