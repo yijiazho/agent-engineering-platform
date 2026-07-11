@@ -1,6 +1,6 @@
 # AEP-005: Normalize GitHub Issue Created Event
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -21,3 +21,10 @@ Implement webhook normalization for `github.issue.created`.
 * Invalid payloads fail with structured errors.
 * Normalizer does not start workflows directly.
 * Tests include real-shaped GitHub issue payload fixtures.
+
+## Implementation
+
+`aep.github_events.normalize_github_issue_created` validates and normalizes the
+webhook without invoking workflow resolution or execution. The GitHub delivery
+ID supplies the stable event ID and deduplication key. Invalid webhooks raise a
+structured `GitHubEventValidationError`.
