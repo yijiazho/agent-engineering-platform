@@ -44,6 +44,10 @@ Use ASCII text unless a file already requires another character set. Prefer prec
 
 For documentation changes, verify links and task counts manually. When code is added, each implementation task should include tests satisfying its acceptance criteria. Keep fixtures small and deterministic.
 
+## Project Skills
+
+Use `skills/review-aep-pr/SKILL.md` when reviewing pull requests or local diffs for severity-ranked findings and the project scoring rubric.
+
 ## Commit & Pull Request Guidelines
 
 Recent commits use concise imperative summaries, such as `Initialize with design document`. Follow that style: start with a verb and keep the subject specific.
