@@ -37,7 +37,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 10 | [AEP-011: Implement TaskExecution Lifecycle](tasks/AEP-011-implement-taskexecution-lifecycle.md) | Not Started |
 | 11 | [AEP-016: Build Repository Knowledge Query API](tasks/AEP-016-build-repository-knowledge-query-api.md) | Not Started |
 | 12 | [AEP-018: Implement GeneratedArtifact Store](tasks/AEP-018-implement-generatedartifact-store.md) | Not Started |
-| 13 | [AEP-006: Implement Event Deduplication](tasks/AEP-006-implement-event-deduplication.md) | Not Started |
+| 13 | [AEP-006: Implement Event Deduplication](tasks/AEP-006-implement-event-deduplication.md) | Completed |
 | 14 | [AEP-007: Resolve Workflow For Event](tasks/AEP-007-resolve-workflow-for-event.md) | Not Started |
 | 15 | [AEP-009: Build Task DAG Resolver](tasks/AEP-009-build-task-dag-resolver.md) | Not Started |
 | 16 | [AEP-020: Implement Pre-Execution Capability Policy](tasks/AEP-020-implement-pre-execution-capability-policy.md) | Not Started |
@@ -73,8 +73,8 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-002 | None | Completed |
 | AEP-003 | AEP-001 | Completed |
 | AEP-004 | AEP-002 | Completed |
-| AEP-005 | AEP-001 | Not Started |
-| AEP-006 | AEP-004, AEP-005 | Not Started |
+| AEP-005 | AEP-001 | Completed |
+| AEP-006 | AEP-004, AEP-005 | Completed |
 | AEP-007 | AEP-003, AEP-005 | Not Started |
 | AEP-008 | AEP-004, AEP-006, AEP-007 | Not Started |
 | AEP-009 | AEP-003 | Not Started |
