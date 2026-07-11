@@ -5,6 +5,7 @@ import pytest
 
 from aep.resource_loader import (
     DuplicateResourceError,
+    DuplicateWorkspaceError,
     MissingResourceReferenceError,
     ResourceFileNotFoundError,
     ResourceLoader,
@@ -115,6 +116,22 @@ def test_rejects_duplicate_versions(tmp_path: Path) -> None:
     write_resource(tmp_path, "prompts/nested/b.yaml", duplicate)
 
     with pytest.raises(DuplicateResourceError):
+        ResourceLoader(tmp_path).load()
+
+
+def test_rejects_workspace_resources_outside_workspace_file(tmp_path: Path) -> None:
+    write_valid_workspace(tmp_path, default_policies=[])
+    write_resource(tmp_path, "tasks/workspace.yaml", resource("Workspace", "secondary-workspace", "1.0.0", {
+        "repository": {
+            "provider": "github",
+            "owner": "example",
+            "name": "other-service",
+            "defaultBranch": "main",
+        },
+        "resourceDiscovery": {"root": ".ai"},
+    }))
+
+    with pytest.raises(DuplicateWorkspaceError):
         ResourceLoader(tmp_path).load()
 
 

@@ -62,6 +62,10 @@ class DuplicateResourceError(ResourceLoaderError):
     """Raised when two files declare the same resource version."""
 
 
+class DuplicateWorkspaceError(ResourceLoaderError):
+    """Raised when more than one Workspace resource is discovered."""
+
+
 class MissingResourceReferenceError(ResourceLoaderError):
     """Raised when a resource references another resource that was not loaded."""
 
@@ -141,6 +145,11 @@ class ResourceLoader:
                 if directory.is_dir():
                     resources.extend(self._load_resource(path) for path in self._resource_files(directory))
 
+        workspace_resources = [resource for resource in resources if resource.kind == "Workspace"]
+        if len(workspace_resources) > 1:
+            paths = ", ".join(str(resource.path) for resource in workspace_resources)
+            raise DuplicateWorkspaceError(f"Workspace must be declared only in {workspace_path}; found: {paths}")
+
         index: dict[ResourceRef, Resource] = {}
         for resource in resources:
             if resource.ref in index:
@@ -158,8 +167,7 @@ class ResourceLoader:
                     )
 
         ordered = tuple(sorted(resources, key=_resource_sort_key))
-        workspace = next(resource for resource in ordered if resource.kind == "Workspace")
-        return ResourceCollection(workspace=workspace, resources=ordered)
+        return ResourceCollection(workspace=resources[0], resources=ordered)
 
     def _load_resource(self, path: Path) -> Resource:
         data = _load_mapping(path)
