@@ -1,10 +1,16 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from aep.github_events import GitHubEventValidationError, normalize_github_issue_created
+from aep.github_events import (
+    EventDeduplicator,
+    GitHubEventValidationError,
+    normalize_github_issue_created,
+)
+from aep.runtime_store import InMemoryRuntimeObjectStore
 
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "github" / "issue-created.json"
@@ -42,6 +48,65 @@ def test_duplicate_deliveries_have_the_same_deduplication_key() -> None:
 
     assert first["deduplicationKey"] == second["deduplicationKey"]
     assert first["id"] == second["id"]
+
+
+def test_duplicate_event_is_linked_to_the_first_accepted_event() -> None:
+    store = InMemoryRuntimeObjectStore()
+    first_controller = EventDeduplicator(store)
+    second_controller = EventDeduplicator(store)
+    first_event = normalize_github_issue_created(
+        load_payload(), delivery_id="delivery-123", received_at=RECEIVED_AT
+    )
+    duplicate_event = dict(first_event)
+    duplicate_event["receivedAt"] = "2026-07-11T17:00:00Z"
+
+    first = first_controller.accept(first_event)
+    duplicate = second_controller.accept(duplicate_event)
+
+    assert first.accepted is True
+    assert duplicate.accepted is False
+    assert duplicate.event == first.event
+
+
+def test_near_duplicate_and_distinct_events_are_accepted() -> None:
+    deduplicator = EventDeduplicator(InMemoryRuntimeObjectStore())
+    payload = load_payload()
+    near_duplicate = load_payload()
+    near_duplicate["issue"]["title"] = "A revised title"
+
+    results = [
+        deduplicator.accept(
+            normalize_github_issue_created(
+                candidate, delivery_id=delivery_id, received_at=RECEIVED_AT
+            )
+        )
+        for candidate, delivery_id in (
+            (payload, "delivery-123"),
+            (near_duplicate, "delivery-124"),
+            (payload, "delivery-125"),
+        )
+    ]
+
+    assert all(result.accepted for result in results)
+    assert len({result.event["id"] for result in results}) == 3
+
+
+def test_concurrent_duplicates_have_exactly_one_accepted_result() -> None:
+    deduplicator = EventDeduplicator(InMemoryRuntimeObjectStore())
+    event = normalize_github_issue_created(
+        load_payload(), delivery_id="delivery-123", received_at=RECEIVED_AT
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(deduplicator.accept, [event] * 40))
+
+    assert sum(result.accepted for result in results) == 1
+    assert {result.event["id"] for result in results} == {event["id"]}
+
+
+def test_event_without_a_deduplication_key_is_rejected() -> None:
+    with pytest.raises(ValueError, match="deduplicationKey"):
+        EventDeduplicator(InMemoryRuntimeObjectStore()).accept({"id": "event-123"})
 
 
 def test_invalid_payload_reports_structured_errors() -> None:

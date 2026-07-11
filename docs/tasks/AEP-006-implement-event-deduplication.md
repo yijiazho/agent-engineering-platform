@@ -1,6 +1,6 @@
 # AEP-006: Implement Event Deduplication
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -21,3 +21,9 @@ Implement deduplication for normalized Events.
 * Repeated event with the same key is ignored or linked to existing execution.
 * Deduplication behavior is deterministic.
 * Tests cover duplicate, near-duplicate, and distinct events.
+
+## Implementation
+
+`EventDeduplicator` claims each normalized event's deduplication key through the
+`RuntimeObjectStore` boundary. Controllers sharing a persistent store therefore
+have one atomic winner, while duplicates link to the first accepted event.

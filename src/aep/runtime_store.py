@@ -44,6 +44,10 @@ class RuntimeObjectStore(ABC):
         """Create an object, or return the prior object for the same key."""
 
     @abstractmethod
+    def claim(self, deterministic_key: str, value: RuntimeObject) -> tuple[bool, RuntimeObject]:
+        """Atomically store a value for a key, or return the prior value."""
+
+    @abstractmethod
     def update_status(
         self,
         object_id: str,
@@ -73,6 +77,7 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         self._lock = RLock()
         self._objects: dict[str, dict[str, Any]] = {}
         self._deterministic_keys: dict[str, str] = {}
+        self._claims: dict[str, dict[str, Any]] = {}
         self._workflow_index: dict[str, list[str]] = {}
 
     def create(self, runtime_object: RuntimeObject, *, deterministic_key: str) -> RuntimeObject:
@@ -94,6 +99,20 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             self._deterministic_keys[deterministic_key] = object_id
             self._index(value)
             return _snapshot(value)
+
+    def claim(self, deterministic_key: str, value: RuntimeObject) -> tuple[bool, RuntimeObject]:
+        if not deterministic_key:
+            raise ValueError("deterministic_key must not be empty")
+        if not isinstance(value, Mapping):
+            raise TypeError("value must be a mapping")
+
+        with self._lock:
+            existing = self._claims.get(deterministic_key)
+            if existing is not None:
+                return False, _snapshot(existing)
+            claimed = deepcopy(dict(value))
+            self._claims[deterministic_key] = claimed
+            return True, _snapshot(claimed)
 
     def update_status(
         self,

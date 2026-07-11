@@ -39,6 +39,16 @@ def test_create_is_idempotent_by_deterministic_key() -> None:
     assert store.get("taskexecution-abcdef123456") is None
 
 
+def test_claim_is_atomic_and_returns_the_first_value() -> None:
+    store = InMemoryRuntimeObjectStore()
+
+    first = store.claim("event:delivery-123", {"id": "event-first"})
+    duplicate = store.claim("event:delivery-123", {"id": "event-duplicate"})
+
+    assert first == (True, {"id": "event-first"})
+    assert duplicate == (False, {"id": "event-first"})
+
+
 def test_duplicate_id_with_another_key_is_rejected() -> None:
     store = InMemoryRuntimeObjectStore()
     value = runtime_object("taskexecution-123456789abc")

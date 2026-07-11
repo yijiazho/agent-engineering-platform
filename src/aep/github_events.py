@@ -6,8 +6,10 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
+
+from aep.runtime_store import RuntimeObjectStore
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,32 @@ class GitHubEventValidationError(ValueError):
                 for issue in self.issues
             ],
         }
+
+
+@dataclass(frozen=True)
+class EventAcceptance:
+    """Result of attempting to accept an event for downstream processing."""
+
+    accepted: bool
+    event: Mapping[str, Any]
+
+
+class EventDeduplicator:
+    """Accept events using the shared runtime persistence boundary."""
+
+    def __init__(self, store: RuntimeObjectStore) -> None:
+        self._store = store
+
+    def accept(self, event: Mapping[str, Any]) -> EventAcceptance:
+        """Accept ``event``, or link a duplicate to the first accepted event."""
+        if not isinstance(event, Mapping):
+            raise TypeError("event must be a mapping")
+        key = event.get("deduplicationKey")
+        if not isinstance(key, str) or not key.strip():
+            raise ValueError("event.deduplicationKey must be a non-empty string")
+
+        accepted, stored_event = self._store.claim(f"event:{key}", event)
+        return EventAcceptance(accepted, stored_event)
 
 
 def normalize_github_issue_created(
