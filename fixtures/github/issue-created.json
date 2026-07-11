@@ -1,0 +1,42 @@
+{
+  "action": "opened",
+  "issue": {
+    "url": "https://api.github.com/repos/octo-org/octo-repo/issues/1347",
+    "repository_url": "https://api.github.com/repos/octo-org/octo-repo",
+    "labels_url": "https://api.github.com/repos/octo-org/octo-repo/issues/1347/labels{/name}",
+    "comments_url": "https://api.github.com/repos/octo-org/octo-repo/issues/1347/comments",
+    "events_url": "https://api.github.com/repos/octo-org/octo-repo/issues/1347/events",
+    "html_url": "https://github.com/octo-org/octo-repo/issues/1347",
+    "id": 1621012312,
+    "node_id": "I_kwDOAAABBB5ga9oY",
+    "number": 1347,
+    "title": "Add deterministic context packaging",
+    "user": {"login": "octocat", "id": 1, "type": "User"},
+    "labels": [{"id": 208045946, "name": "enhancement", "color": "84b6eb"}],
+    "state": "open",
+    "locked": false,
+    "assignees": [],
+    "comments": 0,
+    "created_at": "2026-07-11T16:00:00Z",
+    "updated_at": "2026-07-11T16:00:00Z",
+    "body": "Build context packages deterministically."
+  },
+  "repository": {
+    "id": 1296269,
+    "node_id": "MDEwOlJlcG9zaXRvcnkxMjk2MjY5",
+    "name": "octo-repo",
+    "full_name": "octo-org/octo-repo",
+    "private": false,
+    "owner": {"login": "octo-org", "id": 583231, "type": "Organization"},
+    "html_url": "https://github.com/octo-org/octo-repo",
+    "url": "https://api.github.com/repos/octo-org/octo-repo"
+  },
+  "sender": {
+    "login": "octocat",
+    "id": 1,
+    "node_id": "MDQ6VXNlcjE=",
+    "avatar_url": "https://github.com/images/error/octocat_happy.gif",
+    "html_url": "https://github.com/octocat",
+    "type": "User"
+  }
+}

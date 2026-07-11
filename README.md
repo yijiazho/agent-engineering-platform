@@ -45,6 +45,8 @@ schemas/
 fixtures/
   resources/
   runtime/
+skills/
+  review-aep-pr/
 src/
   aep/
 tests/
