@@ -31,7 +31,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 4 | [AEP-003: Build Resource Loader](tasks/AEP-003-build-resource-loader.md) | Completed |
 | 5 | [AEP-004: Build Runtime Object Store Interface](tasks/AEP-004-build-runtime-object-store-interface.md) | Completed |
 | 6 | [AEP-005: Normalize GitHub Issue Created Event](tasks/AEP-005-normalize-github-issue-created-event.md) | Completed |
-| 7 | [AEP-014: Implement ModelInvocation Adapter Interface](tasks/AEP-014-implement-modelinvocation-adapter-interface.md) | Not Started |
+| 7 | [AEP-014: Implement ModelInvocation Adapter Interface](tasks/AEP-014-implement-modelinvocation-adapter-interface.md) | Completed |
 | 8 | [AEP-019: Define Tool Runtime Contract](tasks/AEP-019-define-tool-runtime-contract.md) | Not Started |
 | 9 | [AEP-025: Implement Schema Evaluation](tasks/AEP-025-implement-schema-evaluation.md) | Not Started |
 | 10 | [AEP-011: Implement TaskExecution Lifecycle](tasks/AEP-011-implement-taskexecution-lifecycle.md) | Not Started |
@@ -82,7 +82,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-011 | AEP-002, AEP-004 | Not Started |
 | AEP-012 | AEP-003, AEP-011 | Not Started |
 | AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |
-| AEP-014 | AEP-001, AEP-002 | Not Started |
+| AEP-014 | AEP-001, AEP-002 | Completed |
 | AEP-015 | None | Not Started |
 | AEP-016 | AEP-015 | Not Started |
 | AEP-017 | AEP-003, AEP-004, AEP-016, AEP-018 | Not Started |
