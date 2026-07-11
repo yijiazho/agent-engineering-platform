@@ -29,7 +29,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 2 | [AEP-002: Define Runtime Object Schemas](tasks/AEP-002-define-runtime-object-schemas.md) | Completed |
 | 3 | [AEP-015: Build MVP Repository Scanner](tasks/AEP-015-build-mvp-repository-scanner.md) | Not Started |
 | 4 | [AEP-003: Build Resource Loader](tasks/AEP-003-build-resource-loader.md) | Completed |
-| 5 | [AEP-004: Build Runtime Object Store Interface](tasks/AEP-004-build-runtime-object-store-interface.md) | Not Started |
+| 5 | [AEP-004: Build Runtime Object Store Interface](tasks/AEP-004-build-runtime-object-store-interface.md) | Completed |
 | 6 | [AEP-005: Normalize GitHub Issue Created Event](tasks/AEP-005-normalize-github-issue-created-event.md) | Not Started |
 | 7 | [AEP-014: Implement ModelInvocation Adapter Interface](tasks/AEP-014-implement-modelinvocation-adapter-interface.md) | Not Started |
 | 8 | [AEP-019: Define Tool Runtime Contract](tasks/AEP-019-define-tool-runtime-contract.md) | Not Started |
@@ -72,7 +72,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-001 | None | Completed |
 | AEP-002 | None | Completed |
 | AEP-003 | AEP-001 | Completed |
-| AEP-004 | AEP-002 | Not Started |
+| AEP-004 | AEP-002 | Completed |
 | AEP-005 | AEP-001 | Not Started |
 | AEP-006 | AEP-004, AEP-005 | Not Started |
 | AEP-007 | AEP-003, AEP-005 | Not Started |
@@ -113,7 +113,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 
 | Phase | Tasks | Status |
 | ----- | ----- | ------ |
-| Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Not Started |
+| Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Not Started |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Not Started |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Not Started |

@@ -1,6 +1,6 @@
 # AEP-004: Build Runtime Object Store Interface
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -21,3 +21,12 @@ Define a Runtime Object Store interface and an in-memory implementation for test
 * Store supports idempotent create by deterministic key.
 * Store has tests for concurrent status updates.
 * Interface does not expose Git Resource storage concerns.
+
+## Implementation
+
+`src/aep/runtime_store.py` defines the persistence interface and a thread-safe
+in-memory implementation. Status updates support optimistic concurrency through
+an expected status, returned objects are defensive immutable snapshots, and
+terminal objects reject further state changes. Execution events remain separate,
+append-only runtime objects and all runtime objects can be indexed by their
+owning WorkflowExecution.
