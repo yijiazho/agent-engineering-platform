@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from functools import cache
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -93,15 +94,12 @@ def _validation_errors(content: Any, schema: dict[str, Any]) -> list[dict[str, s
 
 
 def _error_record(error: ValidationError) -> dict[str, str]:
-    path_parts = [str(part) for part in error.absolute_path]
+    path_parts = list(error.absolute_path)
     if error.validator == "required":
         missing = _missing_property(error.message)
         if missing is not None:
             path_parts.append(missing)
-    path = "$" + "".join(
-        f"[{part}]" if part.isdigit() else f".{part}" for part in path_parts
-    )
-    return {"path": path, "message": error.message}
+    return {"path": _json_path(path_parts), "message": error.message}
 
 
 def _missing_property(message: str) -> str | None:
@@ -114,6 +112,16 @@ def _error_sort_key(error: dict[str, str]) -> tuple[str, str]:
 
 
 def _validate_result_contract(result: dict[str, Any]) -> None:
+    validator = _evaluation_result_validator()
+    errors = sorted(validator.iter_errors(result), key=lambda error: list(error.absolute_path))
+    if errors:
+        error = errors[0]
+        path = _json_path(error.absolute_path)
+        raise SchemaEvaluationContractError(f"invalid EvaluationResult at {path}: {error.message}")
+
+
+@cache
+def _evaluation_result_validator() -> Draft202012Validator:
     schema_root = Path(__file__).parents[2] / "schemas"
     schema_paths = (
         schema_root / "resources" / "v1" / "resource-definitions.schema.json",
@@ -127,9 +135,16 @@ def _validate_result_contract(result: dict[str, Any]) -> None:
             schema["$id"],
             SchemaResource.from_contents(schema, default_specification=DRAFT202012),
         )
-    validator = Draft202012Validator(schemas[-1], registry=registry)
-    errors = sorted(validator.iter_errors(result), key=lambda error: list(error.absolute_path))
-    if errors:
-        error = errors[0]
-        path = "$" + "".join(f"[{part}]" if isinstance(part, int) else f".{part}" for part in error.absolute_path)
-        raise SchemaEvaluationContractError(f"invalid EvaluationResult at {path}: {error.message}")
+    return Draft202012Validator(schemas[-1], registry=registry)
+
+
+def _json_path(parts: Any) -> str:
+    path = "$"
+    for part in parts:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        elif isinstance(part, str) and part.isidentifier():
+            path += f".{part}"
+        else:
+            path += f"[{json.dumps(part)}]"
+    return path

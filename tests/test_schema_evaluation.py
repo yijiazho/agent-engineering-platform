@@ -1,7 +1,11 @@
 import pytest
 
 from aep.runtime_store import InMemoryRuntimeObjectStore
-from aep.schema_evaluation import SchemaEvaluationContractError, evaluate_schema
+from aep.schema_evaluation import (
+    SchemaEvaluationContractError,
+    _evaluation_result_validator,
+    evaluate_schema,
+)
 
 
 SCHEMA = {
@@ -69,6 +73,18 @@ def test_invalid_type_fails() -> None:
     assert "integer" in result["evidence"]["errors"][0]["message"]
 
 
+def test_numeric_property_name_is_not_rendered_as_array_index() -> None:
+    _, result = evaluate(
+        {"123": "not-an-integer"},
+        {
+            "type": "object",
+            "properties": {"123": {"type": "integer"}},
+        },
+    )
+
+    assert result["evidence"]["errors"][0]["path"] == '$["123"]'
+
+
 def test_malformed_schema_returns_failure_evidence() -> None:
     _, result = evaluate({}, {"type": 7})
 
@@ -133,3 +149,13 @@ def test_invocation_output_target_conforms_to_runtime_contract() -> None:
     )
 
     assert result["target"]["type"] == "AgentInvocation"
+
+
+def test_evaluation_result_validator_is_compiled_once() -> None:
+    _evaluation_result_validator.cache_clear()
+
+    first = _evaluation_result_validator()
+    second = _evaluation_result_validator()
+
+    assert second is first
+    assert _evaluation_result_validator.cache_info().misses == 1
