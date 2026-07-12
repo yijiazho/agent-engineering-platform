@@ -1,6 +1,6 @@
 # AEP-019: Define Tool Runtime Contract
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,19 @@ Define the Tool Runtime contract package with:
 * Contract excludes model provider calls.
 * Schema validation is part of the contract.
 * Fixtures cover success, validation failure, policy denial, and timeout.
+
+## Implementation
+
+`src/aep/tool_runtime.py` defines immutable Tool request, caller, result, metrics,
+lifecycle, status, and failure-class types. Requests accept only versioned `Tool`
+references, explicitly excluding Model provider invocation. `ToolAdapter` is the
+uniform extension boundary for Filesystem, Git, Docker, and GitHub implementations.
+
+`ToolSchemaValidator` provides input/output validation hooks, with a Draft 2020-12
+JSON Schema implementation. `invoke_tool` validates input before authorization,
+avoids adapter execution when policy denies a request, and validates successful
+structured output. It enforces the request deadline and converts validation,
+timeout, and adapter exceptions into typed failure results. Contract evidence is
+recursively immutable, and floating `latest` Tool references are rejected.
+Deterministic fixtures and tests cover success, invalid input and output, policy
+denial, timeout, and adapter failure without network access.

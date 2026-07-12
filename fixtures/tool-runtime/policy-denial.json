@@ -1,0 +1,4 @@
+{
+  "request": {"toolRef": {"kind": "Tool", "name": "filesystem", "version": "1.0.0"}, "input": {"path": "README.md"}, "caller": {"kind": "TaskExecution", "id": "taskexecution-000000000001"}, "capabilities": ["filesystem.read"], "timeoutMs": 1000, "traceId": "trace-tool-0003"},
+  "result": {"status": "DENIED", "output": null, "logsRef": null, "metrics": {"durationMs": 1}, "timing": {"startedAt": "2026-07-11T00:00:00Z", "completedAt": "2026-07-11T00:00:00.001Z"}, "failureClass": "POLICY", "failureMessage": "capability denied"}
+}
