@@ -14,6 +14,18 @@ from typing import Any, Final
 RuntimeObject = Mapping[str, Any]
 
 TERMINAL_STATUSES: Final = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
+RUNTIME_IDENTITY_FIELDS: Final = frozenset(
+    {"apiVersion", "id", "kind", "traceId", "createdAt", "provenance"}
+)
+KIND_IDENTITY_FIELDS: Final = {
+    "TaskExecution": frozenset(
+        {"workflowExecutionId", "taskRef", "attempt", "dependencyTaskExecutionIds"}
+    )
+}
+KIND_WRITE_ONCE_FIELDS: Final = {
+    "TaskExecution": frozenset({"contextPackageId", "resolvedAgentId"})
+}
+STATUS_MANAGED_FIELDS: Final = frozenset({"status", "updatedAt", "completedAt"})
 
 
 class RuntimeStoreError(Exception):
@@ -128,12 +140,24 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         if not status:
             raise ValueError("status must not be empty")
         change_values = deepcopy(dict(changes or {}))
-        protected = {"id", "kind", "status", "createdAt"}.intersection(change_values)
-        if protected:
-            raise ValueError(f"changes cannot replace protected fields: {sorted(protected)!r}")
 
         with self._lock:
             value = self._require(object_id)
+            protected_fields = (
+                RUNTIME_IDENTITY_FIELDS
+                | STATUS_MANAGED_FIELDS
+                | KIND_IDENTITY_FIELDS.get(value["kind"], frozenset())
+            )
+            protected = protected_fields.intersection(change_values)
+            protected |= {
+                field
+                for field in KIND_WRITE_ONCE_FIELDS.get(value["kind"], frozenset())
+                if field in value and field in change_values
+            }
+            if protected:
+                raise ValueError(
+                    f"changes cannot replace protected fields: {sorted(protected)!r}"
+                )
             current = value.get("status")
             if current is None:
                 raise ValueError(f"runtime object {object_id!r} has no status")

@@ -21,7 +21,13 @@ def runtime_object(object_id: str, *, status: str = "PENDING") -> dict[str, obje
         "traceId": "trace-123",
         "createdAt": "2026-07-10T00:00:00Z",
         "updatedAt": "2026-07-10T00:00:00Z",
+        "provenance": {"actor": "workflow-runtime", "resourceRefs": []},
         "workflowExecutionId": WORKFLOW_ID,
+        "taskRef": {"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
+        "attempt": 1,
+        "dependencyTaskExecutionIds": [],
+        "contextPackageId": "contextpackage-123456789abc",
+        "resolvedAgentId": "resolvedagent-123456789abc",
         "status": status,
         "evidence": {"output": "original"},
     }
@@ -92,6 +98,64 @@ def test_append_event_and_list_by_workflow_execution() -> None:
         task["id"],
         event["id"],
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("traceId", "different-trace"),
+        ("provenance", {"actor": "different", "resourceRefs": []}),
+        ("workflowExecutionId", "workflowexecution-abcdef123456"),
+        ("taskRef", {"kind": "Task", "name": "other-task", "version": "1.0.0"}),
+        ("attempt", 2),
+        ("dependencyTaskExecutionIds", ["taskexecution-abcdef123456"]),
+        ("contextPackageId", "contextpackage-abcdef123456"),
+        ("resolvedAgentId", "resolvedagent-abcdef123456"),
+    ],
+)
+def test_task_execution_identity_fields_cannot_change(
+    field: str, replacement: object
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    object_id = "taskexecution-123456789abc"
+    original = runtime_object(object_id, status="RUNNING")
+    store.create(original, deterministic_key="task")
+
+    with pytest.raises(ValueError, match="protected fields"):
+        store.update_status(
+            object_id,
+            "SUCCEEDED",
+            expected_status="RUNNING",
+            changes={field: replacement},
+        )
+
+    persisted = store.get(object_id)
+    assert persisted["status"] == "RUNNING"
+    assert persisted[field] == original[field]
+
+
+def test_late_bound_task_identity_can_only_be_attached_once() -> None:
+    store = InMemoryRuntimeObjectStore()
+    object_id = "taskexecution-123456789abc"
+    pending = runtime_object(object_id)
+    del pending["contextPackageId"]
+    store.create(pending, deterministic_key="task")
+
+    attached = store.update_status(
+        object_id,
+        "RUNNING",
+        expected_status="PENDING",
+        changes={"contextPackageId": "contextpackage-abcdef123456"},
+    )
+
+    assert attached["contextPackageId"] == "contextpackage-abcdef123456"
+    with pytest.raises(ValueError, match="contextPackageId"):
+        store.update_status(
+            object_id,
+            "AWAITING_APPROVAL",
+            expected_status="RUNNING",
+            changes={"contextPackageId": "contextpackage-fedcba654321"},
+        )
 
 
 def test_concurrent_terminal_status_updates_have_one_winner() -> None:
