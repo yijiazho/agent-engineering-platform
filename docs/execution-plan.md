@@ -34,7 +34,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 7 | [AEP-014: Implement ModelInvocation Adapter Interface](tasks/AEP-014-implement-modelinvocation-adapter-interface.md) | Completed |
 | 8 | [AEP-019: Define Tool Runtime Contract](tasks/AEP-019-define-tool-runtime-contract.md) | Completed |
 | 9 | [AEP-025: Implement Schema Evaluation](tasks/AEP-025-implement-schema-evaluation.md) | Completed |
-| 10 | [AEP-011: Implement TaskExecution Lifecycle](tasks/AEP-011-implement-taskexecution-lifecycle.md) | Not Started |
+| 10 | [AEP-011: Implement TaskExecution Lifecycle](tasks/AEP-011-implement-taskexecution-lifecycle.md) | Completed |
 | 11 | [AEP-016: Build Repository Knowledge Query API](tasks/AEP-016-build-repository-knowledge-query-api.md) | Not Started |
 | 12 | [AEP-018: Implement GeneratedArtifact Store](tasks/AEP-018-implement-generatedartifact-store.md) | Not Started |
 | 13 | [AEP-006: Implement Event Deduplication](tasks/AEP-006-implement-event-deduplication.md) | Completed |
@@ -79,7 +79,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-008 | AEP-004, AEP-006, AEP-007 | Not Started |
 | AEP-009 | AEP-003 | Not Started |
 | AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Not Started |
-| AEP-011 | AEP-002, AEP-004 | Not Started |
+| AEP-011 | AEP-002, AEP-004 | Completed |
 | AEP-012 | AEP-003, AEP-011 | Not Started |
 | AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |
 | AEP-014 | AEP-001, AEP-002 | Completed |
@@ -115,7 +115,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | ----- | ----- | ------ |
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Not Started |
-| Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Not Started |
+| Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | In Progress |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Not Started |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | In Progress |

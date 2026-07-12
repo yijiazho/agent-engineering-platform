@@ -54,8 +54,10 @@ class RuntimeObjectStore(ABC):
         status: str,
         *,
         expected_status: str | None = None,
+        updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
     ) -> RuntimeObject:
-        """Atomically update mutable execution status."""
+        """Atomically update mutable execution status and associated evidence."""
 
     @abstractmethod
     def append_event(self, event: RuntimeObject) -> RuntimeObject:
@@ -120,9 +122,15 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         status: str,
         *,
         expected_status: str | None = None,
+        updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
     ) -> RuntimeObject:
         if not status:
             raise ValueError("status must not be empty")
+        change_values = deepcopy(dict(changes or {}))
+        protected = {"id", "kind", "status", "createdAt"}.intersection(change_values)
+        if protected:
+            raise ValueError(f"changes cannot replace protected fields: {sorted(protected)!r}")
 
         with self._lock:
             value = self._require(object_id)
@@ -140,7 +148,8 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
                     f"completed runtime object {object_id!r} is immutable"
                 )
 
-            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            now = updated_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            value.update(change_values)
             value["status"] = status
             value["updatedAt"] = now
             if status in TERMINAL_STATUSES:
