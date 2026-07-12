@@ -1,0 +1,4 @@
+{
+  "request": {"toolRef": {"kind": "Tool", "name": "filesystem", "version": "1.0.0"}, "input": {"path": "README.md"}, "caller": {"kind": "TaskExecution", "id": "taskexecution-000000000001"}, "capabilities": ["filesystem.read"], "timeoutMs": 10, "traceId": "trace-tool-0004"},
+  "result": {"status": "TIMED_OUT", "output": null, "logsRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "metrics": {"durationMs": 10}, "timing": {"startedAt": "2026-07-11T00:00:00Z", "completedAt": "2026-07-11T00:00:00.010Z"}, "failureClass": "TIMEOUT", "failureMessage": "execution exceeded timeout"}
+}
