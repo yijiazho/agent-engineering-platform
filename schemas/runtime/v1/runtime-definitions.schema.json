@@ -365,13 +365,18 @@
               "additionalProperties": false,
               "required": ["type", "id"],
               "properties": {
-                "type": { "type": "string", "enum": ["TaskExecution", "GeneratedArtifact"] },
+                "type": { "type": "string", "enum": ["TaskExecution", "GeneratedArtifact", "AgentInvocation", "ModelInvocation", "ToolInvocation"] },
                 "id": { "$ref": "#/$defs/runtimeId" }
               }
             },
             "status": { "$ref": "#/$defs/status" },
             "outcome": { "type": "string", "enum": ["PASS", "FAIL", "PENDING"] },
             "metrics": { "$ref": "#/$defs/jsonObject" },
+            "logs": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "evidence": { "$ref": "#/$defs/jsonObject" },
             "evidenceAddress": { "$ref": "#/$defs/contentAddress" },
             "failure": { "$ref": "#/$defs/failure" },
             "startedAt": { "$ref": "#/$defs/timestamp" },
