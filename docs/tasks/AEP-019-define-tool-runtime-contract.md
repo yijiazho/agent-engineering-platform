@@ -37,12 +37,15 @@ Define the Tool Runtime contract package with:
 lifecycle, status, and failure-class types. Requests accept only versioned `Tool`
 references, explicitly excluding Model provider invocation. `ToolAdapter` is the
 uniform extension boundary for Filesystem, Git, Docker, and GitHub implementations.
+Adapters start an isolated `ToolExecution` handle whose wait, graceful termination,
+forced termination, and cleanup operations remain under Tool Runtime control.
 
 `ToolSchemaValidator` provides input/output validation hooks, with a Draft 2020-12
 JSON Schema implementation. `invoke_tool` validates input before authorization,
 avoids adapter execution when policy denies a request, and validates successful
-structured output. It enforces the request deadline and converts validation,
-timeout, and adapter exceptions into typed failure results. Contract evidence is
+structured output. It enforces the request deadline by terminating and, after a
+bounded grace period, killing the execution sandbox; cleanup always follows.
+Validation, lifecycle, and adapter exceptions become typed failure results. Contract evidence is
 recursively immutable, and Tool references require immutable semantic versions.
 Deterministic fixtures and tests cover success, invalid input and output, policy
 denial, timeout, and adapter failure without network access.

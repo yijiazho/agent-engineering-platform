@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from time import sleep
 
 import pytest
 
@@ -68,6 +67,7 @@ def test_success_contract_contains_request_and_result_evidence() -> None:
     assert actual.metrics.duration_ms == 8
     assert tool_request.capabilities == ("filesystem.read",)
     assert tool_request.trace_id == "trace-tool-0001"
+    assert adapter.executions[0].cleaned_up is True
 
 
 def test_invalid_input_is_normalized_before_adapter_execution() -> None:
@@ -113,7 +113,7 @@ def test_adapter_exception_is_normalized() -> None:
     assert actual.failure_message == "sandbox failed"
 
 
-@pytest.mark.parametrize("invalid_result", [None, {"status": "SUCCEEDED"}])
+@pytest.mark.parametrize("invalid_result", [{"status": "SUCCEEDED"}, "completed"])
 def test_invalid_adapter_return_type_is_normalized(invalid_result) -> None:
     actual = invoke_tool(
         request(), validator=validator(), authorize=lambda _: True,
@@ -129,19 +129,20 @@ def test_invalid_adapter_return_type_is_normalized(invalid_result) -> None:
 
 def test_runtime_returns_timeout_when_adapter_exceeds_deadline() -> None:
     fixture = load_fixture("timeout")
-
-    class SlowAdapter(FakeToolAdapter):
-        def invoke(self, tool_request):
-            sleep(0.05)
-            return result(load_fixture("success")["result"])
+    adapter = FakeToolAdapter([None])
 
     actual = invoke_tool(
         request(fixture["request"]), validator=validator(), authorize=lambda _: True,
-        adapter=SlowAdapter([result(load_fixture("success")["result"])]),
+        adapter=adapter,
     )
 
     assert actual.status is ToolResultStatus.TIMED_OUT
     assert actual.failure_class is ToolFailureClass.TIMEOUT
+    execution = adapter.executions[0]
+    assert execution.wait_timeouts == [10, 100]
+    assert execution.terminated is True
+    assert execution.killed is True
+    assert execution.cleaned_up is True
 
 
 def test_invalid_adapter_output_is_normalized() -> None:

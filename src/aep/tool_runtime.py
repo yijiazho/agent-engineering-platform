@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,6 +21,7 @@ SEMVER_PATTERN = re.compile(
     r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
+TERMINATION_GRACE_MS = 100
 
 
 def _freeze(value: Any) -> Any:
@@ -212,29 +212,79 @@ class JsonSchemaToolValidator(ToolSchemaValidator):
         self._validate(self._output, "output", value)
 
 
+class ToolExecution(ABC):
+    """A running, isolated Tool execution that the runtime can terminate."""
+
+    @abstractmethod
+    def wait(self, timeout_ms: int) -> ToolResult | None:
+        """Return the result, or None when the deadline expires."""
+
+    @abstractmethod
+    def terminate(self) -> None:
+        """Request graceful termination of the sandbox."""
+
+    @abstractmethod
+    def kill(self) -> None:
+        """Force termination of the sandbox."""
+
+    @abstractmethod
+    def cleanup(self) -> None:
+        """Release resources associated with the sandbox."""
+
+
 class ToolAdapter(ABC):
     """Extension boundary implemented by Filesystem, Git, Docker, and GitHub adapters."""
 
     @abstractmethod
-    def invoke(self, request: ToolRequest) -> ToolResult:
-        """Execute in a sandbox and return normalized evidence."""
+    def start(self, request: ToolRequest) -> ToolExecution:
+        """Start an isolated execution and return its lifecycle handle."""
+
+
+class FakeToolExecution(ToolExecution):
+    """Deterministic, controllable execution handle for contract tests."""
+
+    def __init__(self, outcomes: Sequence[ToolResult | Exception | None]) -> None:
+        self._outcomes = tuple(outcomes)
+        self._wait_count = 0
+        self.wait_timeouts: list[int] = []
+        self.terminated = False
+        self.killed = False
+        self.cleaned_up = False
+
+    def wait(self, timeout_ms: int) -> ToolResult | None:
+        self.wait_timeouts.append(timeout_ms)
+        index = min(self._wait_count, len(self._outcomes) - 1)
+        self._wait_count += 1
+        outcome = self._outcomes[index]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def cleanup(self) -> None:
+        self.cleaned_up = True
 
 
 class FakeToolAdapter(ToolAdapter):
     """Deterministic adapter for contract tests and local execution."""
 
-    def __init__(self, outcomes: Sequence[ToolResult | Exception]) -> None:
+    def __init__(self, outcomes: Sequence[ToolResult | Exception | None]) -> None:
         if not outcomes:
             raise ValueError("outcomes must not be empty")
         self._outcomes = tuple(outcomes)
         self.requests: list[ToolRequest] = []
+        self.executions: list[FakeToolExecution] = []
 
-    def invoke(self, request: ToolRequest) -> ToolResult:
+    def start(self, request: ToolRequest) -> ToolExecution:
         self.requests.append(request)
-        outcome = self._outcomes[min(len(self.requests) - 1, len(self._outcomes) - 1)]
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
+        execution = FakeToolExecution(self._outcomes)
+        self.executions.append(execution)
+        return execution
 
 
 AuthorizationHook = Callable[[ToolRequest], bool]
@@ -283,38 +333,59 @@ def invoke_tool(
             "requested capabilities were denied",
         )
 
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aep-tool")
-    future = executor.submit(adapter.invoke, request)
     try:
-        result = future.result(timeout=request.timeout_ms / 1000)
-    except FutureTimeoutError:
-        future.cancel()
-        return failure(
-            ToolResultStatus.TIMED_OUT,
-            ToolFailureClass.TIMEOUT,
-            f"adapter exceeded timeout of {request.timeout_ms}ms",
-        )
+        execution = adapter.start(request)
     except Exception as error:
         return failure(
             ToolResultStatus.FAILED,
             ToolFailureClass.ADAPTER,
             str(error) or type(error).__name__,
         )
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
 
-    if not isinstance(result, ToolResult):
+    normalized_result: ToolResult
+    cleanup_error: Exception | None = None
+    try:
+        result = execution.wait(request.timeout_ms)
+        if result is None:
+            execution.terminate()
+            if execution.wait(TERMINATION_GRACE_MS) is None:
+                execution.kill()
+            normalized_result = failure(
+                ToolResultStatus.TIMED_OUT,
+                ToolFailureClass.TIMEOUT,
+                f"adapter exceeded timeout of {request.timeout_ms}ms",
+            )
+        elif not isinstance(result, ToolResult):
+            normalized_result = failure(
+                ToolResultStatus.FAILED,
+                ToolFailureClass.ADAPTER,
+                f"adapter returned {type(result).__name__}, expected ToolResult",
+            )
+        elif result.status is ToolResultStatus.SUCCEEDED:
+            validator.validate_output(result.output)
+            normalized_result = result
+        else:
+            normalized_result = result
+    except ToolSchemaValidationError as error:
+        normalized_result = failure(
+            ToolResultStatus.FAILED, ToolFailureClass.VALIDATION, str(error)
+        )
+    except Exception as error:
+        normalized_result = failure(
+            ToolResultStatus.FAILED,
+            ToolFailureClass.ADAPTER,
+            str(error) or type(error).__name__,
+        )
+    finally:
+        try:
+            execution.cleanup()
+        except Exception as error:
+            cleanup_error = error
+
+    if cleanup_error is not None:
         return failure(
             ToolResultStatus.FAILED,
             ToolFailureClass.ADAPTER,
-            f"adapter returned {type(result).__name__}, expected ToolResult",
+            f"execution cleanup failed: {cleanup_error}",
         )
-
-    if result.status is ToolResultStatus.SUCCEEDED:
-        try:
-            validator.validate_output(result.output)
-        except ToolSchemaValidationError as error:
-            return failure(
-                ToolResultStatus.FAILED, ToolFailureClass.VALIDATION, str(error)
-            )
-    return result
+    return normalized_result

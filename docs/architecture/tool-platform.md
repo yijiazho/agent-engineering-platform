@@ -495,6 +495,13 @@ This allows independent evolution of platform capabilities.
 
 The Tool Runtime exposes a uniform interface regardless of implementation.
 
+Adapters start Tools in an isolated process, container, Pod, or remote execution
+and return a lifecycle handle to the Tool Runtime. The handle supports bounded
+waiting, graceful termination, forced termination, and cleanup. A timeout is not
+implemented by abandoning an in-process thread: the runtime terminates the
+execution sandbox, waits for a bounded grace period, and kills it if necessary.
+Cleanup runs for successful, failed, and timed-out executions.
+
 Every Tool invocation follows the same lifecycle:
 
 ```text id="0djlwm"
