@@ -362,7 +362,7 @@ EvaluationResult records the result of deterministic validation.
 Responsibilities:
 
 * bind to Evaluation resource version
-* record evaluated artifact or TaskExecution
+* record evaluated artifact, TaskExecution, or invocation output
 * record pass/fail outcome
 * capture logs and evidence
 * classify failure reason

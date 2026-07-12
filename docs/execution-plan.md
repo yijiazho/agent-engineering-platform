@@ -33,7 +33,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 6 | [AEP-005: Normalize GitHub Issue Created Event](tasks/AEP-005-normalize-github-issue-created-event.md) | Completed |
 | 7 | [AEP-014: Implement ModelInvocation Adapter Interface](tasks/AEP-014-implement-modelinvocation-adapter-interface.md) | Completed |
 | 8 | [AEP-019: Define Tool Runtime Contract](tasks/AEP-019-define-tool-runtime-contract.md) | Completed |
-| 9 | [AEP-025: Implement Schema Evaluation](tasks/AEP-025-implement-schema-evaluation.md) | Not Started |
+| 9 | [AEP-025: Implement Schema Evaluation](tasks/AEP-025-implement-schema-evaluation.md) | Completed |
 | 10 | [AEP-011: Implement TaskExecution Lifecycle](tasks/AEP-011-implement-taskexecution-lifecycle.md) | Not Started |
 | 11 | [AEP-016: Build Repository Knowledge Query API](tasks/AEP-016-build-repository-knowledge-query-api.md) | Not Started |
 | 12 | [AEP-018: Implement GeneratedArtifact Store](tasks/AEP-018-implement-generatedartifact-store.md) | Not Started |
@@ -93,7 +93,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-022 | AEP-019, AEP-020 | Not Started |
 | AEP-023 | AEP-019, AEP-020 | Not Started |
 | AEP-024 | AEP-019, AEP-020 | Not Started |
-| AEP-025 | AEP-002 | Not Started |
+| AEP-025 | AEP-002 | Completed |
 | AEP-026 | AEP-002, AEP-022 | Not Started |
 | AEP-027 | AEP-002, AEP-023 | Not Started |
 | AEP-028 | AEP-004, AEP-020, AEP-025, AEP-026, AEP-027 | Not Started |
@@ -118,7 +118,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Not Started |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Not Started |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
-| Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Not Started |
+| Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | In Progress |
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Not Started |
 | Deployment And Observability | AEP-035, AEP-036, AEP-037 | Not Started |
 

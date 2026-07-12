@@ -1,6 +1,6 @@
 # AEP-025: Implement Schema Evaluation
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
