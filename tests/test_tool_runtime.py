@@ -113,6 +113,20 @@ def test_adapter_exception_is_normalized() -> None:
     assert actual.failure_message == "sandbox failed"
 
 
+@pytest.mark.parametrize("invalid_result", [None, {"status": "SUCCEEDED"}])
+def test_invalid_adapter_return_type_is_normalized(invalid_result) -> None:
+    actual = invoke_tool(
+        request(), validator=validator(), authorize=lambda _: True,
+        adapter=FakeToolAdapter([invalid_result]),
+    )
+
+    assert actual.status is ToolResultStatus.FAILED
+    assert actual.failure_class is ToolFailureClass.ADAPTER
+    assert actual.failure_message == (
+        f"adapter returned {type(invalid_result).__name__}, expected ToolResult"
+    )
+
+
 def test_runtime_returns_timeout_when_adapter_exceeds_deadline() -> None:
     fixture = load_fixture("timeout")
 
@@ -154,11 +168,22 @@ def test_model_references_are_explicitly_excluded() -> None:
         request(data)
 
 
-def test_floating_tool_references_are_excluded() -> None:
+@pytest.mark.parametrize(
+    "invalid_version",
+    ["latest", "one", "1.0", "01.2.3", "1.02.3", "1.2.03", "1.2.3.4", 123],
+)
+def test_invalid_tool_versions_are_excluded(invalid_version) -> None:
     data = load_fixture("success")["request"]
-    data["toolRef"]["version"] = "latest"
-    with pytest.raises(ValueError, match="immutable version"):
+    data["toolRef"]["version"] = invalid_version
+    with pytest.raises(ValueError, match="immutable semantic version"):
         request(data)
+
+
+@pytest.mark.parametrize("valid_version", ["0.0.0", "1.2.3", "v1.2.3-rc.1+build.7"])
+def test_semantic_tool_versions_are_accepted(valid_version) -> None:
+    data = load_fixture("success")["request"]
+    data["toolRef"]["version"] = valid_version
+    assert request(data).tool_ref["version"] == valid_version
 
 
 def test_request_and_result_evidence_are_recursively_immutable() -> None:

@@ -43,6 +43,6 @@ JSON Schema implementation. `invoke_tool` validates input before authorization,
 avoids adapter execution when policy denies a request, and validates successful
 structured output. It enforces the request deadline and converts validation,
 timeout, and adapter exceptions into typed failure results. Contract evidence is
-recursively immutable, and floating `latest` Tool references are rejected.
+recursively immutable, and Tool references require immutable semantic versions.
 Deterministic fixtures and tests cover success, invalid input and output, policy
 denial, timeout, and adapter failure without network access.

@@ -9,6 +9,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+import re
 from types import MappingProxyType
 from time import monotonic
 from typing import Any
@@ -17,6 +18,10 @@ from jsonschema import Draft202012Validator
 
 
 JsonObject = Mapping[str, Any]
+SEMVER_PATTERN = re.compile(
+    r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
+)
 
 
 def _freeze(value: Any) -> Any:
@@ -95,8 +100,11 @@ class ToolRequest:
         for key in ("name", "version"):
             if not self.tool_ref.get(key):
                 raise ValueError(f"tool_ref.{key} must not be empty")
-        if self.tool_ref["version"] == "latest":
-            raise ValueError("tool_ref.version must be an immutable version, not 'latest'")
+        version = self.tool_ref["version"]
+        if not isinstance(version, str) or not SEMVER_PATTERN.fullmatch(version):
+            raise ValueError(
+                "tool_ref.version must be an immutable semantic version"
+            )
         capabilities = tuple(self.capabilities)
         if not capabilities or any(not capability for capability in capabilities):
             raise ValueError("capabilities must contain non-empty values")
@@ -294,6 +302,13 @@ def invoke_tool(
         )
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+
+    if not isinstance(result, ToolResult):
+        return failure(
+            ToolResultStatus.FAILED,
+            ToolFailureClass.ADAPTER,
+            f"adapter returned {type(result).__name__}, expected ToolResult",
+        )
 
     if result.status is ToolResultStatus.SUCCEEDED:
         try:
