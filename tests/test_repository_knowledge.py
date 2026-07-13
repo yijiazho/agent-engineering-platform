@@ -560,6 +560,9 @@ def test_snapshot_rejects_non_json_attribute_values(value) -> None:
         "C:/Windows/system.ini",
         r"C:relative\secret.txt",
         r"\\server\share\secret.txt",
+        " " + r"C:\Windows\system.ini",
+        "\tC:/Windows/system.ini ",
+        " " + r"\\server\share\secret.txt",
     ],
 )
 def test_queries_reject_paths_outside_the_repository(path: str) -> None:

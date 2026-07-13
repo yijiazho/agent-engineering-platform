@@ -506,9 +506,10 @@ def _freeze(value: Any) -> Any:
 def _normalize_path(value: str, *, allow_root: bool = False) -> str:
     if not isinstance(value, str):
         raise ValueError("repository paths must be strings")
-    if PureWindowsPath(value).drive:
+    stripped = value.strip()
+    if PureWindowsPath(stripped).drive:
         raise ValueError("repository paths must be non-empty relative paths")
-    converted = value.strip().replace("\\", "/")
+    converted = stripped.replace("\\", "/")
     if converted.startswith("/"):
         raise ValueError("repository paths must be non-empty relative paths")
     normalized = converted.strip("/")
