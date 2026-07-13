@@ -342,6 +342,25 @@ The entire repository should rarely require rebuilding.
 
 The Query Engine provides deterministic access to the Repository Knowledge Graph.
 
+The public `RepositoryKnowledgeProvider` contract supports exact file lookup,
+documentation lookup, dependency manifest lookup, test hint lookup, and
+candidate-file search. Typed queries use structured terms, repository-relative
+path prefixes, language or ecosystem filters, and result limits. They do not
+invoke an LLM.
+
+All providers return the same immutable `KnowledgeResult` shape. Each result
+includes the repository revision, snapshot version and producer, source path and
+optional line or symbol span, and a traversal path explaining its selection.
+Snapshot record attributes are restricted to JSON-compatible values and are
+recursively frozen when published so later queries cannot observe mutation.
+The MVP `InMemoryRepositoryKnowledgeProvider` evaluates these queries over the
+flat scanner snapshot. A future graph or AST provider may use richer traversal
+internally while preserving this caller-facing contract.
+
+Results use a stable ordering: descending deterministic match score, followed by
+case-normalized source path, source path, and record identifier. Exact ties
+therefore do not depend on snapshot insertion order.
+
 Supported query types include:
 
 Structural
