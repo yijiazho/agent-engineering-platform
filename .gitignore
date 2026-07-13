@@ -15,6 +15,9 @@ desktop.ini
 .env.*
 !.env.example
 
+# Codex config
+.codex/config.toml
+
 # Logs
 *.log
 logs/
