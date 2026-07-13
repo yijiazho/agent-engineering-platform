@@ -27,7 +27,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | -----: | ---- | ------ |
 | 1 | [AEP-001: Define Resource Schemas](tasks/AEP-001-define-resource-schemas.md) | Completed |
 | 2 | [AEP-002: Define Runtime Object Schemas](tasks/AEP-002-define-runtime-object-schemas.md) | Completed |
-| 3 | [AEP-015: Build MVP Repository Scanner](tasks/AEP-015-build-mvp-repository-scanner.md) | Not Started |
+| 3 | [AEP-015: Build MVP Repository Scanner](tasks/AEP-015-build-mvp-repository-scanner.md) | Completed |
 | 4 | [AEP-003: Build Resource Loader](tasks/AEP-003-build-resource-loader.md) | Completed |
 | 5 | [AEP-004: Build Runtime Object Store Interface](tasks/AEP-004-build-runtime-object-store-interface.md) | Completed |
 | 6 | [AEP-005: Normalize GitHub Issue Created Event](tasks/AEP-005-normalize-github-issue-created-event.md) | Completed |
@@ -83,7 +83,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-012 | AEP-003, AEP-011 | Not Started |
 | AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |
 | AEP-014 | AEP-001, AEP-002 | Completed |
-| AEP-015 | None | Not Started |
+| AEP-015 | None | Completed |
 | AEP-016 | AEP-015 | Not Started |
 | AEP-017 | AEP-003, AEP-004, AEP-016, AEP-018 | Not Started |
 | AEP-018 | AEP-002, AEP-004 | Not Started |
@@ -116,7 +116,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Not Started |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | In Progress |
-| Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Not Started |
+| Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | In Progress |
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Not Started |
