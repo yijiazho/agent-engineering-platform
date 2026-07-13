@@ -616,11 +616,20 @@ class QueryProvenance:
             "snapshot_created_at",
             "snapshot_producer",
         ):
-            if not getattr(self, name):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
                 raise ValueError(f"{name} must not be empty")
+        if not isinstance(self.source, SourceLocation):
+            raise ValueError("source must be a SourceLocation")
+        if isinstance(self.traversal_path, str) or not isinstance(
+            self.traversal_path, Sequence
+        ):
+            raise ValueError("traversal_path must be a sequence of strings")
         traversal = tuple(self.traversal_path)
-        if not traversal or any(not step for step in traversal):
+        if not traversal:
             raise ValueError("traversal_path must explain how the result was selected")
+        if any(not isinstance(step, str) or not step for step in traversal):
+            raise ValueError("traversal_path must be a sequence of non-empty strings")
         object.__setattr__(self, "traversal_path", traversal)
 
 
@@ -635,10 +644,16 @@ class KnowledgeResult:
     provenance: QueryProvenance
 
     def __post_init__(self) -> None:
-        if not self.id:
+        if not isinstance(self.id, str) or not self.id:
             raise ValueError("result id must not be empty")
+        if not isinstance(self.kind, KnowledgeKind):
+            raise ValueError("result kind must be a KnowledgeKind")
         if not isinstance(self.score, int) or isinstance(self.score, bool) or self.score < 0:
             raise ValueError("score must be a non-negative integer")
+        if not isinstance(self.attributes, Mapping):
+            raise ValueError("result attributes must be a mapping")
+        if not isinstance(self.provenance, QueryProvenance):
+            raise ValueError("provenance must be a QueryProvenance")
         object.__setattr__(self, "attributes", _freeze(self.attributes))
 
 

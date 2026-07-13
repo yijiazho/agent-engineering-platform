@@ -218,6 +218,8 @@ def test_rejects_non_git_repository(tmp_path):
         MvpRepositoryScanner().scan(
             tmp_path, revision="HEAD", scanned_at=SCANNED_AT
         )
+
+
 from aep.repository_knowledge import (
     CandidateFileQuery,
     DependencyManifest,
@@ -226,6 +228,8 @@ from aep.repository_knowledge import (
     FileQuery,
     InMemoryRepositoryKnowledgeProvider,
     KnowledgeKind,
+    KnowledgeResult,
+    QueryProvenance,
     RepositoryFile,
     RepositoryKnowledgeProvider,
     RepositoryKnowledgeSnapshot,
@@ -346,6 +350,19 @@ def snapshot(records: list[SnapshotRecord]) -> RepositoryKnowledgeSnapshot:
 
 def provider(records: list[SnapshotRecord]) -> InMemoryRepositoryKnowledgeProvider:
     return InMemoryRepositoryKnowledgeProvider(snapshot(records))
+
+
+def provenance(**changes) -> QueryProvenance:
+    values = {
+        "repository_revision": REVISION,
+        "snapshot_version": "snapshot-v12",
+        "snapshot_created_at": "2026-07-12T10:00:00Z",
+        "snapshot_producer": "mvp-scanner/1.0.0",
+        "source": SourceLocation("src/auth.py"),
+        "traversal_path": ("snapshot:snapshot-v12", "file:file-auth"),
+    }
+    values.update(changes)
+    return QueryProvenance(**values)
 
 
 def all_records() -> list[SnapshotRecord]:
@@ -581,3 +598,42 @@ def test_source_locations_can_express_future_ast_backed_results() -> None:
 
     assert location.symbol == "login"
     assert (location.start_line, location.end_line) == (7, 11)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"source": "src/auth.py"}, "source must be a SourceLocation"),
+        ({"traversal_path": "snapshot:file"}, "sequence of strings"),
+        ({"traversal_path": {"snapshot:file"}}, "sequence of strings"),
+        ({"traversal_path": ("snapshot:file", 1)}, "sequence of non-empty strings"),
+        ({"traversal_path": ()}, "must explain how the result was selected"),
+        ({"repository_revision": 123}, "repository_revision must not be empty"),
+    ],
+)
+def test_query_provenance_rejects_invalid_contract_values(changes, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        provenance(**changes)
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"id": 123}, "result id must not be empty"),
+        ({"kind": "FILE"}, "result kind must be a KnowledgeKind"),
+        ({"attributes": []}, "result attributes must be a mapping"),
+        ({"provenance": {}}, "provenance must be a QueryProvenance"),
+    ],
+)
+def test_knowledge_result_rejects_invalid_contract_values(changes, message: str) -> None:
+    values = {
+        "id": "file-auth",
+        "kind": KnowledgeKind.FILE,
+        "score": 0,
+        "attributes": {"language": "Python"},
+        "provenance": provenance(),
+    }
+    values.update(changes)
+
+    with pytest.raises(ValueError, match=message):
+        KnowledgeResult(**values)
