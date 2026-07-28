@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 13 |
+| Completed | 14 |
 | In Progress | 0 |
-| Not Started | 24 |
+| Not Started | 23 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -34,7 +34,9 @@ The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, TaskExecution lifecycle,
 provider-neutral model and Tool boundaries, schema evaluation, the initial
 repository-knowledge scanner and query API, and immutable content-addressed
-GeneratedArtifact storage. The end-to-end MVP workflow is not yet runnable.
+GeneratedArtifact storage. Normalized events now resolve deterministically to
+explicitly versioned Workflow references. The end-to-end MVP workflow is not
+yet runnable.
 
 ---
 
@@ -57,7 +59,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 11 | [AEP-016: Build Repository Knowledge Query API](tasks/AEP-016-build-repository-knowledge-query-api.md) | Completed |
 | 12 | [AEP-018: Implement GeneratedArtifact Store](tasks/AEP-018-implement-generatedartifact-store.md) | Completed |
 | 13 | [AEP-006: Implement Event Deduplication](tasks/AEP-006-implement-event-deduplication.md) | Completed |
-| 14 | [AEP-007: Resolve Workflow For Event](tasks/AEP-007-resolve-workflow-for-event.md) | Not Started |
+| 14 | [AEP-007: Resolve Workflow For Event](tasks/AEP-007-resolve-workflow-for-event.md) | Completed |
 | 15 | [AEP-009: Build Task DAG Resolver](tasks/AEP-009-build-task-dag-resolver.md) | Not Started |
 | 16 | [AEP-020: Implement Pre-Execution Capability Policy](tasks/AEP-020-implement-pre-execution-capability-policy.md) | Not Started |
 | 17 | [AEP-008: Create WorkflowExecution](tasks/AEP-008-create-workflowexecution.md) | Not Started |
@@ -94,7 +96,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-004 | AEP-002 | Completed |
 | AEP-005 | AEP-001 | Completed |
 | AEP-006 | AEP-004, AEP-005 | Completed |
-| AEP-007 | AEP-003, AEP-005 | Not Started |
+| AEP-007 | AEP-003, AEP-005 | Completed |
 | AEP-008 | AEP-004, AEP-006, AEP-007 | Not Started |
 | AEP-009 | AEP-003 | Not Started |
 | AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Not Started |

@@ -1,6 +1,6 @@
 # AEP-007: Resolve Workflow For Event
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,17 @@ Implement a Workflow resolver that:
 * Resolver returns no match when no trigger exists.
 * Resolver fails on multiple ambiguous matches unless policy allows fan-out.
 * Tests use Resource Loader fixtures.
+
+## Implementation
+
+`aep.workflow_resolver.resolve_workflow_for_event` resolves each versioned
+Workflow trigger to its loaded Event Resource and compares the declared source
+and type with the normalized event. It returns a deterministic
+`WorkflowResolution` containing explicit Workflow references; an empty
+reference tuple is the no-match result.
+
+Ambiguous matches raise `AmbiguousWorkflowMatchError` unless the caller
+explicitly enables fan-out. Invalid normalized events and malformed,
+duplicate, or unresolved trigger references raise structured errors with
+machine-readable codes and details. Unit tests load a complete repository
+fixture through `ResourceLoader` and use the GitHub issue normalization fixture.
