@@ -46,7 +46,9 @@ For documentation changes, verify links and task counts manually. When code is a
 
 ## Project Skills
 
-Use `skills/review-aep-pr/SKILL.md` when reviewing pull requests or local diffs for severity-ranked findings and the project scoring rubric.
+Use `skills/implement-aep-feature/SKILL.md` when implementing an AEP task or feature from its contracts and acceptance criteria.
+
+Use `skills/review-aep-pr/SKILL.md` for an independent, read-only review of another agent's implementation, a pull request, or a local diff using severity-ranked findings and the project scoring rubric.
 
 ## Commit & Pull Request Guidelines
 
