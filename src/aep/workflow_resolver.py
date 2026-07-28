@@ -113,6 +113,7 @@ def _event_identity(event: Mapping[str, Any]) -> tuple[str, str]:
             details={"field": "event", "reason": "invalid_type"},
         )
 
+    cleaned: dict[str, str] = {}
     for field in ("source", "type"):
         value = event.get(field)
         if not isinstance(value, str) or not value.strip():
@@ -120,7 +121,8 @@ def _event_identity(event: Mapping[str, Any]) -> tuple[str, str]:
                 f"Normalized event field {field!r} must be a non-empty string",
                 details={"field": field, "reason": "required"},
             )
-    return event["source"], event["type"]
+        cleaned[field] = value.strip()
+    return cleaned["source"], cleaned["type"]
 
 
 def _workflow_matches(
