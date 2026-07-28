@@ -83,6 +83,10 @@ class RuntimeObjectStore(ABC):
     def list_by_workflow_execution(self, workflow_execution_id: str) -> tuple[RuntimeObject, ...]:
         """List objects belonging to a WorkflowExecution in creation order."""
 
+    @abstractmethod
+    def list_by_task_execution(self, task_execution_id: str) -> tuple[RuntimeObject, ...]:
+        """List objects produced by a TaskExecution in creation order."""
+
 
 class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     """Thread-safe in-memory store intended for tests and local execution."""
@@ -93,6 +97,7 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         self._deterministic_keys: dict[str, str] = {}
         self._claims: dict[str, dict[str, Any]] = {}
         self._workflow_index: dict[str, list[str]] = {}
+        self._task_execution_index: dict[str, list[str]] = {}
 
     def create(self, runtime_object: RuntimeObject, *, deterministic_key: str) -> RuntimeObject:
         value = _copy_and_validate(runtime_object)
@@ -198,6 +203,13 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
                 for object_id in self._workflow_index.get(workflow_execution_id, ())
             )
 
+    def list_by_task_execution(self, task_execution_id: str) -> tuple[RuntimeObject, ...]:
+        with self._lock:
+            return tuple(
+                _snapshot(self._objects[object_id])
+                for object_id in self._task_execution_index.get(task_execution_id, ())
+            )
+
     def _require(self, object_id: str) -> dict[str, Any]:
         try:
             return self._objects[object_id]
@@ -210,6 +222,9 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         workflow_execution_id = _workflow_execution_id(value)
         if workflow_execution_id is not None:
             self._workflow_index.setdefault(workflow_execution_id, []).append(value["id"])
+        task_execution_id = value.get("taskExecutionId")
+        if isinstance(task_execution_id, str):
+            self._task_execution_index.setdefault(task_execution_id, []).append(value["id"])
 
 
 def _copy_and_validate(runtime_object: RuntimeObject) -> dict[str, Any]:
