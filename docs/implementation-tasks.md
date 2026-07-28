@@ -2,11 +2,13 @@
 
 **Project:** AI Agent Engineering Platform (AEP)
 
-**Status:** Draft
+**Status:** Active
 
 This directory-level index points to the individual task files under [tasks/](tasks/).
 
-The execution order and status tracker live in [execution-plan.md](execution-plan.md).
+The authoritative execution order, task status, progress summary, and phase
+tracker live in [execution-plan.md](execution-plan.md). Keep this file as the
+stable task catalog and avoid duplicating status values here.
 
 ---
 

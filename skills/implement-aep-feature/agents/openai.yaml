@@ -1,4 +1,4 @@
 interface:
   display_name: "AEP Feature Implementation"
-  short_description: "Implement AEP features from contracts"
-  default_prompt: "Use $implement-aep-feature to implement the selected AEP task and validate it against its contracts."
+  short_description: "Implement AEP features and synchronize project knowledge"
+  default_prompt: "Use $implement-aep-feature to implement the selected AEP task, update affected knowledge and documentation, and validate it against its contracts."

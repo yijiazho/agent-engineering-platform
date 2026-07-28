@@ -1,6 +1,6 @@
 ---
 name: implement-aep-feature
-description: Implement code, schemas, fixtures, tests, and synchronized documentation for an AI Agent Engineering Platform (AEP) task or feature. Use when Codex must change this repository to satisfy an AEP task file, acceptance criteria, bug fix, runtime contract, resource contract, controller, context, repository-knowledge, model, Tool, evaluation, policy, or workflow requirement.
+description: Implement code, schemas, fixtures, tests, knowledge sources, and synchronized documentation for an AI Agent Engineering Platform (AEP) task or feature. Use when Codex must change this repository to satisfy an AEP task file, acceptance criteria, bug fix, runtime contract, resource contract, controller, context, repository-knowledge, model, Tool, evaluation, policy, or workflow requirement.
 ---
 
 # Implement an AEP Feature
@@ -25,6 +25,7 @@ Implement the smallest complete change that satisfies the selected contract whil
    - provenance and persistence
    - policy boundaries
    - acceptance tests
+   - knowledge-base impact
    - documentation impact
 
 Resolve contradictions in this order: explicit user requirement, `AGENTS.md`, accepted ADRs, applicable task acceptance criteria, architecture documents, then existing implementation. Surface any unresolved contradiction before making a materially different architectural decision.
@@ -60,7 +61,38 @@ Do not introduce infrastructure or generality that the task does not require. Pr
 
 Do not weaken a schema or invariant merely to make an implementation pass. Fix the implementation or document an intentional contract change.
 
-## Validate and Synchronize
+## Synchronize Knowledge and Related Documents
+
+Treat knowledge and documentation updates as part of the implementation, not as
+optional follow-up work.
+
+1. Search for every affected name, contract, behavior, command, status, and
+   example across `README.md`, `AGENTS.md`, `docs/`, `schemas/`, `fixtures/`,
+   and repository-local `.ai/` configuration when present.
+2. Update all affected authoritative knowledge sources:
+   - curated `KnowledgeBase` Resources under `.ai/knowledge/` or the configured
+     knowledge directory
+   - product requirements, architecture documents, and accepted ADRs
+   - task files, dependency descriptions, and `docs/execution-plan.md`
+   - schemas, fixtures, examples, contributor instructions, and public API
+     documentation
+3. Keep the kind of knowledge explicit:
+   - Update curated knowledge when a maintained fact, rule, convention, or
+     relationship changes.
+   - Do not hand-edit a derived Repository Knowledge snapshot or graph. Rebuild
+     it from the new repository revision through the scanner or compiler.
+   - Update repository-knowledge scanner/query tests and fixtures when the
+     implementation changes what derived knowledge must detect or expose.
+4. Remove or revise stale statements rather than adding a second contradictory
+   description.
+5. Re-run targeted searches after editing to verify that obsolete names,
+   statuses, commands, and examples no longer remain.
+
+When no curated KnowledgeBase content exists or a change cannot affect it,
+record that determination in the handoff. This does not waive updates to
+related project documents.
+
+## Validate and Complete
 
 Run focused tests while iterating, then run the full local suite when practical:
 
@@ -75,14 +107,18 @@ git diff --check
 git status --short
 ```
 
-Update documentation in the same change when behavior, configuration, commands, public APIs, structure, or task status changes:
+Verify documentation and knowledge synchronization in the same change whenever
+behavior, configuration, commands, public APIs, structure, knowledge retrieval,
+or task status changes:
 
 - Update `README.md` for contributor-facing behavior or commands.
 - Update the governing task file and `docs/execution-plan.md` only when every acceptance criterion is satisfied.
 - Update architecture or ADR material only when the design contract changes.
-- Keep schemas, fixtures, examples, and documentation consistent with the implementation.
+- Keep KnowledgeBase Resources, schemas, fixtures, examples, and documentation consistent with the implementation.
+- Validate changed-document links and task/status counts when applicable.
 
-If no documentation update is necessary, state why in the handoff.
+Do not mark a task complete while its knowledge sources or related documents
+describe stale behavior.
 
 ## Hand Off for Independent Review
 
@@ -93,6 +129,7 @@ Provide:
 - the acceptance criteria covered
 - exact validation commands and results
 - assumptions, known limitations, and residual risks
-- documentation updated, or why none was needed
+- knowledge sources updated or regenerated, or why they were unaffected
+- related documents updated and stale-reference searches performed
 
 Do not claim completion when required work remains or validation is failing. Do not commit, push, publish, or open a pull request unless the user requests it.

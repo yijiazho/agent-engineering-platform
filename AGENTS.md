@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is currently documentation-first. Core product and architecture material lives under `docs/`:
+This repository is contract-first and in active MVP implementation. Product and architecture material lives under `docs/`:
 
 * `docs/prd.md` defines the product direction.
 * `docs/architecture/` contains subsystem architecture.
@@ -10,7 +10,11 @@ This repository is currently documentation-first. Core product and architecture 
 * `docs/tasks/` contains one implementation task per file.
 * `docs/execution-plan.md` tracks topological task order and status.
 
-Implementation code lives under `src/`, with automated tests under `tests/`. Keep future source code, tests, and deployment assets in clearly named top-level directories such as `src/`, `tests/`, and `deploy/`.
+Implementation code lives under `src/`, with automated tests under `tests/`.
+JSON Schemas live under `schemas/`, deterministic examples under `fixtures/`,
+and repository-specific agent workflows under `skills/`. Keep future source
+code, tests, and deployment assets in clearly named top-level directories such
+as `src/`, `tests/`, and `deploy/`.
 
 ## Documentation Synchronization
 

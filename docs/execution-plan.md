@@ -2,7 +2,7 @@
 
 **Project:** AI Agent Engineering Platform (AEP)
 
-**Status:** Draft
+**Status:** Active
 
 **Purpose:** Track implementation order and task status for the MVP vertical slice.
 
@@ -15,7 +15,26 @@
 * Completed
 * Blocked
 
-All tasks start as `Not Started`.
+New tasks start as `Not Started`. Update a task to `In Progress`, `Completed`,
+or `Blocked` as implementation state changes.
+
+---
+
+# Progress Summary
+
+| Status | Count |
+| ------ | ----: |
+| Completed | 12 |
+| In Progress | 0 |
+| Not Started | 25 |
+| Blocked | 0 |
+| Total | 37 |
+
+The completed work establishes schemas, resource loading, runtime persistence,
+GitHub issue event normalization and deduplication, TaskExecution lifecycle,
+provider-neutral model and Tool boundaries, schema evaluation, and the initial
+repository-knowledge scanner and query API. The end-to-end MVP workflow is not
+yet runnable.
 
 ---
 
@@ -114,7 +133,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Phase | Tasks | Status |
 | ----- | ----- | ------ |
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
-| Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Not Started |
+| Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | In Progress |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | In Progress |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
