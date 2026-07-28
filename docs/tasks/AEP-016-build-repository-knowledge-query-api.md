@@ -1,6 +1,6 @@
 # AEP-016: Build Repository Knowledge Query API
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 

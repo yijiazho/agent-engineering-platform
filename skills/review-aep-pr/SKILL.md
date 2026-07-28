@@ -1,63 +1,127 @@
 ---
 name: review-aep-pr
-description: Review pull requests and local diffs for the AI Agent Engineering Platform (AEP). Use when evaluating AEP code, schemas, fixtures, tests, task completion, documentation, or architecture compliance and when producing severity-ranked findings plus a score out of 10.
+description: Independently review pull requests, patches, and local diffs for the AI Agent Engineering Platform (AEP). Use when evaluating another agent's implementation, AEP code, schemas, fixtures, tests, task completion, documentation, security, concurrency, or architecture compliance and when producing severity-ranked findings plus a score out of 10. This is a read-only review workflow unless the user separately requests fixes.
 ---
 
-# Review AEP Pull Requests
+# Review AEP Code Changes
 
-Review changes for correctness, regressions, security, architectural compliance, and acceptance-criteria coverage. Report actionable findings before the score. Do not modify the pull request unless the user separately asks for fixes.
+Review the implementation as independent evidence. Do not assume the author handoff, passing tests, or apparent intent proves correctness. Report actionable findings before the score and do not modify the change unless the user separately asks for fixes.
 
 ## Establish the Review Scope
 
 1. Read `AGENTS.md` and `README.md`.
-2. Inspect the complete diff and changed-file list. Determine the base branch or comparison range instead of reviewing isolated files.
-3. Identify related `docs/tasks/AEP-*.md` files and read their dependencies and acceptance criteria.
-4. Read only the relevant architecture and ADR documents under `docs/architecture/` and `docs/adr/`.
-5. Inspect tests, schemas, and fixtures affected by the change. Run focused tests or validation when practical.
-6. Check whether behavior, configuration, commands, public APIs, task status, or project structure changed without corresponding documentation updates.
+2. Inspect the complete changed-file list and diff against the correct base. For local work, include staged, unstaged, and relevant untracked files.
+3. Identify and read the governing `docs/tasks/AEP-*.md` file, its dependencies, deliverable, acceptance criteria, and required tests.
+4. Read only the relevant ADRs, architecture documents, schemas, fixtures, implementation modules, and tests.
+5. Compare the diff with the implementer's handoff, if provided, but verify every claim from repository evidence.
+6. Check whether behavior, configuration, commands, public APIs, schemas, fixtures, task status, project structure, or execution-plan status changed without matching documentation updates.
+7. State any missing diff, task context, dependency, or environment limitation that prevents a complete review.
 
-If the diff or task context is unavailable, state the limitation and do not imply a complete review.
+Do not modify files, resolve threads, commit, push, publish, or open a pull request during review unless the user separately authorizes it.
 
-## Apply AEP Guardrails
+## Review in Risk Order
 
-Reject changes that violate these project rules:
+### Architecture and contracts
 
-- Keep declarative Resources separate from observed runtime objects.
-- Never model `GeneratedArtifact` as a declarative Resource.
-- Require explicit, immutable resource versions; reject floating `latest` references.
-- Keep model providers in Model resources, not Tool resources.
-- Prevent Agents from retrieving repository knowledge directly; use deterministic `ContextPackage` construction.
-- Keep orchestration deterministic. Agents perform bounded cognitive work and do not choose workflow execution paths.
-- Require policy checks for privileged Tool capabilities and publication.
-- Preserve provenance, audit evidence, and terminal runtime-object immutability.
-- Keep fixtures small and deterministic and cover task acceptance criteria with tests.
+Verify that the change:
 
-Treat task documents and applicable ADRs as the source of truth. Flag stale documentation when the implementation changes behavior or task status.
+- preserves the separation between declarative Resources and observed runtime objects
+- uses explicit immutable resource versions and rejects floating references such as `latest`
+- never models `GeneratedArtifact` as a Resource
+- represents model providers with Model resources rather than Tools
+- prevents Agents from retrieving repository knowledge directly
+- supplies deterministic, immutable, provenance-rich `ContextPackage` inputs
+- keeps scheduling, branching, dependencies, retries, and lifecycle decisions outside model reasoning
+- keeps Agents stateless and bounded to structured cognitive work
+- preserves immutable terminal evidence, traceability, and required provenance
+- uses the applicable JSON Schemas and provider-neutral subsystem interfaces
+
+Treat applicable task documents and accepted ADRs as the source of truth. Flag an implementation that weakens a schema or invariant merely to make tests pass.
+
+### Behavior and lifecycle
+
+Trace success and failure paths from inputs to persisted evidence. Check:
+
+- validation before mutation or external effects
+- legal status transitions and explicit failure classification
+- retries only for recoverable failures
+- idempotency and deterministic identity
+- concurrency races, atomic claims, and optimistic status checks
+- stable ordering and deterministic outputs
+- timeout, cancellation, approval, denial, malformed input, and adapter failure behavior
+- partial failure without corrupting prior or terminal evidence
+- exact resource versions, repository revision, context, and trace data needed for reproducibility
+
+### Tools, policy, and security
+
+Verify:
+
+- least privilege and capability policy before privileged Tool execution
+- Tool input and output validation
+- normalized denial, timeout, validation, and adapter failures
+- secret handling and isolation assumptions
+- separation of technical evaluation from governance
+- publication policy before pull request creation or another external publication action
+
+Treat a governance bypass, unauthorized side effect, secret exposure, or irreversible evidence corruption as high risk.
+
+### Tests and documentation
+
+Map every acceptance criterion to implementation evidence and at least one meaningful test where appropriate. Look for tests that:
+
+- mirror implementation details without proving behavior
+- omit negative, boundary, retry, immutability, or concurrency paths
+- rely on nondeterministic ordering, time, or external state
+- fail to exercise schema validation or persistence boundaries
+- pass while leaving an acceptance criterion unimplemented
+
+Keep fixtures small and deterministic. A task may be marked `Completed` only when all acceptance criteria are satisfied. Require `README.md`, task files, architecture, ADRs, schemas, fixtures, and `docs/execution-plan.md` to remain synchronized with changed behavior.
+
+## Validate Independently
+
+Run the narrowest relevant checks first, then the full local suite when practical:
+
+```powershell
+python -m pytest
+git diff --check
+```
+
+Run additional schema, fixture, or task-specific validation when the change requires it. Record commands exactly and distinguish passed, failed, and not run. Never treat passing tests as proof that no defect exists.
 
 ## Classify Findings
 
-Report only concrete issues introduced or exposed by the reviewed change. Cite the narrowest useful file and line. Explain the failure scenario, impact, and a practical correction.
+Report only concrete issues introduced or exposed by the reviewed change. Cite the narrowest useful file and line. Explain the failure scenario, impact, and smallest contract-preserving correction.
 
-- **Critical**: Causes security or secret exposure, destructive or unauthorized actions, unrecoverable data/evidence corruption, a systemic architecture violation, or makes the primary workflow fundamentally unsafe or unusable. Deduct 3 points each.
-- **Major**: Produces incorrect behavior in a supported path, violates an acceptance criterion or important AEP invariant, creates a meaningful regression, or lacks validation for consequential behavior. Deduct 1 point each.
-- **Minor**: A localized maintainability, clarity, edge-case, test-quality, or documentation issue with limited operational impact. Deduct 0 points, but report it separately.
+- **Critical:** Causes unauthorized or destructive action, secret exposure, unrecoverable evidence corruption, a systemic architecture violation, or makes the primary workflow fundamentally unsafe or unusable. Deduct 3 points each.
+- **Major:** Breaks a supported path, violates an acceptance criterion or important AEP invariant, produces incorrect persisted state, creates a meaningful race or regression, or omits validation for consequential behavior. Deduct 1 point each.
+- **Minor:** Creates a localized edge case, maintainability problem, weak test, misleading documentation, or limited contract inconsistency. Deduct 0 points.
 
-Do not inflate severity based on file size or style preference. Do not count the same root cause more than once. Suggestions that are not defects belong under `Notes`, not findings.
+Do not inflate severity for file size or style preferences. Do not count the same root cause more than once. Put optional improvements under `Notes`.
 
-## Calculate the Score
+## Determine Verdict and Score
 
-Start at 10 and calculate:
+Use:
+
+- **Changes required:** Any Critical or Major finding.
+- **Accept with minor follow-up:** Only Minor findings remain.
+- **Accept:** No findings.
+
+Calculate:
 
 `score = max(0, 10 - (3 * critical_count) - major_count)`
 
-Minor findings do not affect the numeric score. A score is not a substitute for explaining findings. If review scope is materially incomplete, label the score `Provisional`.
+Minor findings do not affect the numeric score. If review scope is materially incomplete, label the score and verdict `Provisional`.
 
 ## Output Format
 
-Use this exact section order. Omit a severity subsection only when it has no findings.
+Use this exact section order and omit empty severity subsections:
 
 ```markdown
-# PR Review
+# AEP Code Review
+
+## Verdict
+
+Changes required
 
 ## Findings
 
@@ -65,21 +129,25 @@ Use this exact section order. Omit a severity subsection only when it has no fin
 
 - [C1] Short title - `path/to/file.py:42`
   - Impact: Concrete failure or risk.
-  - Evidence: Why the changed code causes it.
-  - Recommendation: Smallest practical correction.
+  - Evidence: Why the changed behavior causes it.
+  - Recommendation: Smallest contract-preserving correction.
 
 ### Major
 
 - [M1] Short title - `path/to/file.py:87`
-  - Impact: Concrete failure or regression.
-  - Evidence: Relevant code path or unmet criterion.
-  - Recommendation: Smallest practical correction.
+  - Impact: Concrete failure or unmet criterion.
+  - Evidence: Relevant execution path.
+  - Recommendation: Focused correction.
 
 ### Minor
 
 - [m1] Short title - `path/to/file.py:103`
   - Impact: Limited consequence.
   - Recommendation: Focused improvement.
+
+## Acceptance Criteria
+
+- Criterion: Met | Not met | Not verified - evidence
 
 ## Score
 
@@ -95,9 +163,13 @@ Use this exact section order. Omit a severity subsection only when it has no fin
 - `python -m pytest tests/test_example.py`: passed
 - Not run: reason, if applicable
 
+## Documentation
+
+- Synchronized, or list required updates.
+
 ## Notes
 
-- Optional non-defect observations or scope limitations.
+- Scope limitations, residual risks, and non-defect suggestions.
 ```
 
-When no issues are found, write `No findings.` under `Findings`, still provide the score and validation, and note any residual risks or untested areas. Never claim the change is defect-free solely because tests pass.
+If there are no findings, write `No findings.` under `Findings` and still report acceptance-criteria coverage, score, validation, documentation status, and residual risks.

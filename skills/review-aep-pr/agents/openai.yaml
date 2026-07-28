@@ -1,4 +1,4 @@
 interface:
   display_name: "AEP PR Review"
-  short_description: "Review AEP changes with a severity score"
-  default_prompt: "Use $review-aep-pr to review this pull request against AEP architecture and task requirements."
+  short_description: "Review AEP code changes and implementation handoffs"
+  default_prompt: "Use $review-aep-pr to independently review this AEP implementation against its contracts, architecture, and acceptance criteria."

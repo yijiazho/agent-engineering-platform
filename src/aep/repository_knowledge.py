@@ -1,14 +1,19 @@
-"""Deterministic MVP repository knowledge scanning."""
+"""Deterministic repository knowledge scanning and provider-neutral queries."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from hashlib import sha256
 import json
-from pathlib import Path
+from math import isfinite
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import subprocess
-from typing import Final
+from types import MappingProxyType
+from typing import Any, Final
 
 
 SNAPSHOT_API_VERSION: Final = "aep.dev/repository-knowledge/v1"
@@ -477,3 +482,499 @@ def _snapshot_version(
     }
     canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
     return f"sha256:{sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+JsonObject = Mapping[str, Any]
+
+
+def _freeze(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("JSON-compatible mappings must use string keys")
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and isfinite(value):
+        return value
+    raise ValueError(
+        f"attributes must contain JSON-compatible values, got {type(value).__name__}"
+    )
+
+
+def _normalize_path(value: str, *, allow_root: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ValueError("repository paths must be strings")
+    stripped = value.strip()
+    if PureWindowsPath(stripped).drive:
+        raise ValueError("repository paths must be non-empty relative paths")
+    converted = stripped.replace("\\", "/")
+    if converted.startswith("/"):
+        raise ValueError("repository paths must be non-empty relative paths")
+    normalized = converted.strip("/")
+    if allow_root and normalized in ("", "."):
+        return ""
+    path = PurePosixPath(normalized)
+    if not normalized or normalized == "." or path.is_absolute() or ".." in path.parts:
+        raise ValueError("repository paths must be non-empty relative paths")
+    return path.as_posix()
+
+
+def _normalize_terms(values: Sequence[str], field_name: str) -> tuple[str, ...]:
+    if isinstance(values, str) or any(not isinstance(value, str) for value in values):
+        raise ValueError(f"{field_name} must be a sequence of strings")
+    terms = tuple(dict.fromkeys(value.strip().casefold() for value in values if value.strip()))
+    if len(terms) != len(values):
+        raise ValueError(f"{field_name} must contain unique, non-empty values")
+    return terms
+
+
+def _validate_limit(limit: int | None) -> None:
+    if limit is not None and (
+        not isinstance(limit, int) or isinstance(limit, bool) or limit < 1
+    ):
+        raise ValueError("limit must be a positive integer")
+
+
+class KnowledgeKind(str, Enum):
+    """Kinds understood by the MVP and richer future providers."""
+
+    FILE = "FILE"
+    DOCUMENTATION = "DOCUMENTATION"
+    DEPENDENCY_MANIFEST = "DEPENDENCY_MANIFEST"
+    TEST_HINT = "TEST_HINT"
+    SYMBOL = "SYMBOL"
+    AST_NODE = "AST_NODE"
+
+
+@dataclass(frozen=True)
+class SourceLocation:
+    """A repository-relative source span; line data is optional for flat scans."""
+
+    path: str
+    start_line: int | None = None
+    end_line: int | None = None
+    symbol: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", _normalize_path(self.path))
+        if (self.start_line is None) != (self.end_line is None):
+            raise ValueError("start_line and end_line must be provided together")
+        if self.start_line is not None:
+            if (
+                not isinstance(self.start_line, int)
+                or isinstance(self.start_line, bool)
+                or not isinstance(self.end_line, int)
+                or isinstance(self.end_line, bool)
+                or self.start_line < 1
+                or self.end_line < self.start_line
+            ):
+                raise ValueError("source line range must be positive and ordered")
+        if self.symbol is not None and not self.symbol:
+            raise ValueError("symbol must not be empty")
+
+
+@dataclass(frozen=True)
+class SnapshotRecord:
+    """Internal flat query fact adapted from the scanner-owned snapshot."""
+
+    id: str
+    kind: KnowledgeKind
+    location: SourceLocation
+    attributes: JsonObject = field(default_factory=dict)
+    keywords: Sequence[str] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("record id must not be empty")
+        if not isinstance(self.kind, KnowledgeKind):
+            raise ValueError("record kind must be a KnowledgeKind")
+        if not isinstance(self.location, SourceLocation):
+            raise ValueError("record location must be a SourceLocation")
+        if not isinstance(self.attributes, Mapping):
+            raise ValueError("record attributes must be a mapping")
+        object.__setattr__(self, "attributes", _freeze(self.attributes))
+        object.__setattr__(self, "keywords", _normalize_terms(self.keywords, "keywords"))
+
+
+@dataclass(frozen=True)
+class QueryProvenance:
+    """Evidence explaining where and at which revision a result originated."""
+
+    repository_revision: str
+    snapshot_version: str
+    snapshot_created_at: str
+    snapshot_producer: str
+    source: SourceLocation
+    traversal_path: Sequence[str]
+
+    def __post_init__(self) -> None:
+        for name in (
+            "repository_revision",
+            "snapshot_version",
+            "snapshot_created_at",
+            "snapshot_producer",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must not be empty")
+        if not isinstance(self.source, SourceLocation):
+            raise ValueError("source must be a SourceLocation")
+        if isinstance(self.traversal_path, str) or not isinstance(
+            self.traversal_path, Sequence
+        ):
+            raise ValueError("traversal_path must be a sequence of strings")
+        traversal = tuple(self.traversal_path)
+        if not traversal:
+            raise ValueError("traversal_path must explain how the result was selected")
+        if any(not isinstance(step, str) or not step for step in traversal):
+            raise ValueError("traversal_path must be a sequence of non-empty strings")
+        object.__setattr__(self, "traversal_path", traversal)
+
+
+@dataclass(frozen=True)
+class KnowledgeResult:
+    """Provider-neutral query result with immutable payload and provenance."""
+
+    id: str
+    kind: KnowledgeKind
+    score: int
+    attributes: JsonObject
+    provenance: QueryProvenance
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.id, str) or not self.id:
+            raise ValueError("result id must not be empty")
+        if not isinstance(self.kind, KnowledgeKind):
+            raise ValueError("result kind must be a KnowledgeKind")
+        if not isinstance(self.score, int) or isinstance(self.score, bool) or self.score < 0:
+            raise ValueError("score must be a non-negative integer")
+        if not isinstance(self.attributes, Mapping):
+            raise ValueError("result attributes must be a mapping")
+        if not isinstance(self.provenance, QueryProvenance):
+            raise ValueError("provenance must be a QueryProvenance")
+        object.__setattr__(self, "attributes", _freeze(self.attributes))
+
+
+@dataclass(frozen=True)
+class FileQuery:
+    path: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", _normalize_path(self.path))
+
+
+@dataclass(frozen=True)
+class DocumentationQuery:
+    terms: Sequence[str] = field(default_factory=tuple)
+    path_prefix: str = ""
+    limit: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "terms", _normalize_terms(self.terms, "terms"))
+        object.__setattr__(self, "path_prefix", _normalize_path(self.path_prefix, allow_root=True))
+        _validate_limit(self.limit)
+
+
+@dataclass(frozen=True)
+class DependencyManifestQuery:
+    ecosystems: Sequence[str] = field(default_factory=tuple)
+    path_prefix: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "ecosystems", _normalize_terms(self.ecosystems, "ecosystems")
+        )
+        object.__setattr__(self, "path_prefix", _normalize_path(self.path_prefix, allow_root=True))
+
+
+@dataclass(frozen=True)
+class TestHintQuery:
+    languages: Sequence[str] = field(default_factory=tuple)
+    path_prefix: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "languages", _normalize_terms(self.languages, "languages"))
+        object.__setattr__(self, "path_prefix", _normalize_path(self.path_prefix, allow_root=True))
+
+
+@dataclass(frozen=True)
+class CandidateFileQuery:
+    terms: Sequence[str] = field(default_factory=tuple)
+    languages: Sequence[str] = field(default_factory=tuple)
+    path_prefix: str = ""
+    include_tests: bool = True
+    limit: int | None = 20
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "terms", _normalize_terms(self.terms, "terms"))
+        object.__setattr__(self, "languages", _normalize_terms(self.languages, "languages"))
+        object.__setattr__(self, "path_prefix", _normalize_path(self.path_prefix, allow_root=True))
+        if not isinstance(self.include_tests, bool):
+            raise ValueError("include_tests must be a boolean")
+        _validate_limit(self.limit)
+
+
+class RepositoryKnowledgeProvider(ABC):
+    """Stable query boundary used by the Context Builder."""
+
+    @abstractmethod
+    def lookup_file(self, query: FileQuery) -> tuple[KnowledgeResult, ...]:
+        """Return the file at an exact repository-relative path, if present."""
+
+    @abstractmethod
+    def lookup_documentation(
+        self, query: DocumentationQuery
+    ) -> tuple[KnowledgeResult, ...]:
+        """Return documentation selected by structured filters."""
+
+    @abstractmethod
+    def lookup_dependency_manifests(
+        self, query: DependencyManifestQuery
+    ) -> tuple[KnowledgeResult, ...]:
+        """Return dependency manifests selected by ecosystem and path."""
+
+    @abstractmethod
+    def lookup_test_hints(self, query: TestHintQuery) -> tuple[KnowledgeResult, ...]:
+        """Return scanner-discovered test commands and related hints."""
+
+    @abstractmethod
+    def search_candidate_files(
+        self, query: CandidateFileQuery
+    ) -> tuple[KnowledgeResult, ...]:
+        """Return deterministically ranked files without model inference."""
+
+
+class InMemoryRepositoryKnowledgeProvider(RepositoryKnowledgeProvider):
+    """MVP provider over a flat, immutable repository knowledge snapshot."""
+
+    def __init__(self, snapshot: RepositoryKnowledgeSnapshot) -> None:
+        if not isinstance(snapshot, RepositoryKnowledgeSnapshot):
+            raise ValueError("snapshot must be a RepositoryKnowledgeSnapshot")
+        self._snapshot = snapshot
+        self._records = self._snapshot_records(snapshot)
+
+    @staticmethod
+    def _is_test_file(path: str) -> bool:
+        file_path = PurePosixPath(path)
+        directory_parts = {part.casefold() for part in file_path.parts[:-1]}
+        stem = file_path.stem.casefold()
+        return bool(directory_parts.intersection({"test", "tests", "spec", "specs"})) or (
+            stem.startswith("test_") or stem.endswith("_test")
+        )
+
+    @classmethod
+    def _snapshot_records(
+        cls, snapshot: RepositoryKnowledgeSnapshot
+    ) -> tuple[SnapshotRecord, ...]:
+        language_by_path = {file.path: file.language for file in snapshot.files}
+        records: list[SnapshotRecord] = []
+        for file in snapshot.files:
+            records.append(
+                SnapshotRecord(
+                    id=f"file:{file.path}",
+                    kind=KnowledgeKind.FILE,
+                    location=SourceLocation(file.path),
+                    attributes={
+                        "language": file.language,
+                        "is_documentation": file.is_documentation,
+                        "is_test": cls._is_test_file(file.path),
+                    },
+                )
+            )
+        for document in snapshot.documentation:
+            records.append(
+                SnapshotRecord(
+                    id=f"documentation:{document.path}",
+                    kind=KnowledgeKind.DOCUMENTATION,
+                    location=SourceLocation(document.path),
+                    attributes={"language": document.language},
+                )
+            )
+        for manifest in snapshot.dependency_manifests:
+            records.append(
+                SnapshotRecord(
+                    id=f"dependency-manifest:{manifest.path}",
+                    kind=KnowledgeKind.DEPENDENCY_MANIFEST,
+                    location=SourceLocation(manifest.path),
+                    attributes={
+                        "ecosystem": manifest.ecosystem,
+                        "manifest_type": manifest.manifest_type,
+                    },
+                )
+            )
+        for hint in snapshot.test_command_hints:
+            records.append(
+                SnapshotRecord(
+                    id=f"test-hint:{hint.source_path}:{hint.command}",
+                    kind=KnowledgeKind.TEST_HINT,
+                    location=SourceLocation(hint.source_path),
+                    attributes={
+                        "command": hint.command,
+                        "language": language_by_path.get(hint.source_path),
+                    },
+                )
+            )
+        ids = [record.id for record in records]
+        if len(ids) != len(set(ids)):
+            raise ValueError("snapshot facts must have unique stable identifiers")
+        return tuple(records)
+
+    @staticmethod
+    def _has_prefix(path: str, prefix: str) -> bool:
+        return not prefix or path == prefix or path.startswith(prefix + "/")
+
+    @staticmethod
+    def _attribute_values(value: Any) -> Iterable[str]:
+        if isinstance(value, Mapping):
+            for key in sorted(value):
+                yield str(key)
+                yield from InMemoryRepositoryKnowledgeProvider._attribute_values(value[key])
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from InMemoryRepositoryKnowledgeProvider._attribute_values(item)
+        elif value is not None:
+            yield str(value)
+
+    @classmethod
+    def _search_text(cls, record: SnapshotRecord) -> str:
+        values = [record.location.path, *record.keywords]
+        values.extend(cls._attribute_values(record.attributes))
+        return "\n".join(values).casefold()
+
+    @classmethod
+    def _term_score(cls, record: SnapshotRecord, terms: Sequence[str]) -> int:
+        if not terms:
+            return 0
+        path = record.location.path.casefold()
+        text = cls._search_text(record)
+        return sum(3 if term in path else 1 for term in terms if term in text)
+
+    @staticmethod
+    def _attribute_matches(record: SnapshotRecord, name: str, values: Sequence[str]) -> bool:
+        if not values:
+            return True
+        value = record.attributes.get(name)
+        candidates = value if isinstance(value, (list, tuple)) else (value,)
+        normalized = {
+            str(candidate).casefold()
+            for candidate in candidates
+            if candidate is not None
+        }
+        return bool(normalized.intersection(values))
+
+    def _result(self, record: SnapshotRecord, *, score: int, operation: str) -> KnowledgeResult:
+        return KnowledgeResult(
+            id=record.id,
+            kind=record.kind,
+            score=score,
+            attributes=record.attributes,
+            provenance=QueryProvenance(
+                repository_revision=self._snapshot.repository_revision,
+                snapshot_version=self._snapshot.snapshot_version,
+                snapshot_created_at=self._snapshot.created_at,
+                snapshot_producer=self._snapshot.scanner_version,
+                source=record.location,
+                traversal_path=(
+                    f"snapshot:{self._snapshot.snapshot_version}",
+                    f"{operation}:{record.id}",
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _ordered(
+        records: Iterable[tuple[SnapshotRecord, int]], limit: int | None = None
+    ) -> tuple[tuple[SnapshotRecord, int], ...]:
+        ordered = sorted(
+            records,
+            key=lambda item: (
+                -item[1],
+                item[0].location.path.casefold(),
+                item[0].location.path,
+                item[0].id,
+            ),
+        )
+        return tuple(ordered if limit is None else ordered[:limit])
+
+    def lookup_file(self, query: FileQuery) -> tuple[KnowledgeResult, ...]:
+        records = (
+            (record, 0)
+            for record in self._records
+            if record.kind is KnowledgeKind.FILE and record.location.path == query.path
+        )
+        return tuple(
+            self._result(record, score=score, operation="file")
+            for record, score in self._ordered(records)
+        )
+
+    def lookup_documentation(
+        self, query: DocumentationQuery
+    ) -> tuple[KnowledgeResult, ...]:
+        def selected() -> Iterable[tuple[SnapshotRecord, int]]:
+            for record in self._records:
+                if record.kind is not KnowledgeKind.DOCUMENTATION:
+                    continue
+                if not self._has_prefix(record.location.path, query.path_prefix):
+                    continue
+                score = self._term_score(record, query.terms)
+                if query.terms and score == 0:
+                    continue
+                yield record, score
+
+        return tuple(
+            self._result(record, score=score, operation="documentation")
+            for record, score in self._ordered(selected(), query.limit)
+        )
+
+    def lookup_dependency_manifests(
+        self, query: DependencyManifestQuery
+    ) -> tuple[KnowledgeResult, ...]:
+        records = (
+            (record, 0)
+            for record in self._records
+            if record.kind is KnowledgeKind.DEPENDENCY_MANIFEST
+            and self._has_prefix(record.location.path, query.path_prefix)
+            and self._attribute_matches(record, "ecosystem", query.ecosystems)
+        )
+        return tuple(
+            self._result(record, score=score, operation="dependency-manifest")
+            for record, score in self._ordered(records)
+        )
+
+    def lookup_test_hints(self, query: TestHintQuery) -> tuple[KnowledgeResult, ...]:
+        records = (
+            (record, 0)
+            for record in self._records
+            if record.kind is KnowledgeKind.TEST_HINT
+            and self._has_prefix(record.location.path, query.path_prefix)
+            and self._attribute_matches(record, "language", query.languages)
+        )
+        return tuple(
+            self._result(record, score=score, operation="test-hint")
+            for record, score in self._ordered(records)
+        )
+
+    def search_candidate_files(
+        self, query: CandidateFileQuery
+    ) -> tuple[KnowledgeResult, ...]:
+        def selected() -> Iterable[tuple[SnapshotRecord, int]]:
+            for record in self._records:
+                if record.kind is not KnowledgeKind.FILE:
+                    continue
+                if not self._has_prefix(record.location.path, query.path_prefix):
+                    continue
+                if not query.include_tests and bool(record.attributes.get("is_test")):
+                    continue
+                if not self._attribute_matches(record, "language", query.languages):
+                    continue
+                score = self._term_score(record, query.terms)
+                if query.terms and score == 0:
+                    continue
+                yield record, score
+
+        return tuple(
+            self._result(record, score=score, operation="candidate-file")
+            for record, score in self._ordered(selected(), query.limit)
+        )

@@ -35,7 +35,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 8 | [AEP-019: Define Tool Runtime Contract](tasks/AEP-019-define-tool-runtime-contract.md) | Completed |
 | 9 | [AEP-025: Implement Schema Evaluation](tasks/AEP-025-implement-schema-evaluation.md) | Completed |
 | 10 | [AEP-011: Implement TaskExecution Lifecycle](tasks/AEP-011-implement-taskexecution-lifecycle.md) | Completed |
-| 11 | [AEP-016: Build Repository Knowledge Query API](tasks/AEP-016-build-repository-knowledge-query-api.md) | Not Started |
+| 11 | [AEP-016: Build Repository Knowledge Query API](tasks/AEP-016-build-repository-knowledge-query-api.md) | Completed |
 | 12 | [AEP-018: Implement GeneratedArtifact Store](tasks/AEP-018-implement-generatedartifact-store.md) | Not Started |
 | 13 | [AEP-006: Implement Event Deduplication](tasks/AEP-006-implement-event-deduplication.md) | Completed |
 | 14 | [AEP-007: Resolve Workflow For Event](tasks/AEP-007-resolve-workflow-for-event.md) | Not Started |
@@ -84,7 +84,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |
 | AEP-014 | AEP-001, AEP-002 | Completed |
 | AEP-015 | None | Completed |
-| AEP-016 | AEP-015 | Not Started |
+| AEP-016 | AEP-015 | Completed |
 | AEP-017 | AEP-003, AEP-004, AEP-016, AEP-018 | Not Started |
 | AEP-018 | AEP-002, AEP-004 | Not Started |
 | AEP-019 | AEP-001, AEP-002 | Completed |
