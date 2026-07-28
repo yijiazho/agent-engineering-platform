@@ -1,6 +1,6 @@
 # AEP-018: Implement GeneratedArtifact Store
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,17 @@ Implement GeneratedArtifact storage that:
 * Store rejects mutation after publication.
 * Context Builder can retrieve previous GeneratedArtifacts by TaskExecution.
 * Tests cover duplicate content, metadata lookup, and immutability.
+
+## Implementation
+
+`src/aep/generated_artifact_store.py` defines separate provider-neutral
+interfaces for immutable content-addressed bytes and GeneratedArtifact metadata.
+The thread-safe in-memory adapters canonicalize structured JSON, deduplicate
+content by SHA-256 digest, validate completed metadata against the authoritative
+GeneratedArtifact runtime schema, verify content integrity on write and read,
+publish metadata through the runtime-object store, and query its persistent
+producer-TaskExecution index. Republishing identical evidence is idempotent;
+changing content or metadata under a published artifact identifier is rejected
+before content storage is mutated. A persistent atomic publication claim
+coordinates adapter instances so concurrent conflicting publishers cannot leave
+unreferenced content.
