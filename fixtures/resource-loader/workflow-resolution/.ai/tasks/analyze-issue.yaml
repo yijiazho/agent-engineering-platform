@@ -1,0 +1,14 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Task",
+  "metadata": {
+    "name": "analyze-issue",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "objective": "Analyze the normalized issue.",
+    "outputs": {
+      "type": "object"
+    }
+  }
+}

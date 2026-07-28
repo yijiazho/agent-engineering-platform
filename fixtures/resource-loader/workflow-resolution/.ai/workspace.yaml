@@ -1,0 +1,19 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Workspace",
+  "metadata": {
+    "name": "workflow-resolution",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "repository": {
+      "provider": "github",
+      "owner": "example",
+      "name": "service",
+      "defaultBranch": "main"
+    },
+    "resourceDiscovery": {
+      "root": ".ai"
+    }
+  }
+}
