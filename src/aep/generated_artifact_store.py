@@ -167,7 +167,22 @@ class InMemoryGeneratedArtifactStore(GeneratedArtifactStore):
 
         artifact_id = value["id"]
         deterministic_key = f"generated-artifact:{artifact_id}"
+        publication_key = f"generated-artifact-publication:{artifact_id}"
         with self._lock:
+            existing = self._runtime_store.get(artifact_id)
+            if existing is not None:
+                if dict(existing) != value:
+                    raise ImmutableGeneratedArtifactError(
+                        f"published GeneratedArtifact {artifact_id!r} is immutable"
+                    )
+                return _snapshot(existing)
+
+            _, claimed = self._runtime_store.claim(publication_key, value)
+            if dict(claimed) != value:
+                raise ImmutableGeneratedArtifactError(
+                    f"published GeneratedArtifact {artifact_id!r} is immutable"
+                )
+
             existing = self._runtime_store.get(artifact_id)
             if existing is not None:
                 if dict(existing) != value:

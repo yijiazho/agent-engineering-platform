@@ -112,6 +112,22 @@ def test_list_by_task_execution_uses_persisted_metadata_index() -> None:
     assert store.list_by_task_execution("taskexecution-123456789abc") == (artifact,)
 
 
+def test_list_by_task_execution_falls_back_to_provenance() -> None:
+    store = InMemoryRuntimeObjectStore()
+    invocation = {
+        "kind": "ToolInvocation",
+        "id": "toolinvocation-123456789abc",
+        "provenance": {
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
+    }
+    store.create(invocation, deterministic_key="invocation")
+
+    assert store.list_by_task_execution("taskexecution-123456789abc") == (
+        invocation,
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [

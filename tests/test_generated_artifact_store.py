@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
+from threading import Barrier
 
 import pytest
 
@@ -149,6 +150,51 @@ def test_concurrent_publication_indexes_artifact_once() -> None:
 
     assert all(artifact == artifacts[0] for artifact in artifacts)
     assert len(store.list_by_task_execution(TASK_EXECUTION_ID)) == 1
+
+
+def test_conflicting_adapters_claim_metadata_before_writing_content() -> None:
+    class RacingRuntimeStore(InMemoryRuntimeObjectStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.claim_barrier = Barrier(2)
+
+        def claim(self, deterministic_key, value):
+            self.claim_barrier.wait(timeout=5)
+            return super().claim(deterministic_key, value)
+
+    runtime_store = RacingRuntimeStore()
+    content_store = InMemoryContentAddressedStore()
+    first_store = InMemoryGeneratedArtifactStore(
+        runtime_store=runtime_store,
+        content_store=content_store,
+    )
+    second_store = InMemoryGeneratedArtifactStore(
+        runtime_store=runtime_store,
+        content_store=content_store,
+    )
+    artifact_id = "generatedartifact-123456789abc"
+    first_metadata = artifact_metadata(artifact_id)
+    second_metadata = artifact_metadata(artifact_id)
+    second_metadata["repositoryRevision"] = "def5678"
+
+    def publish(store, metadata, content):
+        try:
+            return store.publish(metadata, content)["contentAddress"]
+        except ImmutableGeneratedArtifactError:
+            return "REJECTED"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = (
+            executor.submit(publish, first_store, first_metadata, b"first"),
+            executor.submit(publish, second_store, second_metadata, b"second"),
+        )
+        results = [future.result() for future in futures]
+
+    assert results.count("REJECTED") == 1
+    assert content_store.object_count == 1
+    persisted = runtime_store.get(artifact_id)
+    assert persisted is not None
+    assert persisted["contentAddress"] in results
 
 
 def test_task_execution_lookup_survives_artifact_store_recreation() -> None:

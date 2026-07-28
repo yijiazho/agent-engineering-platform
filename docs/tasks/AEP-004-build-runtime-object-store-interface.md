@@ -32,5 +32,7 @@ terminal objects reject further state changes. Execution events remain separate,
 append-only runtime objects and all runtime objects can be indexed by their
 owning WorkflowExecution. Atomic claims let controllers coordinate through shared
 storage; persistent implementations must enforce claim uniqueness there.
-The metadata boundary also indexes runtime objects by producer TaskExecution so
-artifact lookup remains available across service or adapter recreation.
+The metadata boundary also indexes runtime objects by producer TaskExecution,
+using either the object's top-level association or its provenance, so artifact
+and execution-evidence lookup remains available across service or adapter
+recreation.

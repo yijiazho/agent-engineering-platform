@@ -41,4 +41,6 @@ GeneratedArtifact runtime schema, verify content integrity on write and read,
 publish metadata through the runtime-object store, and query its persistent
 producer-TaskExecution index. Republishing identical evidence is idempotent;
 changing content or metadata under a published artifact identifier is rejected
-before content storage is mutated.
+before content storage is mutated. A persistent atomic publication claim
+coordinates adapter instances so concurrent conflicting publishers cannot leave
+unreferenced content.

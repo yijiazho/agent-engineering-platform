@@ -222,8 +222,8 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         workflow_execution_id = _workflow_execution_id(value)
         if workflow_execution_id is not None:
             self._workflow_index.setdefault(workflow_execution_id, []).append(value["id"])
-        task_execution_id = value.get("taskExecutionId")
-        if isinstance(task_execution_id, str):
+        task_execution_id = _task_execution_id(value)
+        if task_execution_id is not None:
             self._task_execution_index.setdefault(task_execution_id, []).append(value["id"])
 
 
@@ -249,6 +249,15 @@ def _workflow_execution_id(value: RuntimeObject) -> str | None:
             provenance = value.get("provenance")
             if isinstance(provenance, Mapping):
                 candidate = provenance.get("workflowExecutionId")
+    return candidate if isinstance(candidate, str) else None
+
+
+def _task_execution_id(value: RuntimeObject) -> str | None:
+    candidate = value.get("taskExecutionId")
+    if candidate is None:
+        provenance = value.get("provenance")
+        if isinstance(provenance, Mapping):
+            candidate = provenance.get("taskExecutionId")
     return candidate if isinstance(candidate, str) else None
 
 
