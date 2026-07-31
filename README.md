@@ -93,6 +93,7 @@ Implemented foundations currently include:
 * In-memory runtime persistence, idempotent claims, and immutable terminal evidence.
 * GitHub issue-created event normalization and deduplication.
 * Deterministic Event-to-Workflow resolution with explicit versioned references.
+* Idempotent WorkflowExecution trace-root creation with provenance events.
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
 * Deterministic pre-execution capability policy with persisted decisions.
