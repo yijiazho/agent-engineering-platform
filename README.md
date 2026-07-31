@@ -94,14 +94,18 @@ Implemented foundations currently include:
 * GitHub issue-created event normalization and deduplication.
 * Deterministic Event-to-Workflow resolution with explicit versioned references.
 * Deterministic Task DAG resolution with dependency metadata and parallel-ready groups.
+* Idempotent WorkflowExecution trace-root creation with provenance events.
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
+* Deterministic pre-execution capability policy with persisted decisions.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 
 Workflow scheduling, ContextPackage construction, concrete Tool adapters,
 policy enforcement, task handlers, service composition, and the end-to-end
+DAG scheduling, ContextPackage construction, concrete Tool adapters,
+publication policy, task handlers, service composition, and the end-to-end
 issue-to-pull-request harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):

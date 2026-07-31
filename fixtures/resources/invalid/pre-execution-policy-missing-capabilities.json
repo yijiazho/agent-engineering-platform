@@ -1,0 +1,16 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Policy",
+  "metadata": {
+    "name": "missing-capabilities",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "type": "pre-execution-capability",
+    "rules": [
+      {
+        "effect": "allow"
+      }
+    ]
+  }
+}

@@ -344,11 +344,32 @@ Policies may originate from:
 * Workspace
 * Workflow
 * Task
+* Agent
 * Tool
 
 Policies compose hierarchically.
 
 The most restrictive rule always wins.
+
+For Pre-Execution Capability Policy, rules identify one or more capabilities
+and may include a JSON Schema condition evaluated against the capability,
+actor, Resource scope, and execution context. Matching decisions compose as
+`DENY` over `REQUIRE_APPROVAL` over `ALLOW`. If no applicable rule matches, the
+decision is `DENY`.
+
+Each evaluation persists a `PolicyDecision` containing every evaluated Policy
+reference, the deterministically ordered matching rules, the winning rule and
+reason, the actor, and the Resource scope. A `REQUIRE_APPROVAL` decision blocks
+execution until an Approval is recorded; it is not equivalent to `ALLOW`.
+Pre-execution rules must declare at least one capability. Pre-execution
+decisions require the complete evidence set, while Publication Policy decisions
+retain their gate-specific contract.
+
+PolicyDecision persistence keys bind the caller-provided runtime ID to the
+canonical task, trace, actor, capability, Resource scope, execution context,
+and versioned Policy inputs. An idempotent retry returns the prior decision only
+when those inputs are identical; reusing an ID for different authorization
+inputs is rejected.
 
 ---
 

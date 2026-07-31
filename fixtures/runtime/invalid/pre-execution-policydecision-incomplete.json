@@ -1,0 +1,18 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "PolicyDecision",
+  "id": "policydecision-incomplete000001",
+  "traceId": "trace-incomplete-policy",
+  "createdAt": "2026-07-30T12:00:00Z",
+  "updatedAt": "2026-07-30T12:00:00Z",
+  "provenance": {
+    "actor": "policy-engine",
+    "resourceRefs": []
+  },
+  "taskExecutionId": "taskexecution-000000000001",
+  "gate": "PRE_EXECUTION_CAPABILITY",
+  "policyRefs": [],
+  "action": "filesystem.write",
+  "decision": "DENY",
+  "reason": "Incomplete evidence."
+}

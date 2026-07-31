@@ -31,13 +31,18 @@ or `Blocked` as implementation state changes.
 | Total | 37 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
-GitHub issue event normalization and deduplication, TaskExecution lifecycle,
+GitHub issue event normalization and deduplication, WorkflowExecution creation,
+TaskExecution lifecycle,
 provider-neutral model and Tool boundaries, schema evaluation, the initial
 repository-knowledge scanner and query API, and immutable content-addressed
 GeneratedArtifact storage. Normalized events now resolve deterministically to
 explicitly versioned Workflow references, and Workflow Task DAGs resolve into
 validated deterministic execution plans with parallel-ready groups. The
 end-to-end MVP workflow is not yet runnable.
+explicitly versioned Workflow references. Pre-execution capability policy now
+composes versioned rules across all supported scopes and persists explainable
+decisions before Tool execution. The end-to-end MVP workflow is not yet
+runnable.
 
 ---
 
@@ -62,8 +67,8 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 13 | [AEP-006: Implement Event Deduplication](tasks/AEP-006-implement-event-deduplication.md) | Completed |
 | 14 | [AEP-007: Resolve Workflow For Event](tasks/AEP-007-resolve-workflow-for-event.md) | Completed |
 | 15 | [AEP-009: Build Task DAG Resolver](tasks/AEP-009-build-task-dag-resolver.md) | Completed |
-| 16 | [AEP-020: Implement Pre-Execution Capability Policy](tasks/AEP-020-implement-pre-execution-capability-policy.md) | Not Started |
-| 17 | [AEP-008: Create WorkflowExecution](tasks/AEP-008-create-workflowexecution.md) | Not Started |
+| 16 | [AEP-020: Implement Pre-Execution Capability Policy](tasks/AEP-020-implement-pre-execution-capability-policy.md) | Completed |
+| 17 | [AEP-008: Create WorkflowExecution](tasks/AEP-008-create-workflowexecution.md) | Completed |
 | 18 | [AEP-012: Implement Agent Resolver](tasks/AEP-012-implement-agent-resolver.md) | Not Started |
 | 19 | [AEP-021: Implement Filesystem Tool](tasks/AEP-021-implement-filesystem-tool.md) | Not Started |
 | 20 | [AEP-022: Implement Git Tool](tasks/AEP-022-implement-git-tool.md) | Not Started |
@@ -98,7 +103,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-005 | AEP-001 | Completed |
 | AEP-006 | AEP-004, AEP-005 | Completed |
 | AEP-007 | AEP-003, AEP-005 | Completed |
-| AEP-008 | AEP-004, AEP-006, AEP-007 | Not Started |
+| AEP-008 | AEP-004, AEP-006, AEP-007 | Completed |
 | AEP-009 | AEP-003 | Completed |
 | AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Not Started |
 | AEP-011 | AEP-002, AEP-004 | Completed |
@@ -110,7 +115,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-017 | AEP-003, AEP-004, AEP-016, AEP-018 | Not Started |
 | AEP-018 | AEP-002, AEP-004 | Completed |
 | AEP-019 | AEP-001, AEP-002 | Completed |
-| AEP-020 | AEP-003, AEP-004, AEP-019 | Not Started |
+| AEP-020 | AEP-003, AEP-004, AEP-019 | Completed |
 | AEP-021 | AEP-019, AEP-020 | Not Started |
 | AEP-022 | AEP-019, AEP-020 | Not Started |
 | AEP-023 | AEP-019, AEP-020 | Not Started |
@@ -136,7 +141,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Phase | Tasks | Status |
 | ----- | ----- | ------ |
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
-| Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | In Progress |
+| Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Completed |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | In Progress |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
