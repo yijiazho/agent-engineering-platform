@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -234,6 +234,24 @@ class DockerExecutionResult:
         object.__setattr__(self, "commands", commands)
 
 
+@dataclass(frozen=True)
+class DockerTimeoutResult:
+    """Completed command evidence captured before the shared deadline expired."""
+
+    commands: tuple[DockerCommandResult, ...]
+    logs_ref: str
+    started_at: str
+    completed_at: str
+
+    def __post_init__(self) -> None:
+        commands = tuple(self.commands)
+        if any(not isinstance(command, DockerCommandResult) for command in commands):
+            raise ValueError("timeout evidence must contain command results")
+        if not self.logs_ref or not self.started_at or not self.completed_at:
+            raise ValueError("timeout result must contain logs and timing evidence")
+        object.__setattr__(self, "commands", commands)
+
+
 class DockerStartupError(ToolAdapterError):
     """Raised when the Docker sandbox cannot be provisioned."""
 
@@ -244,7 +262,9 @@ class DockerExecution(ABC):
     """Injectable Docker lifecycle controlled by the shared Tool Runtime."""
 
     @abstractmethod
-    def wait(self, timeout_ms: int) -> DockerExecutionResult | None:
+    def wait(
+        self, timeout_ms: int
+    ) -> DockerExecutionResult | DockerTimeoutResult | None:
         """Return captured command evidence, or None when the deadline expires."""
 
     @abstractmethod
@@ -341,17 +361,25 @@ class DockerCliExecutor(DockerExecutor):
     """Production-capable invocation-scoped Docker CLI executor."""
 
     def __init__(
-        self, process: DockerProcessBoundary, logs: DockerLogStore
+        self,
+        process: DockerProcessBoundary,
+        logs: DockerLogStore,
+        *,
+        clock: Callable[[], float] = monotonic,
     ) -> None:
         self._process = process
         self._logs = logs
+        self._clock = clock
 
     def start(self, configuration: DockerRunConfiguration) -> DockerExecution:
         container_name = f"aep-validation-{uuid4().hex}"
-        deadline = monotonic() + configuration.timeout_ms / 1000
+        deadline = self._clock() + configuration.timeout_ms / 1000
 
         def remaining_ms() -> int:
-            return max(1, round((deadline - monotonic()) * 1000))
+            remaining = round((deadline - self._clock()) * 1000)
+            if remaining < 1:
+                raise DockerStartupError("Docker startup exceeded invocation deadline")
+            return remaining
 
         mount = configuration.workspace_mount
         mount_spec = (
@@ -360,6 +388,7 @@ class DockerCliExecutor(DockerExecutor):
         )
         create = [
             "docker", "create", "--name", container_name,
+            "--network", "none",
             "--cpus", str(configuration.resources.cpu_limit),
             "--memory", str(configuration.resources.memory_bytes),
             "--mount", mount_spec, configuration.image, "sleep", "infinity",
@@ -388,7 +417,12 @@ class DockerCliExecutor(DockerExecutor):
             )
             raise
         return _DockerCliExecution(
-            configuration, container_name, self._process, self._logs
+            configuration,
+            container_name,
+            self._process,
+            self._logs,
+            deadline,
+            self._clock,
         )
 
     def cleanup_startup(self) -> None:
@@ -403,31 +437,41 @@ class _DockerCliExecution(DockerExecution):
         container_name: str,
         process: DockerProcessBoundary,
         logs: DockerLogStore,
+        deadline: float,
+        clock: Callable[[], float],
     ) -> None:
         self._configuration = configuration
         self._name = container_name
         self._process = process
         self._logs = logs
+        self._deadline = deadline
+        self._clock = clock
         self._timed_out = False
 
-    def wait(self, timeout_ms: int) -> DockerExecutionResult | None:
+    def wait(
+        self, timeout_ms: int
+    ) -> DockerExecutionResult | DockerTimeoutResult | None:
         if self._timed_out:
             return None
         started_at = datetime.now(UTC)
-        deadline = monotonic() + timeout_ms / 1000
+        deadline = min(self._deadline, self._clock() + timeout_ms / 1000)
         evidence: list[DockerCommandResult] = []
         combined: list[str] = []
         for command in self._configuration.commands:
-            remaining_ms = max(0, round((deadline - monotonic()) * 1000))
+            remaining_ms = max(0, round((deadline - self._clock()) * 1000))
             if remaining_ms < 1:
                 self._timed_out = True
-                return None
+                return self._timeout_result(evidence, combined, started_at)
             result = self._process.run(
-                ["docker", "exec", self._name, *command], remaining_ms
+                [
+                    "docker", "exec", "--workdir", DOCKER_WORKSPACE_DESTINATION,
+                    self._name, *command,
+                ],
+                remaining_ms,
             )
             if result is None:
                 self._timed_out = True
-                return None
+                return self._timeout_result(evidence, combined, started_at)
             content = f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             combined.append(content)
             evidence.append(
@@ -443,6 +487,19 @@ class _DockerCliExecution(DockerExecution):
             if result.exit_code != 0:
                 break
         return DockerExecutionResult(
+            commands=tuple(evidence),
+            logs_ref=self._logs.write("\n".join(combined)),
+            started_at=started_at.isoformat().replace("+00:00", "Z"),
+            completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+
+    def _timeout_result(
+        self,
+        evidence: list[DockerCommandResult],
+        combined: list[str],
+        started_at: datetime,
+    ) -> DockerTimeoutResult:
+        return DockerTimeoutResult(
             commands=tuple(evidence),
             logs_ref=self._logs.write("\n".join(combined)),
             started_at=started_at.isoformat().replace("+00:00", "Z"),
@@ -535,13 +592,16 @@ class _DockerToolExecution(ToolExecution):
         outcome = self._execution.wait(timeout_ms)
         if outcome is None:
             return None
+        timed_out = isinstance(outcome, DockerTimeoutResult)
         expected = self._configuration.commands
         actual = tuple(command.argv for command in outcome.commands)
         failed = next(
             (command for command in outcome.commands if command.exit_code != 0), None
         )
         if actual != expected[: len(actual)] or (
-            failed is None and len(actual) != len(expected)
+            not timed_out
+            and failed is None
+            and len(actual) != len(expected)
         ):
             raise ValueError(
                 "Docker executor command evidence does not match requested commands"
@@ -550,7 +610,9 @@ class _DockerToolExecution(ToolExecution):
         duration_ms = sum(command.duration_ms for command in outcome.commands)
         return ToolResult(
             status=(
-                ToolResultStatus.FAILED
+                ToolResultStatus.TIMED_OUT
+                if timed_out
+                else ToolResultStatus.FAILED
                 if failed is not None
                 else ToolResultStatus.SUCCEEDED
             ),
@@ -564,10 +626,16 @@ class _DockerToolExecution(ToolExecution):
             started_at=outcome.started_at,
             completed_at=outcome.completed_at,
             failure_class=(
-                ToolFailureClass.NONZERO_EXIT if failed is not None else None
+                ToolFailureClass.TIMEOUT
+                if timed_out
+                else ToolFailureClass.NONZERO_EXIT
+                if failed is not None
+                else None
             ),
             failure_message=(
-                f"command exited with code {failed.exit_code}: "
+                f"adapter exceeded timeout of {timeout_ms}ms"
+                if timed_out
+                else f"command exited with code {failed.exit_code}: "
                 f"{' '.join(failed.argv)}"
                 if failed is not None
                 else None

@@ -555,14 +555,21 @@ traversal and symlink resolution. The container destination is fixed at
 `/workspace`.
 
 The production Docker CLI executor creates one invocation-scoped container with
-the authorized mount and configured CPU and memory limits. Its process and log
-storage boundaries remain injectable for daemon-independent tests. The executor
-exposes bounded wait, terminate, kill, and cleanup operations so the Tool
-Runtime retains lifecycle control, plus startup cleanup for partially
-provisioned resources. Each command result records its arguments, stdout,
-stderr, exit code, duration, and logs reference. Startup, timeout, and
-nonzero-exit failures are classified separately. These records are execution
-evidence; build and test acceptance is evaluated separately.
+networking disabled by default, the authorized mount, and configured CPU and
+memory limits. Every command executes with `/workspace` as its working
+directory. Create, start, and all commands consume one absolute invocation
+deadline rather than resetting the timeout at each phase.
+
+Its process and log storage boundaries remain injectable for
+daemon-independent tests. The executor exposes bounded wait, terminate, kill,
+and cleanup operations so the Tool Runtime retains lifecycle control, plus
+startup cleanup for partially provisioned resources. Each command result
+records its arguments, stdout, stderr, exit code, duration, and logs reference.
+If a later command times out, evidence and the immutable logs reference for
+completed commands remain on the timed-out result while termination and cleanup
+continue. Startup, timeout, and nonzero-exit failures are classified separately.
+These records are execution evidence; build and test acceptance is evaluated
+separately.
 
 ---
 

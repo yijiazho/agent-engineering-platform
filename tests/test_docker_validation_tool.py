@@ -44,6 +44,7 @@ def request(
     workspace_host: Path | None = None,
     image: str | None = None,
     container_path: str | None = None,
+    commands: list[dict] | None = None,
 ) -> ToolRequest:
     value = json.loads(FIXTURE.read_text(encoding="utf-8"))
     value["input"]["workspaceMount"]["hostPath"] = str(workspace_host or Path.cwd())
@@ -51,6 +52,8 @@ def request(
         value["input"]["image"] = image
     if container_path is not None:
         value["input"]["workspaceMount"]["containerPath"] = container_path
+    if commands is not None:
+        value["input"]["commands"] = commands
     return ToolRequest(
         tool_ref=value["toolRef"],
         input=value["input"],
@@ -126,13 +129,31 @@ class FakeDockerExecutor(DockerExecutor):
 
 
 class FakeProcessBoundary(DockerProcessBoundary):
-    def __init__(self, results: list[DockerProcessResult | None]) -> None:
+    def __init__(
+        self,
+        results: list[DockerProcessResult | None],
+        *,
+        clock=None,
+        advances: list[float] | None = None,
+    ) -> None:
         self.results = list(results)
         self.calls: list[tuple[tuple[str, ...], int]] = []
+        self.clock = clock
+        self.advances = list(advances or [])
 
     def run(self, argv, timeout_ms):
         self.calls.append((tuple(argv), timeout_ms))
+        if self.advances:
+            self.clock.value += self.advances.pop(0)
         return self.results.pop(0)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
 
 
 class FakeLogStore(DockerLogStore):
@@ -197,11 +218,13 @@ def test_concrete_cli_executor_builds_scoped_container_and_evidence() -> None:
     create = process.calls[0][0]
     assert create[:3] == ("docker", "create", "--name")
     assert create[3].startswith("aep-validation-")
+    assert create[4:6] == ("--network", "none")
     assert "--cpus" in create and "--memory" in create and "--mount" in create
     assert str(Path.cwd().resolve()) in create[create.index("--mount") + 1]
     assert process.calls[1][0] == ("docker", "start", create[3])
     assert process.calls[2][0] == (
-        "docker", "exec", create[3], "python", "-m", "pytest"
+        "docker", "exec", "--workdir", "/workspace",
+        create[3], "python", "-m", "pytest"
     )
     assert process.calls[3][0] == ("docker", "rm", "-f", create[3])
     assert result.output["commands"][0]["stdout"] == "passed\n"
@@ -219,6 +242,52 @@ def test_concrete_cli_executor_timeout_is_stopped_killed_and_removed() -> None:
     assert process.calls[3][0] == ("docker", "stop", name)
     assert process.calls[4][0] == ("docker", "kill", name)
     assert process.calls[5][0] == ("docker", "rm", "-f", name)
+
+
+def test_create_start_and_commands_share_one_absolute_deadline() -> None:
+    clock = FakeClock()
+    ok = DockerProcessResult("", "", 0, 1)
+    process = FakeProcessBoundary(
+        [ok, ok, ok, ok],
+        clock=clock,
+        advances=[10.0, 10.0, 0.0, 0.0],
+    )
+
+    result = invoke(DockerCliExecutor(process, FakeLogStore(), clock=clock))
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert [call[1] for call in process.calls[:3]] == [30_000, 20_000, 10_000]
+
+
+def test_later_command_timeout_preserves_completed_evidence_and_logs() -> None:
+    ok = DockerProcessResult("", "", 0, 1)
+    first = DockerProcessResult("built\n", "", 0, 8)
+    process = FakeProcessBoundary([ok, ok, first, None, ok, ok, ok])
+    logs = FakeLogStore()
+    tool_request = request(
+        commands=[
+            {"argv": ["python", "-m", "build"]},
+            {"argv": ["python", "-m", "pytest"]},
+        ]
+    )
+
+    result = invoke(
+        DockerCliExecutor(process, logs),
+        tool_request=tool_request,
+    )
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.failure_class is ToolFailureClass.TIMEOUT
+    assert len(result.output["commands"]) == 1
+    assert result.output["commands"][0]["argv"] == ("python", "-m", "build")
+    assert result.output["commands"][0]["stdout"] == "built\n"
+    assert result.logs_ref == "sha256:" + f"{2:064x}"
+    with pytest.raises(TypeError):
+        result.output["commands"][0]["stdout"] = "changed"
+    name = process.calls[0][0][3]
+    assert ("docker", "stop", name) in [call[0] for call in process.calls]
+    assert ("docker", "kill", name) in [call[0] for call in process.calls]
+    assert process.calls[-1][0] == ("docker", "rm", "-f", name)
 
 
 def test_nonzero_exit_is_classified_without_interpreting_acceptance() -> None:

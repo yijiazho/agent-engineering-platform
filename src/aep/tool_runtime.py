@@ -375,6 +375,11 @@ def invoke_tool(
                 ToolFailureClass.ADAPTER,
                 f"adapter returned {type(result).__name__}, expected ToolResult",
             )
+        elif result.status is ToolResultStatus.TIMED_OUT:
+            execution.terminate()
+            if execution.wait(TERMINATION_GRACE_MS) is None:
+                execution.kill()
+            normalized_result = result
         elif result.status is ToolResultStatus.SUCCEEDED:
             validator.validate_output(result.output)
             normalized_result = result

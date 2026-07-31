@@ -48,10 +48,14 @@ executor is called.
 The executor lifecycle remains under Tool Runtime control for waiting,
 termination, forced termination, and cleanup. Successful and nonzero command
 results retain stdout, stderr, exit code, duration, and logs reference for every
-configured command. Startup, timeout, and nonzero-exit failures are classified
-separately. The adapter records execution evidence only; AEP-027 remains
-responsible for interpreting whether that evidence satisfies build and test
-expectations.
+configured command. The invocation-scoped container disables networking,
+executes commands from `/workspace`, and uses one absolute deadline across
+create, start, and command execution. When a later command times out, completed
+command evidence and its immutable logs reference remain on the normalized
+timed-out result while the runtime terminates and cleans up the container.
+Startup, timeout, and nonzero-exit failures are classified separately. The
+adapter records execution evidence only; AEP-027 remains responsible for
+interpreting whether that evidence satisfies build and test expectations.
 
 `tests/test_docker_validation_tool.py` uses an injected fake executor and a
 deterministic request fixture. It covers successful evidence capture, nonzero
