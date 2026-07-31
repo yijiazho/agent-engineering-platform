@@ -100,7 +100,8 @@ Implemented foundations currently include:
 * Deterministic pre-execution capability policy with persisted decisions.
 * Repository-bound Git Tool operations for branch creation, status, diff, and
   capability-authorized push through an injected isolated sandbox with
-  short-lived credentials and redacted command evidence.
+  short-lived credentials, explicit remote-mutation state, and redacted command
+  evidence.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.

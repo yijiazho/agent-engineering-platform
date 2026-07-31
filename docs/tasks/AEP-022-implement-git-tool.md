@@ -59,9 +59,18 @@ credentials in structured output.
 Sandbox timeouts retain redacted partial command logs and return a `TIMED_OUT`
 result with `logsRef` after the isolated command has been terminated.
 
+Every adapter result reports `remoteMutationState`. It is `NOT_ATTEMPTED`
+before a push starts, becomes `UNKNOWN` immediately before the push command,
+and becomes `CONFIRMED` as soon as that command succeeds. A push timeout or
+failure remains `UNKNOWN` until a future reconciliation contract can establish
+the remote state. Once `CONFIRMED`, later local evidence-collection failures do
+not erase the observed external effect.
+
 `tests/test_git_tool.py` creates temporary local working and bare fixture
 repositories. It covers branch creation, status, diff, denied and authorized
 push, repository-state mismatches, omitted push capability, command failure,
 dirty and unrelated histories, hook and ambient-environment isolation, scoped
 credential cleanup, read and push timeouts, structured evidence, and
-command-log secret redaction without network access.
+command-log secret redaction without network access. Push tests distinguish an
+ambiguous in-flight timeout from a confirmed push followed by an evidence
+timeout.

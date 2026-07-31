@@ -225,6 +225,7 @@ def test_create_branch_is_bound_to_configured_revision_and_branch(
     assert result.output["revision"] == revision
     assert result.output["baseRevision"] == revision
     assert result.output["changedFiles"] == ()
+    assert result.output["remoteMutationState"] == "NOT_ATTEMPTED"
     assert result.logs_ref is not None
     assert "switch" in logs.get(result.logs_ref)
 
@@ -379,7 +380,7 @@ def test_authorized_push_updates_only_configured_remote_branch(
     )
 
     assert result.status is ToolResultStatus.SUCCEEDED
-    assert result.output["pushed"] is True
+    assert result.output["remoteMutationState"] == "CONFIRMED"
     assert git(remote, "rev-parse", "refs/heads/agent/work") == revision
 
 
@@ -532,8 +533,28 @@ def test_push_timeout_persists_evidence_without_remote_ref(
     assert result.failure_class.value == "TIMEOUT"
     assert sandbox.timed_out
     assert result.logs_ref is not None
+    assert result.output["remoteMutationState"] == "UNKNOWN"
     assert result.output["commandResults"][-1]["exitCode"] == -1
     assert not (remote / "refs" / "heads" / "agent" / "work").exists()
+
+
+def test_confirmed_push_state_survives_post_push_evidence_timeout(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    create_branch(repository, revision, logs)
+    sandbox = TimeoutGitSandbox("status")
+
+    result = invoke(
+        request(revision, "push_branch", capabilities=("git.push",)),
+        adapter(repository, revision, logs, sandbox=sandbox),
+    )
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.failure_class.value == "TIMEOUT"
+    assert result.output["remoteMutationState"] == "CONFIRMED"
+    assert git(remote, "rev-parse", "refs/heads/agent/work") == revision
 
 
 def test_command_failure_is_structured_and_command_logs_are_redacted(
@@ -555,6 +576,7 @@ def test_command_failure_is_structured_and_command_logs_are_redacted(
 
     assert result.status is ToolResultStatus.FAILED
     assert result.failure_class.value == "ADAPTER"
+    assert result.output["remoteMutationState"] == "UNKNOWN"
     assert result.output["commandResults"][-1]["exitCode"] != 0
     assert result.logs_ref is not None
     assert "SUPERSECRET" not in result.failure_message

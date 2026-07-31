@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -75,7 +76,7 @@ GIT_OUTPUT_SCHEMA: Mapping[str, Any] = {
         "baseRevision",
         "changedFiles",
         "diff",
-        "pushed",
+        "remoteMutationState",
         "commandResults",
     ],
     "properties": {
@@ -103,7 +104,10 @@ GIT_OUTPUT_SCHEMA: Mapping[str, Any] = {
                 },
             ]
         },
-        "pushed": {"type": "boolean"},
+        "remoteMutationState": {
+            "type": "string",
+            "enum": ["NOT_ATTEMPTED", "CONFIRMED", "UNKNOWN"],
+        },
         "commandResults": {
             "type": "array",
             "items": _COMMAND_RESULT_SCHEMA,
@@ -125,6 +129,14 @@ _CREDENTIAL_URL_PATTERN = re.compile(
 
 class GitToolContractError(ValueError):
     """Raised when adapter configuration cannot enforce repository boundaries."""
+
+
+class RemoteMutationState(str, Enum):
+    """Observed state of the configured remote push side effect."""
+
+    NOT_ATTEMPTED = "NOT_ATTEMPTED"
+    CONFIRMED = "CONFIRMED"
+    UNKNOWN = "UNKNOWN"
 
 
 class GitCommandLogStore(Protocol):
@@ -365,6 +377,7 @@ class _GitToolExecution(ToolExecution):
         self._commands: list[_CommandResult] = []
         self._result: ToolResult | None = None
         self._cancelled = False
+        self._remote_mutation_state = RemoteMutationState.NOT_ATTEMPTED
 
     def wait(self, timeout_ms: int) -> ToolResult | None:
         if self._result is not None:
@@ -385,13 +398,7 @@ class _GitToolExecution(ToolExecution):
         except _CommandTimeout:
             self._result = self._result_record(
                 status=ToolResultStatus.TIMED_OUT,
-                output={
-                    "operation": self._operation,
-                    "repository": self._repository_id,
-                    "commandResults": [
-                        command.metadata() for command in self._commands
-                    ],
-                },
+                output=self._failure_output(),
                 started_at=started_at,
                 started_clock=started_clock,
                 failure_message="isolated Git command exceeded its deadline",
@@ -400,13 +407,7 @@ class _GitToolExecution(ToolExecution):
         except Exception as error:
             self._result = self._result_record(
                 status=ToolResultStatus.FAILED,
-                output={
-                    "operation": self._operation,
-                    "repository": self._repository_id,
-                    "commandResults": [
-                        command.metadata() for command in self._commands
-                    ],
-                },
+                output=self._failure_output(),
                 started_at=started_at,
                 started_clock=started_clock,
                 failure_message=_redact(str(error)),
@@ -486,7 +487,9 @@ class _GitToolExecution(ToolExecution):
                         ),
                         deadline,
                         environment=credentials.environment,
+                        begins_remote_mutation=True,
                     )
+                    self._remote_mutation_state = RemoteMutationState.CONFIRMED
                 finally:
                     credentials.close()
             elif self._operation not in {"status", "diff"}:
@@ -550,8 +553,18 @@ class _GitToolExecution(ToolExecution):
             "baseRevision": self._expected_revision,
             "changedFiles": changed_files,
             "diff": diff_value,
-            "pushed": self._operation == "push_branch",
+            "remoteMutationState": self._remote_mutation_state.value,
             "commandResults": [command.metadata() for command in self._commands],
+        }
+
+    def _failure_output(self) -> dict[str, Any]:
+        return {
+            "operation": self._operation,
+            "repository": self._repository_id,
+            "remoteMutationState": self._remote_mutation_state.value,
+            "commandResults": [
+                command.metadata() for command in self._commands
+            ],
         }
 
     def _current_branch(self, deadline: float) -> str:
@@ -566,6 +579,7 @@ class _GitToolExecution(ToolExecution):
         *,
         accepted_exit_codes: tuple[int, ...] = (0,),
         environment: Mapping[str, str] | None = None,
+        begins_remote_mutation: bool = False,
     ) -> _CommandResult:
         remaining = deadline - monotonic()
         if remaining <= 0:
@@ -588,6 +602,8 @@ class _GitToolExecution(ToolExecution):
             "GIT_TERMINAL_PROMPT": "0",
         }
         try:
+            if begins_remote_mutation:
+                self._remote_mutation_state = RemoteMutationState.UNKNOWN
             completed = self._sandbox.run(
                 repository=self._repository,
                 arguments=controlled_arguments,
