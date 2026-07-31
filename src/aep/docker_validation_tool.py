@@ -397,8 +397,9 @@ class DockerCliExecutor(DockerExecutor):
             if created is None:
                 raise DockerStartupError("Docker create timed out")
             if created.exit_code != 0:
+                detail = created.stderr.strip() or created.stdout.strip() or "unknown error"
                 raise DockerStartupError(
-                    f"Docker create failed: {created.stderr.strip()}"
+                    f"Docker create failed (exit {created.exit_code}): {detail}"
                 )
             started = self._process.run(
                 ["docker", "start", container_name], remaining_ms()
@@ -406,8 +407,9 @@ class DockerCliExecutor(DockerExecutor):
             if started is None:
                 raise DockerStartupError("Docker start timed out")
             if started.exit_code != 0:
+                detail = started.stderr.strip() or started.stdout.strip() or "unknown error"
                 raise DockerStartupError(
-                    f"Docker start failed: {started.stderr.strip()}"
+                    f"Docker start failed (exit {started.exit_code}): {detail}"
                 )
         except Exception:
             self._process.run(
@@ -511,10 +513,14 @@ class _DockerCliExecution(DockerExecution):
     def kill(self) -> None:
         self._process.run(["docker", "kill", self._name], 5_000)
 
-    def cleanup(self) -> None:
         result = self._process.run(["docker", "rm", "-f", self._name], 5_000)
-        if result is None or result.exit_code != 0:
-            raise RuntimeError("Docker container cleanup failed")
+        if result is None:
+            raise RuntimeError("Docker container cleanup timed out")
+        if result.exit_code != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "unknown error"
+            raise RuntimeError(
+                f"Docker container cleanup failed (exit {result.exit_code}): {detail}"
+            )
 
 
 class DockerValidationAdapter(ToolAdapter):
