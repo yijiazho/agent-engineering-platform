@@ -120,7 +120,7 @@ _REVISION_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 _SAFE_REMOTE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _TOKEN_PATTERN = re.compile(
     r"(?i)(?:gh[opsu]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|"
-    r"(?:token|password|passwd|authorization)\s*[=:]\s*)[^\s\"']+"
+    r"(?:token|password|passwd|authorization)\s*[=:]\s*(?:bearer\s+)?)(?:[^\s\"']+|\"[^\"]+\"|'[^']+')"
 )
 _CREDENTIAL_URL_PATTERN = re.compile(
     r"(?i)\b(https?://)(?:[^/@\s]+)@"
