@@ -555,10 +555,14 @@ Publication Policy records through a trusted verifier. The verifier binds the
 CreatePullRequest task and PolicyDecision while allowing artifacts and
 evaluations to preserve their distinct owning tasks. All evidence shares one
 WorkflowExecution, repository revision, and trace. A successful Git push
-ToolInvocation must prove that the exact approved head resolves to that
-revision. The decision separately binds repository, head, base, `PUBLICATION`
-gate, and action before pre-execution capability authorization. Caller
-assertions or a changed target cannot grant publication.
+ToolInvocation owned by the CreatePullRequest task must use an
+immutable-version Git Tool and prove through matching input and output that the
+exact approved head resolves to that revision. The verifier resolves the push's
+persisted pre-execution PolicyDecision and requires `git.push`, `ALLOW`, and the
+same task, workflow, revision, trace, and target. The publication decision
+separately binds repository, head, base, `PUBLICATION` gate, and action before
+`github.create_pr` authorization. Caller assertions or a changed target cannot
+grant publication.
 
 Provider calls return cancellable execution handles before network work can
 block the Tool Runtime. Safe issue reads honor provider retry-after hints within

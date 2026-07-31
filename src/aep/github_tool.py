@@ -19,6 +19,7 @@ from aep.tool_runtime import (
     ToolResult,
     ToolResultStatus,
     ToolSchemaValidationError,
+    SEMVER_PATTERN,
     invoke_tool,
 )
 
@@ -346,21 +347,84 @@ class PersistedPublicationPolicyVerifier:
             kind="ToolInvocation",
             id=evidence["pushToolInvocationId"],
             traceId=request.trace_id,
+            taskExecutionId=evidence["taskExecutionId"],
             status="SUCCEEDED",
         ):
             return PublicationVerification(False, "Git push identity mismatch")
         push_provenance = push.get("provenance", {})
-        if push_provenance.get("workflowExecutionId") != workflow_id:
-            return PublicationVerification(False, "Git push workflow mismatch")
-        pushed = push.get("output", {})
-        expected_push = {
+        expected_push_provenance = {
+            "workflowExecutionId": workflow_id,
+            "taskExecutionId": evidence["taskExecutionId"],
+            "repositoryRevision": revision,
+        }
+        if any(
+            push_provenance.get(key) != value
+            for key, value in expected_push_provenance.items()
+        ):
+            return PublicationVerification(False, "Git push provenance mismatch")
+        tool_ref = push.get("toolRef", {})
+        version = tool_ref.get("version")
+        if (
+            tool_ref.get("kind") != "Tool"
+            or tool_ref.get("name") != "git"
+            or not isinstance(version, str)
+            or not SEMVER_PATTERN.fullmatch(version)
+        ):
+            return PublicationVerification(False, "Git push Tool reference mismatch")
+        expected_push_target = {
             "operation": "push",
             "repository": request.input["repository"],
             "branch": request.input["head"],
             "revision": revision,
         }
-        if any(pushed.get(key) != value for key, value in expected_push.items()):
+        if any(
+            push.get("input", {}).get(key) != value
+            for key, value in expected_push_target.items()
+        ):
+            return PublicationVerification(False, "Git push input mismatch")
+        if any(
+            push.get("output", {}).get(key) != value
+            for key, value in expected_push_target.items()
+        ):
             return PublicationVerification(False, "Git push target mismatch")
+        push_policy_id = push.get("policyDecisionId")
+        if not isinstance(push_policy_id, str):
+            return PublicationVerification(False, "Git push PolicyDecision missing")
+        push_policy = self._resolve(push_policy_id)
+        if push_policy is None:
+            return PublicationVerification(False, "Git push PolicyDecision not found")
+        expected_push_policy = {
+            "kind": "PolicyDecision",
+            "id": push_policy_id,
+            "traceId": request.trace_id,
+            "taskExecutionId": evidence["taskExecutionId"],
+            "gate": "PRE_EXECUTION_CAPABILITY",
+            "action": "git.push",
+            "decision": "ALLOW",
+        }
+        if any(
+            push_policy.get(key) != value
+            for key, value in expected_push_policy.items()
+        ):
+            return PublicationVerification(False, "Git push policy mismatch")
+        policy_provenance = push_policy.get("provenance", {})
+        if any(
+            policy_provenance.get(key) != value
+            for key, value in expected_push_provenance.items()
+        ):
+            return PublicationVerification(False, "Git push policy provenance mismatch")
+        expected_push_scope = {
+            "repository": request.input["repository"],
+            "branch": request.input["head"],
+            "repositoryRevision": revision,
+            "toolRef": dict(tool_ref),
+        }
+        push_scope = push_policy.get("resourceScope", {})
+        if any(
+            push_scope.get(key) != value
+            for key, value in expected_push_scope.items()
+        ):
+            return PublicationVerification(False, "Git push policy target mismatch")
 
         expected_policy = {
             "kind": "PolicyDecision",

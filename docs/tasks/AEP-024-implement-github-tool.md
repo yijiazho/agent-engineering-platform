@@ -45,11 +45,14 @@ binds the CreatePullRequest task and decision while allowing artifacts and
 evaluations to retain their owning GeneratePatch, RunValidation, or
 EvaluateAcceptance tasks. Every record must share the WorkflowExecution,
 repository revision, and trace. The verifier also requires a successful Git
-push ToolInvocation proving that the approved head resolves to the approved
-revision, and binds the exact repository, head, base, `PUBLICATION` gate, and
-`github.create_pr` action. Changed publication targets are denied before the
-capability hook. Caller-supplied decision fields are rejected. Issue reads use
-`github.issue.read`.
+push ToolInvocation owned by the current CreatePullRequest task. The push must
+reference an immutable-version Git Tool, bind matching input and output for the
+approved repository, head, and revision, and reference its own persisted
+pre-execution `git.push` `ALLOW` PolicyDecision with matching task, trace,
+workflow, revision, and target. Publication separately binds the exact base,
+`PUBLICATION` gate, and `github.create_pr` action. Changed or incomplete targets
+are denied before the capability hook. Caller-supplied decision fields are
+rejected. Issue reads use `github.issue.read`.
 
 Provider operations use a cancellable execution handle so the Tool Runtime can
 enforce timeout, termination, kill, and cleanup without a synchronous network

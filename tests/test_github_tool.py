@@ -43,6 +43,7 @@ EVALUATION_ID = "evaluationresult-dddddddddddd"
 ACCEPTANCE_EVALUATION_ID = "evaluationresult-444444444444"
 POLICY_ID = "policydecision-eeeeeeeeeeee"
 PUSH_ID = "toolinvocation-ffffffffffff"
+PUSH_POLICY_ID = "policydecision-555555555555"
 REVISION = "abc1234"
 TRACE_ID = "trace-github-001"
 
@@ -274,14 +275,16 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         "outcome": "PASS",
         "target": {"type": "GeneratedArtifact", "id": ARTIFACT_ID},
     }
-    push = base("ToolInvocation", PUSH_ID, PATCH_TASK_ID, "tool-runtime") | {
-        "taskExecutionId": PATCH_TASK_ID,
+    git_tool_ref = {"kind": "Tool", "name": "git", "version": "1.0.0"}
+    push = base("ToolInvocation", PUSH_ID, TASK_ID, "tool-runtime") | {
+        "taskExecutionId": TASK_ID,
         "toolRef": {"kind": "Tool", "name": "git", "version": "1.0.0"},
         "status": "SUCCEEDED",
         "input": {
             "operation": "push",
             "repository": "acme/widgets",
             "branch": "aep/issue-42",
+            "revision": REVISION,
         },
         "output": {
             "operation": "push",
@@ -289,6 +292,54 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
             "branch": "aep/issue-42",
             "revision": REVISION,
         },
+        "policyDecisionId": PUSH_POLICY_ID,
+    }
+    push_policy = base(
+        "PolicyDecision", PUSH_POLICY_ID, TASK_ID, "capability-policy"
+    ) | {
+        "taskExecutionId": TASK_ID,
+        "gate": "PRE_EXECUTION_CAPABILITY",
+        "policyRefs": [
+            {
+                "kind": "Policy",
+                "name": "git-push",
+                "version": "1.0.0",
+            }
+        ],
+        "action": "git.push",
+        "decision": "ALLOW",
+        "reason": "The approved branch may be pushed.",
+        "approvalRequired": False,
+        "evaluatedAt": "2026-07-30T12:00:00Z",
+        "subject": f"TaskExecution:{TASK_ID}",
+        "resourceScope": {
+            "repository": "acme/widgets",
+            "branch": "aep/issue-42",
+            "repositoryRevision": REVISION,
+            "toolRef": git_tool_ref,
+        },
+        "evaluatedRule": {
+            "scope": "Tool",
+            "policyRef": {
+                "kind": "Policy",
+                "name": "git-push",
+                "version": "1.0.0",
+            },
+            "ruleIndex": 0,
+            "effect": "allow",
+        },
+        "matchedRules": [
+            {
+                "scope": "Tool",
+                "policyRef": {
+                    "kind": "Policy",
+                    "name": "git-push",
+                    "version": "1.0.0",
+                },
+                "ruleIndex": 0,
+                "effect": "allow",
+            }
+        ],
     }
     policy = base(
         "PolicyDecision", POLICY_ID, TASK_ID, "publication-policy"
@@ -323,6 +374,7 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         EVALUATION_ID: evaluation,
         ACCEPTANCE_EVALUATION_ID: acceptance_evaluation,
         PUSH_ID: push,
+        PUSH_POLICY_ID: push_policy,
         POLICY_ID: policy,
     }
 
@@ -515,6 +567,7 @@ def test_schema_valid_cross_task_publication_graph_is_allowed() -> None:
             EVALUATION_ID: "evaluationresult",
             ACCEPTANCE_EVALUATION_ID: "evaluationresult",
             PUSH_ID: "toolinvocation",
+            PUSH_POLICY_ID: "policydecision",
             POLICY_ID: "policydecision",
         }[runtime_id]
         schema = json.loads(
@@ -540,12 +593,13 @@ def test_schema_valid_cross_task_publication_graph_is_allowed() -> None:
         == ACCEPTANCE_TASK_ID
     )
     assert records[POLICY_ID]["taskExecutionId"] == TASK_ID
+    assert records[PUSH_ID]["taskExecutionId"] == TASK_ID
 
 
 @pytest.mark.parametrize(
     "field,value,message",
     [
-        ("head", "changed-head", "Git push target mismatch"),
+        ("head", "changed-head", "Git push input mismatch"),
         ("base", "release", "Publication target mismatch"),
     ],
 )
@@ -584,6 +638,58 @@ def test_push_proof_must_resolve_approved_head_to_revision() -> None:
 
     assert result.status is ToolResultStatus.DENIED
     assert result.failure_message == "Git push target mismatch"
+    assert client.pull_request_calls == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda records: records[PUSH_ID].update(
+            toolRef={"kind": "Tool", "name": "github", "version": "1.0.0"}
+        ),
+        lambda records: records[PUSH_ID].update(
+            toolRef={"kind": "Tool", "name": "git", "version": "latest"}
+        ),
+        lambda records: records[PUSH_ID].update(taskExecutionId=PATCH_TASK_ID),
+        lambda records: records[PUSH_ID]["provenance"].update(
+            taskExecutionId=PATCH_TASK_ID
+        ),
+        lambda records: records[PUSH_ID]["provenance"].update(
+            workflowExecutionId="workflowexecution-777777777777"
+        ),
+        lambda records: records[PUSH_ID]["provenance"].update(
+            repositoryRevision="deadbee"
+        ),
+        lambda records: records[PUSH_ID]["input"].update(branch="other-head"),
+        lambda records: records[PUSH_ID].update(
+            policyDecisionId="policydecision-666666666666"
+        ),
+        lambda records: records[PUSH_POLICY_ID].update(decision="DENY"),
+        lambda records: records[PUSH_POLICY_ID].update(action="filesystem.write"),
+        lambda records: records[PUSH_POLICY_ID].update(
+            taskExecutionId=PATCH_TASK_ID
+        ),
+        lambda records: records[PUSH_POLICY_ID]["resourceScope"].update(
+            branch="other-head"
+        ),
+        lambda records: records[PUSH_POLICY_ID].update(traceId="trace-other"),
+    ],
+)
+def test_push_proof_and_capability_decision_fail_closed(mutation) -> None:
+    records = persisted_evidence()
+    mutation(records)
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+    authorization_calls: list[ToolRequest] = []
+
+    result = invoke_github_tool(
+        request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda item: authorization_calls.append(item) or True,
+        publication_verifier=trusted_verifier(records),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.DENIED
+    assert authorization_calls == []
     assert client.pull_request_calls == []
 
 
