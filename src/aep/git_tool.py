@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 import json
-import os
 from pathlib import Path
 import re
-import subprocess
 from time import monotonic
 from typing import Any, Protocol
 
@@ -136,6 +134,86 @@ class GitCommandLogStore(Protocol):
         """Persist content and return an immutable reference."""
 
 
+@dataclass(frozen=True)
+class GitSandboxCommandResult:
+    """One command result returned by the isolated Git sandbox."""
+
+    exit_code: int
+    stdout: bytes = b""
+    stderr: bytes = b""
+
+
+class GitSandboxTimeout(TimeoutError):
+    """Raised after the sandbox has terminated a command at its deadline."""
+
+    def __init__(self, *, stdout: bytes = b"", stderr: bytes = b"") -> None:
+        super().__init__("isolated Git command exceeded its deadline")
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class GitSandbox(Protocol):
+    """Isolation boundary supplied by the Tool Runtime.
+
+    Implementations mount only ``repository``, execute Git without inheriting
+    the Tool Runtime host environment, and terminate the command before raising
+    ``GitSandboxTimeout``. Both special paths must be outside the repository
+    mount and controlled by the sandbox.
+    """
+
+    @property
+    def disabled_hooks_path(self) -> str:
+        """Return a sandbox path that cannot contain repository hooks."""
+
+    @property
+    def null_device_path(self) -> str:
+        """Return the sandbox null device path."""
+
+    def run(
+        self,
+        *,
+        repository: Path,
+        arguments: Sequence[str],
+        environment: Mapping[str, str],
+        timeout_ms: int,
+    ) -> GitSandboxCommandResult:
+        """Run Git in isolation with exactly the supplied scoped environment."""
+
+
+class GitCredentialLease(Protocol):
+    """Short-lived credential material scoped to one push attempt."""
+
+    @property
+    def environment(self) -> Mapping[str, str]:
+        """Return environment entries visible only to the isolated push."""
+
+    def close(self) -> None:
+        """Revoke and remove temporary credential material."""
+
+
+class GitCredentialProvider(Protocol):
+    """Issue temporary credentials for one configured remote and branch."""
+
+    def acquire(self, *, remote: str, branch: str) -> GitCredentialLease:
+        """Acquire a lease that the adapter closes after the push attempt."""
+
+
+class _EmptyCredentialLease:
+    @property
+    def environment(self) -> Mapping[str, str]:
+        return {}
+
+    def close(self) -> None:
+        return None
+
+
+class NoGitCredentials:
+    """Credential provider for local remotes and credential-free sandboxes."""
+
+    def acquire(self, *, remote: str, branch: str) -> GitCredentialLease:
+        return _EmptyCredentialLease()
+
+
 class InMemoryGitCommandLogStore:
     """Deterministic command log store for local composition and tests."""
 
@@ -186,7 +264,9 @@ class _CommandFailure(RuntimeError):
 
 
 class _CommandTimeout(TimeoutError):
-    pass
+    def __init__(self, result: _CommandResult) -> None:
+        self.result = result
+        super().__init__("isolated Git command exceeded its deadline")
 
 
 class GitToolAdapter(ToolAdapter):
@@ -200,6 +280,8 @@ class GitToolAdapter(ToolAdapter):
         expected_revision: str,
         working_branch: str,
         log_store: GitCommandLogStore,
+        sandbox: GitSandbox,
+        credential_provider: GitCredentialProvider | None = None,
         remote: str = "origin",
     ) -> None:
         root = repository.resolve()
@@ -223,6 +305,8 @@ class GitToolAdapter(ToolAdapter):
         self._working_branch = working_branch
         self._remote = remote
         self._log_store = log_store
+        self._sandbox = sandbox
+        self._credential_provider = credential_provider or NoGitCredentials()
 
     def start(self, request: ToolRequest) -> ToolExecution:
         value = request.input
@@ -248,6 +332,8 @@ class GitToolAdapter(ToolAdapter):
             operation=str(operation),
             trace_id=request.trace_id,
             log_store=self._log_store,
+            sandbox=self._sandbox,
+            credential_provider=self._credential_provider,
         )
 
 
@@ -263,6 +349,8 @@ class _GitToolExecution(ToolExecution):
         operation: str,
         trace_id: str,
         log_store: GitCommandLogStore,
+        sandbox: GitSandbox,
+        credential_provider: GitCredentialProvider,
     ) -> None:
         self._repository = repository
         self._repository_id = repository_id
@@ -272,6 +360,8 @@ class _GitToolExecution(ToolExecution):
         self._operation = operation
         self._trace_id = trace_id
         self._log_store = log_store
+        self._sandbox = sandbox
+        self._credential_provider = credential_provider
         self._commands: list[_CommandResult] = []
         self._result: ToolResult | None = None
         self._cancelled = False
@@ -293,8 +383,21 @@ class _GitToolExecution(ToolExecution):
                 started_clock=started_clock,
             )
         except _CommandTimeout:
-            return None
-        except (GitToolContractError, _CommandFailure, OSError) as error:
+            self._result = self._result_record(
+                status=ToolResultStatus.TIMED_OUT,
+                output={
+                    "operation": self._operation,
+                    "repository": self._repository_id,
+                    "commandResults": [
+                        command.metadata() for command in self._commands
+                    ],
+                },
+                started_at=started_at,
+                started_clock=started_clock,
+                failure_message="isolated Git command exceeded its deadline",
+                failure_class=ToolFailureClass.TIMEOUT,
+            )
+        except Exception as error:
             self._result = self._result_record(
                 status=ToolResultStatus.FAILED,
                 output={
@@ -337,6 +440,14 @@ class _GitToolExecution(ToolExecution):
                 raise GitToolContractError(
                     "create_branch requires HEAD at the expected revision"
                 )
+            status = self._run(
+                ("status", "--porcelain=v1", "-z", "--untracked-files=all"),
+                deadline,
+            ).stdout
+            if status:
+                raise GitToolContractError(
+                    "create_branch requires a clean index and worktree"
+                )
             self._run(
                 ("switch", "-c", self._working_branch, self._expected_revision),
                 deadline,
@@ -347,16 +458,37 @@ class _GitToolExecution(ToolExecution):
                 raise GitToolContractError(
                     f"{self._operation} requires branch {self._working_branch!r}"
                 )
-            if self._operation == "push_branch":
-                self._run(
-                    (
-                        "push",
-                        "--set-upstream",
-                        self._remote,
-                        self._working_branch,
-                    ),
-                    deadline,
+            ancestry = self._run(
+                (
+                    "merge-base",
+                    "--is-ancestor",
+                    self._expected_revision,
+                    "HEAD",
+                ),
+                deadline,
+                accepted_exit_codes=(0, 1),
+            )
+            if ancestry.exit_code != 0:
+                raise GitToolContractError(
+                    "configured expected revision is not an ancestor of HEAD"
                 )
+            if self._operation == "push_branch":
+                credentials = self._credential_provider.acquire(
+                    remote=self._remote, branch=self._working_branch
+                )
+                try:
+                    self._run(
+                        (
+                            "push",
+                            "--set-upstream",
+                            self._remote,
+                            self._working_branch,
+                        ),
+                        deadline,
+                        environment=credentials.environment,
+                    )
+                finally:
+                    credentials.close()
             elif self._operation not in {"status", "diff"}:
                 raise GitToolContractError(
                     f"unsupported Git operation {self._operation!r}"
@@ -397,7 +529,7 @@ class _GitToolExecution(ToolExecution):
                             "--no-color",
                             "--binary",
                             "--",
-                            os.devnull,
+                            self._sandbox.null_device_path,
                             changed_file["path"],
                         ),
                         deadline,
@@ -433,37 +565,47 @@ class _GitToolExecution(ToolExecution):
         deadline: float,
         *,
         accepted_exit_codes: tuple[int, ...] = (0,),
+        environment: Mapping[str, str] | None = None,
     ) -> _CommandResult:
         remaining = deadline - monotonic()
         if remaining <= 0:
-            raise _CommandTimeout
-        command = ("git", *arguments)
-        environment = os.environ.copy()
-        environment["GIT_TERMINAL_PROMPT"] = "0"
+            result = _CommandResult(
+                arguments=tuple(arguments),
+                exit_code=-1,
+                stdout=b"",
+                stderr=b"",
+            )
+            self._commands.append(result)
+            raise _CommandTimeout(result)
+        controlled_arguments = (
+            "-c",
+            f"core.hooksPath={self._sandbox.disabled_hooks_path}",
+            *arguments,
+        )
+        scoped_environment = {
+            **dict(environment or {}),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
         try:
-            completed = subprocess.run(
-                command,
-                cwd=self._repository,
-                env=environment,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=remaining,
-                check=False,
+            completed = self._sandbox.run(
+                repository=self._repository,
+                arguments=controlled_arguments,
+                environment=scoped_environment,
+                timeout_ms=max(1, round(remaining * 1000)),
             )
-        except subprocess.TimeoutExpired as error:
-            self._commands.append(
-                _CommandResult(
-                    arguments=tuple(arguments),
-                    exit_code=-1,
-                    stdout=error.stdout or b"",
-                    stderr=error.stderr or b"",
-                )
+        except GitSandboxTimeout as error:
+            result = _CommandResult(
+                arguments=tuple(controlled_arguments),
+                exit_code=-1,
+                stdout=error.stdout,
+                stderr=error.stderr,
             )
-            raise _CommandTimeout from error
+            self._commands.append(result)
+            raise _CommandTimeout(result) from error
         result = _CommandResult(
-            arguments=tuple(arguments),
-            exit_code=completed.returncode,
+            arguments=tuple(controlled_arguments),
+            exit_code=completed.exit_code,
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
@@ -480,6 +622,7 @@ class _GitToolExecution(ToolExecution):
         started_at: datetime,
         started_clock: float,
         failure_message: str | None = None,
+        failure_class: ToolFailureClass = ToolFailureClass.ADAPTER,
     ) -> ToolResult:
         log_content = json.dumps(
             [command.log_record() for command in self._commands],
@@ -501,7 +644,7 @@ class _GitToolExecution(ToolExecution):
             failure_class=(
                 None
                 if status is ToolResultStatus.SUCCEEDED
-                else ToolFailureClass.ADAPTER
+                else failure_class
             ),
             failure_message=failure_message,
         )

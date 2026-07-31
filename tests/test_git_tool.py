@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+import os
 from pathlib import Path
+import stat
 import subprocess
 
 import pytest
@@ -9,6 +11,8 @@ import pytest
 from aep.git_tool import (
     GitToolAdapter,
     GitToolContractError,
+    GitSandboxCommandResult,
+    GitSandboxTimeout,
     InMemoryGitCommandLogStore,
     git_tool_validator,
 )
@@ -31,6 +35,94 @@ def git(root: Path, *arguments: str) -> str:
     return result.stdout.decode("utf-8").strip()
 
 
+class LocalGitSandbox:
+    """Daemon-independent test double for the production isolation boundary."""
+
+    disabled_hooks_path = os.devnull
+    null_device_path = os.devnull
+
+    def __init__(self) -> None:
+        self.environments: list[dict[str, str]] = []
+
+    def run(
+        self,
+        *,
+        repository: Path,
+        arguments: Sequence[str],
+        environment: Mapping[str, str],
+        timeout_ms: int,
+    ) -> GitSandboxCommandResult:
+        self.environments.append(dict(environment))
+        process_environment = dict(environment)
+        if os.name == "nt":
+            process_environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+        try:
+            completed = subprocess.run(
+                ("git", *arguments),
+                cwd=repository,
+                env=process_environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout_ms / 1000,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise GitSandboxTimeout(
+                stdout=error.stdout or b"", stderr=error.stderr or b""
+            ) from error
+        return GitSandboxCommandResult(
+            exit_code=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+        )
+
+
+class TimeoutGitSandbox(LocalGitSandbox):
+    def __init__(self, command: str) -> None:
+        super().__init__()
+        self._command = command
+        self.timed_out = False
+
+    def run(
+        self,
+        *,
+        repository: Path,
+        arguments: Sequence[str],
+        environment: Mapping[str, str],
+        timeout_ms: int,
+    ) -> GitSandboxCommandResult:
+        if self._command in arguments:
+            self.environments.append(dict(environment))
+            self.timed_out = True
+            raise GitSandboxTimeout(stderr=b"command timed out gho_TIMEOUTSECRET")
+        return super().run(
+            repository=repository,
+            arguments=arguments,
+            environment=environment,
+            timeout_ms=timeout_ms,
+        )
+
+
+class StubCredentialLease:
+    def __init__(self) -> None:
+        self.environment = {"AEP_GIT_CREDENTIAL_FILE": "sandbox:/tmp/credential"}
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class StubCredentialProvider:
+    def __init__(self) -> None:
+        self.lease = StubCredentialLease()
+        self.requests: list[tuple[str, str]] = []
+
+    def acquire(self, *, remote: str, branch: str) -> StubCredentialLease:
+        self.requests.append((remote, branch))
+        return self.lease
+
+
 @pytest.fixture
 def local_repository(tmp_path: Path) -> tuple[Path, Path, str]:
     remote = tmp_path / "remote.git"
@@ -45,6 +137,7 @@ def local_repository(tmp_path: Path) -> tuple[Path, Path, str]:
     git(repository, "init")
     git(repository, "config", "user.name", "AEP Test")
     git(repository, "config", "user.email", "aep@example.test")
+    git(repository, "config", "core.autocrlf", "false")
     git(repository, "remote", "add", "origin", str(remote))
     (repository / "tracked.txt").write_text("original\n", encoding="utf-8")
     git(repository, "add", "tracked.txt")
@@ -80,6 +173,8 @@ def adapter(
     logs: InMemoryGitCommandLogStore,
     *,
     remote: str = "origin",
+    sandbox: LocalGitSandbox | None = None,
+    credential_provider: StubCredentialProvider | None = None,
 ) -> GitToolAdapter:
     return GitToolAdapter(
         repository=repository,
@@ -88,6 +183,8 @@ def adapter(
         working_branch="agent/work",
         remote=remote,
         log_store=logs,
+        sandbox=sandbox or LocalGitSandbox(),
+        credential_provider=credential_provider,
     )
 
 
@@ -109,7 +206,7 @@ def create_branch(
 ) -> GitToolAdapter:
     tool_adapter = adapter(repository, revision, logs)
     result = invoke(request(revision, "create_branch"), tool_adapter)
-    assert result.status is ToolResultStatus.SUCCEEDED
+    assert result.status is ToolResultStatus.SUCCEEDED, logs.get(result.logs_ref)
     return tool_adapter
 
 
@@ -130,6 +227,58 @@ def test_create_branch_is_bound_to_configured_revision_and_branch(
     assert result.output["changedFiles"] == ()
     assert result.logs_ref is not None
     assert "switch" in logs.get(result.logs_ref)
+
+
+@pytest.mark.parametrize("dirty_state", ["modified", "staged", "untracked"])
+def test_create_branch_rejects_dirty_index_or_worktree(
+    local_repository: tuple[Path, Path, str],
+    dirty_state: str,
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    if dirty_state == "untracked":
+        (repository / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+    else:
+        (repository / "tracked.txt").write_text("dirty\n", encoding="utf-8")
+        if dirty_state == "staged":
+            git(repository, "add", "tracked.txt")
+
+    result = invoke(
+        request(revision, "create_branch"), adapter(repository, revision, logs)
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_message == "create_branch requires a clean index and worktree"
+    assert git(repository, "branch", "--show-current") != "agent/work"
+
+
+def test_repository_hooks_and_ambient_host_secrets_are_not_exposed(
+    local_repository: tuple[Path, Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    marker = repository / "hook-ran"
+    hook = repository / ".git" / "hooks" / "post-checkout"
+    hook.write_text(
+        f"#!/bin/sh\nprintf compromised > '{marker.as_posix()}'\n",
+        encoding="utf-8",
+    )
+    hook.chmod(hook.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("AEP_HOST_SECRET", "gho_AMBIENTSECRET")
+    sandbox = LocalGitSandbox()
+
+    result = invoke(
+        request(revision, "create_branch"),
+        adapter(repository, revision, logs, sandbox=sandbox),
+    )
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert not marker.exists()
+    assert all("AEP_HOST_SECRET" not in value for value in sandbox.environments)
+    assert all(
+        value["GIT_TERMINAL_PROMPT"] == "0" for value in sandbox.environments
+    )
 
 
 def test_status_returns_structured_changed_files_from_local_repository(
@@ -234,6 +383,46 @@ def test_authorized_push_updates_only_configured_remote_branch(
     assert git(remote, "rev-parse", "refs/heads/agent/work") == revision
 
 
+def test_push_credentials_are_scoped_to_push_and_lease_is_closed(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    sandbox = LocalGitSandbox()
+    provider = StubCredentialProvider()
+    tool_adapter = adapter(
+        repository,
+        revision,
+        logs,
+        sandbox=sandbox,
+        credential_provider=provider,
+    )
+    assert invoke(
+        request(revision, "create_branch"), tool_adapter
+    ).status is ToolResultStatus.SUCCEEDED
+
+    result = invoke(
+        request(revision, "push_branch", capabilities=("git.push",)),
+        tool_adapter,
+    )
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert provider.requests == [("origin", "agent/work")]
+    assert provider.lease.closed
+    credential_environments = [
+        value
+        for value in sandbox.environments
+        if "AEP_GIT_CREDENTIAL_FILE" in value
+    ]
+    assert credential_environments == [
+        {
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "AEP_GIT_CREDENTIAL_FILE": "sandbox:/tmp/credential",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
@@ -285,6 +474,68 @@ def test_status_fails_when_checkout_is_not_configured_working_branch(
     assert result.logs_ref is not None
 
 
+def test_status_rejects_working_branch_with_unrelated_history(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    git(repository, "switch", "--orphan", "agent/work")
+    (repository / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
+    git(repository, "add", "unrelated.txt")
+    git(repository, "commit", "-m", "unrelated history")
+
+    result = invoke(
+        request(revision, "status"), adapter(repository, revision, logs)
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_message == (
+        "configured expected revision is not an ancestor of HEAD"
+    )
+
+
+def test_read_timeout_persists_redacted_command_evidence(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    create_branch(repository, revision, logs)
+    sandbox = TimeoutGitSandbox("status")
+
+    result = invoke(
+        request(revision, "status"),
+        adapter(repository, revision, logs, sandbox=sandbox),
+    )
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.failure_class.value == "TIMEOUT"
+    assert sandbox.timed_out
+    assert result.logs_ref is not None
+    assert "TIMEOUTSECRET" not in logs.get(result.logs_ref)
+    assert "[REDACTED]" in logs.get(result.logs_ref)
+
+
+def test_push_timeout_persists_evidence_without_remote_ref(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    create_branch(repository, revision, logs)
+    sandbox = TimeoutGitSandbox("push")
+
+    result = invoke(
+        request(revision, "push_branch", capabilities=("git.push",)),
+        adapter(repository, revision, logs, sandbox=sandbox),
+    )
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.failure_class.value == "TIMEOUT"
+    assert sandbox.timed_out
+    assert result.logs_ref is not None
+    assert result.output["commandResults"][-1]["exitCode"] == -1
+    assert not (remote / "refs" / "heads" / "agent" / "work").exists()
+
+
 def test_command_failure_is_structured_and_command_logs_are_redacted(
     local_repository: tuple[Path, Path, str],
 ) -> None:
@@ -322,4 +573,5 @@ def test_adapter_rejects_non_repository_and_unsafe_configuration(
             expected_revision="0" * 40,
             working_branch="agent/work",
             log_store=logs,
+            sandbox=LocalGitSandbox(),
         )
