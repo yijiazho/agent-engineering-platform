@@ -41,11 +41,15 @@ provider request IDs, attempt counts, and the Tool trace ID.
 Pull-request creation supplies only immutable runtime-object identifiers to a
 trusted Publication Policy verifier. The verifier resolves persisted
 `GeneratedArtifact`, `EvaluationResult`, and `PolicyDecision` evidence and
-binds task and workflow execution, repository and revision, trace, artifact,
-evaluation, `PUBLICATION` gate, and `github.create_pr` action. It checks passing
-technical evidence and an `ALLOW` decision before the shared pre-execution
-authorization hook runs. Caller-supplied decision fields are rejected. Issue
-reads use `github.issue.read`.
+binds the CreatePullRequest task and decision while allowing artifacts and
+evaluations to retain their owning GeneratePatch, RunValidation, or
+EvaluateAcceptance tasks. Every record must share the WorkflowExecution,
+repository revision, and trace. The verifier also requires a successful Git
+push ToolInvocation proving that the approved head resolves to the approved
+revision, and binds the exact repository, head, base, `PUBLICATION` gate, and
+`github.create_pr` action. Changed publication targets are denied before the
+capability hook. Caller-supplied decision fields are rejected. Issue reads use
+`github.issue.read`.
 
 Provider operations use a cancellable execution handle so the Tool Runtime can
 enforce timeout, termination, kill, and cleanup without a synchronous network
@@ -53,6 +57,9 @@ call blocking adapter startup. Rate limits and failures produce immutable
 per-attempt evidence including retryability, retry-after hints, provider request
 ID, classification, outcome, and trace ID. Read-only issue requests honor
 retry-after within one invocation deadline and may retry within a configured bound.
+Timeouts retain the same evidence plus whether an incomplete provider response
+makes publication ambiguous; the timed-out operation is terminated, killed if
+needed, and cleaned up without replay.
 Pull-request creation is attempted once so that a provider failure cannot
 silently duplicate an external publication; retry orchestration can use the
 reported classification.

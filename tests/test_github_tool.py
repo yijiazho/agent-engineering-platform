@@ -1,11 +1,14 @@
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 import pytest
+from referencing import Registry, Resource as SchemaResource
+from referencing.jsonschema import DRAFT202012
 
 from aep.github_tool import (
     CREATE_PR_CAPABILITY,
@@ -30,18 +33,33 @@ from aep.tool_runtime import (
 
 
 ROOT = Path(__file__).parents[1]
-TASK_ID = "taskexecution-github123456"
-WORKFLOW_ID = "workflowexecution-github123456"
-ARTIFACT_ID = "generatedartifact-github123456"
-EVALUATION_ID = "evaluationresult-github123456"
-POLICY_ID = "policydecision-github123456"
+TASK_ID = "taskexecution-aaaaaaaaaaaa"
+PATCH_TASK_ID = "taskexecution-111111111111"
+VALIDATION_TASK_ID = "taskexecution-222222222222"
+ACCEPTANCE_TASK_ID = "taskexecution-333333333333"
+WORKFLOW_ID = "workflowexecution-bbbbbbbbbbbb"
+ARTIFACT_ID = "generatedartifact-cccccccccccc"
+EVALUATION_ID = "evaluationresult-dddddddddddd"
+ACCEPTANCE_EVALUATION_ID = "evaluationresult-444444444444"
+POLICY_ID = "policydecision-eeeeeeeeeeee"
+PUSH_ID = "toolinvocation-ffffffffffff"
 REVISION = "abc1234"
 TRACE_ID = "trace-github-001"
 
 
+@dataclass(frozen=True)
+class PendingProviderResponse:
+    request_id: str
+
+
 class FakeProviderOperation:
-    def __init__(self, outcome: Mapping[str, Any] | Exception | None) -> None:
+    def __init__(
+        self,
+        outcome: Mapping[str, Any] | Exception | None,
+        request_id: str | None = None,
+    ) -> None:
         self.outcome = outcome
+        self.request_id = request_id
         self.wait_timeouts: list[int] = []
         self.terminated = False
         self.killed = False
@@ -65,9 +83,11 @@ class FakeGitHubClient:
     def __init__(
         self,
         *,
-        issue_outcomes: list[Mapping[str, Any] | Exception | None] | None = None,
+        issue_outcomes: list[
+            Mapping[str, Any] | Exception | PendingProviderResponse | None
+        ] | None = None,
         pull_request_outcomes: list[
-            Mapping[str, Any] | Exception | None
+            Mapping[str, Any] | Exception | PendingProviderResponse | None
         ] | None = None,
     ) -> None:
         self.issue_outcomes = issue_outcomes or []
@@ -103,11 +123,23 @@ class FakeGitHubClient:
         return self._start(self.pull_request_outcomes)
 
     def _start(
-        self, outcomes: list[Mapping[str, Any] | Exception | None]
+        self,
+        outcomes: list[
+            Mapping[str, Any] | Exception | PendingProviderResponse | None
+        ],
     ) -> FakeProviderOperation:
         if not outcomes:
             raise AssertionError("fake client has no configured outcome")
-        operation = FakeProviderOperation(outcomes.pop(0))
+        outcome = outcomes.pop(0)
+        request_id = (
+            outcome.get("requestId")
+            if isinstance(outcome, Mapping)
+            else getattr(outcome, "request_id", None)
+        )
+        operation = FakeProviderOperation(
+            None if isinstance(outcome, PendingProviderResponse) else outcome,
+            request_id,
+        )
         self.operations.append(operation)
         return operation
 
@@ -173,52 +205,126 @@ def create_input() -> dict[str, Any]:
             "taskExecutionId": TASK_ID,
             "workflowExecutionId": WORKFLOW_ID,
             "repositoryRevision": REVISION,
-            "evaluationResultIds": [EVALUATION_ID],
+            "evaluationResultIds": [EVALUATION_ID, ACCEPTANCE_EVALUATION_ID],
             "generatedArtifactIds": [ARTIFACT_ID],
+            "pushToolInvocationId": PUSH_ID,
         },
     }
 
 
 def persisted_evidence() -> dict[str, dict[str, Any]]:
-    provenance = {
-        "workflowExecutionId": WORKFLOW_ID,
-        "taskExecutionId": TASK_ID,
-    }
-    artifact = {
+    def base(kind: str, runtime_id: str, task_id: str, actor: str) -> dict[str, Any]:
+        return {
+            "apiVersion": "aep.dev/v1alpha1",
+            "kind": kind,
+            "id": runtime_id,
+            "traceId": TRACE_ID,
+            "createdAt": "2026-07-30T12:00:00Z",
+            "updatedAt": "2026-07-30T12:00:00Z",
+            "provenance": {
+                "actor": actor,
+                "workflowExecutionId": WORKFLOW_ID,
+                "taskExecutionId": task_id,
+                "repositoryRevision": REVISION,
+                "resourceRefs": [],
+            },
+        }
+
+    artifact = base(
+        "GeneratedArtifact", ARTIFACT_ID, PATCH_TASK_ID, "artifact-store"
+    ) | {
         "kind": "GeneratedArtifact",
-        "id": ARTIFACT_ID,
-        "traceId": TRACE_ID,
-        "taskExecutionId": TASK_ID,
+        "taskExecutionId": PATCH_TASK_ID,
+        "artifactType": "PATCH",
+        "contentAddress": "sha256:" + "4" * 64,
         "repositoryRevision": REVISION,
-        "evaluationResultIds": [EVALUATION_ID],
-        "provenance": provenance,
+        "evaluationResultIds": [EVALUATION_ID, ACCEPTANCE_EVALUATION_ID],
+        "mediaType": "text/x-diff",
     }
-    evaluation = {
+    evaluation = base(
+        "EvaluationResult",
+        EVALUATION_ID,
+        VALIDATION_TASK_ID,
+        "evaluation-engine",
+    ) | {
         "kind": "EvaluationResult",
-        "id": EVALUATION_ID,
-        "traceId": TRACE_ID,
-        "taskExecutionId": TASK_ID,
+        "taskExecutionId": VALIDATION_TASK_ID,
+        "evaluationRef": {
+            "kind": "Evaluation",
+            "name": "build-and-test",
+            "version": "1.0.0",
+        },
+        "status": "SUCCEEDED",
+        "outcome": "PASS",
+        "target": {"type": "TaskExecution", "id": VALIDATION_TASK_ID},
+    }
+    acceptance_evaluation = base(
+        "EvaluationResult",
+        ACCEPTANCE_EVALUATION_ID,
+        ACCEPTANCE_TASK_ID,
+        "evaluation-engine",
+    ) | {
+        "taskExecutionId": ACCEPTANCE_TASK_ID,
+        "evaluationRef": {
+            "kind": "Evaluation",
+            "name": "acceptance",
+            "version": "1.0.0",
+        },
         "status": "SUCCEEDED",
         "outcome": "PASS",
         "target": {"type": "GeneratedArtifact", "id": ARTIFACT_ID},
-        "provenance": provenance,
     }
-    policy = {
+    push = base("ToolInvocation", PUSH_ID, PATCH_TASK_ID, "tool-runtime") | {
+        "taskExecutionId": PATCH_TASK_ID,
+        "toolRef": {"kind": "Tool", "name": "git", "version": "1.0.0"},
+        "status": "SUCCEEDED",
+        "input": {
+            "operation": "push",
+            "repository": "acme/widgets",
+            "branch": "aep/issue-42",
+        },
+        "output": {
+            "operation": "push",
+            "repository": "acme/widgets",
+            "branch": "aep/issue-42",
+            "revision": REVISION,
+        },
+    }
+    policy = base(
+        "PolicyDecision", POLICY_ID, TASK_ID, "publication-policy"
+    ) | {
         "kind": "PolicyDecision",
-        "id": POLICY_ID,
-        "traceId": TRACE_ID,
         "taskExecutionId": TASK_ID,
         "gate": "PUBLICATION",
         "action": CREATE_PR_CAPABILITY,
         "decision": "ALLOW",
         "reason": "Evaluated output may be published.",
+        "policyRefs": [
+            {
+                "kind": "Policy",
+                "name": "publication",
+                "version": "1.0.0",
+            }
+        ],
         "repositoryRevision": REVISION,
-        "evaluationResultIds": [EVALUATION_ID],
+        "evaluationResultIds": [EVALUATION_ID, ACCEPTANCE_EVALUATION_ID],
         "generatedArtifactIds": [ARTIFACT_ID],
         "resourceScope": {"repository": "acme/widgets"},
-        "provenance": provenance,
+        "publicationTarget": {
+            "repository": "acme/widgets",
+            "head": "aep/issue-42",
+            "base": "main",
+            "repositoryRevision": REVISION,
+            "pushToolInvocationId": PUSH_ID,
+        },
     }
-    return {ARTIFACT_ID: artifact, EVALUATION_ID: evaluation, POLICY_ID: policy}
+    return {
+        ARTIFACT_ID: artifact,
+        EVALUATION_ID: evaluation,
+        ACCEPTANCE_EVALUATION_ID: acceptance_evaluation,
+        PUSH_ID: push,
+        POLICY_ID: policy,
+    }
 
 
 def trusted_verifier(
@@ -335,7 +441,7 @@ def test_caller_supplied_policy_decision_fields_are_rejected_by_schema() -> None
         lambda records: records[POLICY_ID].update(repositoryRevision="deadbee"),
         lambda records: records[EVALUATION_ID].update(outcome="FAIL"),
         lambda records: records[EVALUATION_ID]["target"].update(
-            id="generatedartifact-other123456"
+            type="GeneratedArtifact", id="generatedartifact-999999999999"
         ),
         lambda records: records[ARTIFACT_ID].update(repositoryRevision="deadbee"),
         lambda records: records[ARTIFACT_ID]["provenance"].update(
@@ -397,6 +503,87 @@ def test_persisted_verifier_binds_requesting_task_identity() -> None:
 
     assert result.status is ToolResultStatus.DENIED
     assert result.failure_message == "Publication task identity mismatch"
+    assert client.pull_request_calls == []
+
+
+def test_schema_valid_cross_task_publication_graph_is_allowed() -> None:
+    records = persisted_evidence()
+    registry = _runtime_registry()
+    for runtime_id, value in records.items():
+        schema_name = {
+            ARTIFACT_ID: "generatedartifact",
+            EVALUATION_ID: "evaluationresult",
+            ACCEPTANCE_EVALUATION_ID: "evaluationresult",
+            PUSH_ID: "toolinvocation",
+            POLICY_ID: "policydecision",
+        }[runtime_id]
+        schema = json.loads(
+            (
+                ROOT / "schemas/runtime/v1" / f"{schema_name}.schema.json"
+            ).read_text(encoding="utf-8")
+        )
+        Draft202012Validator(schema, registry=registry).validate(value)
+
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+    result = invoke_github_tool(
+        request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda _: True,
+        publication_verifier=trusted_verifier(records),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert records[ARTIFACT_ID]["taskExecutionId"] == PATCH_TASK_ID
+    assert records[EVALUATION_ID]["taskExecutionId"] == VALIDATION_TASK_ID
+    assert (
+        records[ACCEPTANCE_EVALUATION_ID]["taskExecutionId"]
+        == ACCEPTANCE_TASK_ID
+    )
+    assert records[POLICY_ID]["taskExecutionId"] == TASK_ID
+
+
+@pytest.mark.parametrize(
+    "field,value,message",
+    [
+        ("head", "changed-head", "Git push target mismatch"),
+        ("base", "release", "Publication target mismatch"),
+    ],
+)
+def test_changed_publication_target_is_denied_before_capability(
+    field: str, value: str, message: str
+) -> None:
+    input_value = create_input()
+    input_value[field] = value
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+    authorization_calls: list[ToolRequest] = []
+
+    result = invoke_github_tool(
+        request(input_value, capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda item: authorization_calls.append(item) or True,
+        publication_verifier=trusted_verifier(),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.DENIED
+    assert result.failure_message == message
+    assert authorization_calls == []
+    assert client.pull_request_calls == []
+
+
+def test_push_proof_must_resolve_approved_head_to_revision() -> None:
+    records = persisted_evidence()
+    records[PUSH_ID]["output"]["revision"] = "deadbee"
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+
+    result = invoke_github_tool(
+        request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda _: True,
+        publication_verifier=trusted_verifier(records),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.DENIED
+    assert result.failure_message == "Git push target mismatch"
     assert client.pull_request_calls == []
 
 
@@ -509,7 +696,9 @@ def test_insufficient_deadline_budget_returns_history_without_retry() -> None:
 
 
 def test_hanging_read_is_terminated_killed_and_cleaned_up() -> None:
-    client = FakeGitHubClient(issue_outcomes=[None])
+    client = FakeGitHubClient(
+        issue_outcomes=[PendingProviderResponse("github-timeout-read")]
+    )
 
     result = invoke_github_tool(
         request(read_input(), capabilities=(READ_CAPABILITY,), timeout_ms=10),
@@ -525,10 +714,21 @@ def test_hanging_read_is_terminated_killed_and_cleaned_up() -> None:
     assert operation.killed is True
     assert operation.cleaned_up is True
     assert len(client.issue_calls) == 1
+    assert result.failure_class is ToolFailureClass.TIMEOUT
+    assert result.output["failure"]["ambiguousPublication"] is False
+    assert result.output["failure"]["retryable"] is True
+    assert result.output["failure"]["providerRequestId"] == "github-timeout-read"
+    assert result.output["failure"]["traceId"] == TRACE_ID
+    assert result.output["failure"]["attempts"][0]["classification"] == "TIMEOUT"
 
 
 def test_ambiguous_hanging_publication_is_never_replayed() -> None:
-    client = FakeGitHubClient(pull_request_outcomes=[None, pull_request_response()])
+    client = FakeGitHubClient(
+        pull_request_outcomes=[
+            PendingProviderResponse("github-timeout-create"),
+            pull_request_response(),
+        ]
+    )
 
     result = invoke_github_tool(
         request(create_input(), capabilities=(CREATE_PR_CAPABILITY,), timeout_ms=10),
@@ -542,6 +742,11 @@ def test_ambiguous_hanging_publication_is_never_replayed() -> None:
     assert client.operations[0].terminated is True
     assert client.operations[0].killed is True
     assert client.operations[0].cleaned_up is True
+    assert result.output["failure"]["ambiguousPublication"] is True
+    assert result.output["failure"]["retryable"] is False
+    assert result.output["failure"]["providerRequestId"] == "github-timeout-create"
+    with pytest.raises(TypeError):
+        result.output["failure"]["attempts"][0]["outcome"] = "SUCCEEDED"
 
 
 def test_provider_failure_is_stable_and_not_retried_for_publication() -> None:
@@ -605,3 +810,17 @@ def test_github_fixtures_match_published_contracts(fixture_name: str) -> None:
     )
     Draft202012Validator(input_schema).validate(fixture["input"])
     Draft202012Validator(output_schema).validate(fixture["output"])
+
+
+def _runtime_registry() -> Registry:
+    registry = Registry()
+    for root in (ROOT / "schemas/resources/v1", ROOT / "schemas/runtime/v1"):
+        for path in root.glob("*.schema.json"):
+            schema = json.loads(path.read_text(encoding="utf-8"))
+            registry = registry.with_resource(
+                schema["$id"],
+                SchemaResource.from_contents(
+                    schema, default_specification=DRAFT202012
+                ),
+            )
+    return registry

@@ -77,6 +77,7 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
                         "repositoryRevision",
                         "evaluationResultIds",
                         "generatedArtifactIds",
+                        "pushToolInvocationId",
                     ],
                     "properties": {
                         "policyDecisionId": {"type": "string", "minLength": 1},
@@ -85,6 +86,10 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
                         "repositoryRevision": {"type": "string", "minLength": 7},
                         "evaluationResultIds": deepcopy(_ID_LIST),
                         "generatedArtifactIds": deepcopy(_ID_LIST),
+                        "pushToolInvocationId": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
                     },
                 },
             },
@@ -189,6 +194,9 @@ class GitHubProviderOperation(Protocol):
 
     def wait(self, timeout_ms: int) -> JsonObject | Exception | None: ...
 
+    @property
+    def request_id(self) -> str | None: ...
+
     def terminate(self) -> None: ...
 
     def kill(self) -> None: ...
@@ -273,25 +281,32 @@ class PersistedPublicationPolicyVerifier:
         artifacts = self._resolve_many(evidence["generatedArtifactIds"])
         evaluations = self._resolve_many(evidence["evaluationResultIds"])
         policy = self._resolve(evidence["policyDecisionId"])
+        push = self._resolve(evidence["pushToolInvocationId"])
         if policy is None:
             return PublicationVerification(False, "Publication Policy decision not found")
+        if push is None:
+            return PublicationVerification(False, "Git push evidence not found")
 
-        common = {
-            "traceId": request.trace_id,
-            "taskExecutionId": evidence["taskExecutionId"],
-        }
         workflow_id = evidence["workflowExecutionId"]
         revision = evidence["repositoryRevision"]
         artifact_ids = tuple(evidence["generatedArtifactIds"])
         evaluation_ids = tuple(evidence["evaluationResultIds"])
 
         for artifact_id, artifact in zip(artifact_ids, artifacts, strict=True):
-            if not _matches(artifact, kind="GeneratedArtifact", id=artifact_id, **common):
+            if not _matches(
+                artifact,
+                kind="GeneratedArtifact",
+                id=artifact_id,
+                traceId=request.trace_id,
+            ):
                 return PublicationVerification(False, "GeneratedArtifact identity mismatch")
             if artifact.get("repositoryRevision") != revision:
                 return PublicationVerification(False, "GeneratedArtifact revision mismatch")
-            if artifact.get("provenance", {}).get("workflowExecutionId") != workflow_id:
+            provenance = artifact.get("provenance", {})
+            if provenance.get("workflowExecutionId") != workflow_id:
                 return PublicationVerification(False, "GeneratedArtifact workflow mismatch")
+            if provenance.get("repositoryRevision") != revision:
+                return PublicationVerification(False, "GeneratedArtifact provenance mismatch")
             if set(artifact.get("evaluationResultIds", ())) != set(evaluation_ids):
                 return PublicationVerification(
                     False, "GeneratedArtifact evaluation binding mismatch"
@@ -301,15 +316,51 @@ class PersistedPublicationPolicyVerifier:
             evaluation_ids, evaluations, strict=True
         ):
             if not _matches(
-                evaluation, kind="EvaluationResult", id=evaluation_id, **common
+                evaluation,
+                kind="EvaluationResult",
+                id=evaluation_id,
+                traceId=request.trace_id,
             ):
                 return PublicationVerification(False, "EvaluationResult identity mismatch")
             if evaluation.get("status") != "SUCCEEDED" or evaluation.get("outcome") != "PASS":
                 return PublicationVerification(False, "Technical evaluation did not pass")
-            if evaluation.get("provenance", {}).get("workflowExecutionId") != workflow_id:
+            provenance = evaluation.get("provenance", {})
+            if provenance.get("workflowExecutionId") != workflow_id:
                 return PublicationVerification(False, "EvaluationResult workflow mismatch")
-            if evaluation.get("target", {}).get("id") not in artifact_ids:
+            if provenance.get("repositoryRevision") != revision:
+                return PublicationVerification(False, "EvaluationResult revision mismatch")
+            target = evaluation.get("target", {})
+            if target.get("type") == "GeneratedArtifact" and target.get("id") not in artifact_ids:
                 return PublicationVerification(False, "EvaluationResult artifact mismatch")
+            if target.get("type") not in {
+                "TaskExecution",
+                "GeneratedArtifact",
+                "AgentInvocation",
+                "ModelInvocation",
+                "ToolInvocation",
+            }:
+                return PublicationVerification(False, "EvaluationResult target mismatch")
+
+        if not _matches(
+            push,
+            kind="ToolInvocation",
+            id=evidence["pushToolInvocationId"],
+            traceId=request.trace_id,
+            status="SUCCEEDED",
+        ):
+            return PublicationVerification(False, "Git push identity mismatch")
+        push_provenance = push.get("provenance", {})
+        if push_provenance.get("workflowExecutionId") != workflow_id:
+            return PublicationVerification(False, "Git push workflow mismatch")
+        pushed = push.get("output", {})
+        expected_push = {
+            "operation": "push",
+            "repository": request.input["repository"],
+            "branch": request.input["head"],
+            "revision": revision,
+        }
+        if any(pushed.get(key) != value for key, value in expected_push.items()):
+            return PublicationVerification(False, "Git push target mismatch")
 
         expected_policy = {
             "kind": "PolicyDecision",
@@ -333,6 +384,16 @@ class PersistedPublicationPolicyVerifier:
         scope = policy.get("resourceScope", {})
         if scope.get("repository") != request.input["repository"]:
             return PublicationVerification(False, "Publication Policy repository mismatch")
+        target = policy.get("publicationTarget", {})
+        expected_target = {
+            "repository": request.input["repository"],
+            "head": request.input["head"],
+            "base": request.input["base"],
+            "repositoryRevision": revision,
+            "pushToolInvocationId": evidence["pushToolInvocationId"],
+        }
+        if any(target.get(key) != value for key, value in expected_target.items()):
+            return PublicationVerification(False, "Publication target mismatch")
         return PublicationVerification(True, policy.get("reason", "Publication allowed"))
 
     def _resolve_many(self, ids: Sequence[str]) -> list[JsonObject]:
@@ -417,7 +478,7 @@ class _GitHubExecution(ToolExecution):
             except Exception as error:
                 outcome = error
             if outcome is None:
-                return None
+                return self._timeout(attempt)
             self._current_pending = False
             if isinstance(outcome, Exception):
                 error = (
@@ -505,6 +566,49 @@ class _GitHubExecution(ToolExecution):
             },
             failure_class=ToolFailureClass.ADAPTER,
             failure_message=str(error),
+        )
+
+    def _timeout(self, attempt: int) -> ToolResult:
+        if self._current is None:
+            raise AssertionError("provider timeout without an active operation")
+        self._current.terminate()
+        if self._current.wait(100) is None:
+            self._current.kill()
+        self._current_pending = False
+        request_id = getattr(self._current, "request_id", None)
+        ambiguous_publication = (
+            self._request.input["operation"] == CREATE_PULL_REQUEST
+        )
+        self._attempts.append(
+            {
+                "attempt": attempt,
+                "providerRequestId": request_id,
+                "classification": "TIMEOUT",
+                "retryable": not ambiguous_publication,
+                "retryAfterMs": None,
+                "outcome": "TIMED_OUT",
+            }
+        )
+        return self._result(
+            ToolResultStatus.TIMED_OUT,
+            {
+                "operation": self._request.input["operation"],
+                "repository": self._request.input["repository"],
+                "failure": {
+                    "category": "TIMEOUT",
+                    "retryable": not ambiguous_publication,
+                    "ambiguousPublication": ambiguous_publication,
+                    "attemptCount": len(self._attempts),
+                    "providerRequestId": request_id,
+                    "traceId": self._request.trace_id,
+                    "attempts": deepcopy(self._attempts),
+                },
+            },
+            failure_class=ToolFailureClass.TIMEOUT,
+            failure_message=(
+                f"GitHub provider exceeded timeout of "
+                f"{self._request.timeout_ms}ms"
+            ),
         )
 
     def _result(

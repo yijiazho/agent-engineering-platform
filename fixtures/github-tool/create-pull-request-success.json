@@ -13,7 +13,8 @@
       "workflowExecutionId": "workflowexecution-github123456",
       "repositoryRevision": "abc1234",
       "evaluationResultIds": ["evaluationresult-github123456"],
-      "generatedArtifactIds": ["generatedartifact-github123456"]
+      "generatedArtifactIds": ["generatedartifact-github123456"],
+      "pushToolInvocationId": "toolinvocation-github123456"
     }
   },
   "output": {

@@ -552,16 +552,22 @@ The MVP GitHub adapter exposes two structured operations:
 
 Pull-request publication resolves immutable artifact, evaluation, and
 Publication Policy records through a trusted verifier. The verifier binds the
-task and workflow executions, repository and revision, trace, artifacts,
-evaluations, `PUBLICATION` gate, and action before pre-execution capability
-authorization. Caller assertions cannot grant publication.
+CreatePullRequest task and PolicyDecision while allowing artifacts and
+evaluations to preserve their distinct owning tasks. All evidence shares one
+WorkflowExecution, repository revision, and trace. A successful Git push
+ToolInvocation must prove that the exact approved head resolves to that
+revision. The decision separately binds repository, head, base, `PUBLICATION`
+gate, and action before pre-execution capability authorization. Caller
+assertions or a changed target cannot grant publication.
 
 Provider calls return cancellable execution handles before network work can
 block the Tool Runtime. Safe issue reads honor provider retry-after hints within
 the single Tool deadline and record immutable evidence for every attempt.
 Pull-request creation is not automatically replayed after an ambiguous provider
-failure; timeout handling terminates, kills when needed, and cleans up the same
-provider operation without starting a second publication.
+failure. Timeout handling returns frozen GitHub-specific evidence with the
+provider request ID, trace, TIMEOUT attempt, and ambiguity flag, then terminates,
+kills when needed, and cleans up the same provider operation without starting a
+second publication.
 
 ---
 

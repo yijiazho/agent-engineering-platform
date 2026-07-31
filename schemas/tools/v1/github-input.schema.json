@@ -27,7 +27,7 @@
         "publicationEvidence": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["policyDecisionId", "taskExecutionId", "workflowExecutionId", "repositoryRevision", "evaluationResultIds", "generatedArtifactIds"],
+          "required": ["policyDecisionId", "taskExecutionId", "workflowExecutionId", "repositoryRevision", "evaluationResultIds", "generatedArtifactIds", "pushToolInvocationId"],
           "properties": {
             "policyDecisionId": { "type": "string", "minLength": 1 },
             "taskExecutionId": { "type": "string", "minLength": 1 },
@@ -44,7 +44,8 @@
               "minItems": 1,
               "uniqueItems": true,
               "items": { "type": "string", "minLength": 1 }
-            }
+            },
+            "pushToolInvocationId": { "type": "string", "minLength": 1 }
           }
         }
       }
