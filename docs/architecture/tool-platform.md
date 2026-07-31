@@ -542,7 +542,24 @@ Individual Tool implementations remain interchangeable.
 
 ---
 
-# 21. Design Principles
+# 21. Docker Validation Adapter
+
+The Docker validation adapter accepts an explicit image, ordered command
+arguments, workspace bind mount, invocation timeout, and CPU and memory limits.
+It requires the `docker.run` capability to pass the shared Pre-Execution
+Capability Policy hook before provisioning begins.
+
+The adapter delegates container operations to an injectable executor. The
+executor exposes bounded wait, terminate, kill, and cleanup operations so the
+Tool Runtime retains lifecycle control, plus startup cleanup for partially
+provisioned resources. Each command result records its arguments, stdout,
+stderr, exit code, duration, and logs reference. Startup, timeout, and
+nonzero-exit failures are classified separately. These records are execution
+evidence; build and test acceptance is evaluated separately.
+
+---
+
+# 22. Design Principles
 
 ## Declarative Tools
 
@@ -580,7 +597,7 @@ Every external action produces a complete audit trail.
 
 ---
 
-# 22. Future Enhancements
+# 23. Future Enhancements
 
 The architecture supports future capabilities without changing the Tool contract.
 
@@ -597,7 +614,7 @@ Potential enhancements include:
 
 ---
 
-# 23. Summary
+# 24. Summary
 
 The Tool Platform provides a secure, declarative execution layer for non-model interactions with external systems.
 

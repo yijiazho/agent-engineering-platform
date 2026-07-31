@@ -66,6 +66,8 @@ class ToolFailureClass(str, Enum):
     POLICY = "POLICY"
     TIMEOUT = "TIMEOUT"
     ADAPTER = "ADAPTER"
+    STARTUP = "STARTUP"
+    NONZERO_EXIT = "NONZERO_EXIT"
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,12 @@ class ToolSchemaValidationError(ValueError):
         self.phase = phase
         self.messages = tuple(messages)
         super().__init__(f"{phase} schema validation failed: {'; '.join(self.messages)}")
+
+
+class ToolAdapterError(RuntimeError):
+    """Adapter failure that preserves a more specific runtime classification."""
+
+    failure_class = ToolFailureClass.ADAPTER
 
 
 class ToolSchemaValidator(ABC):
@@ -335,6 +343,12 @@ def invoke_tool(
 
     try:
         execution = adapter.start(request)
+    except ToolAdapterError as error:
+        return failure(
+            ToolResultStatus.FAILED,
+            error.failure_class,
+            str(error) or type(error).__name__,
+        )
     except Exception as error:
         return failure(
             ToolResultStatus.FAILED,
