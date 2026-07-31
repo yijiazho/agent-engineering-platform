@@ -401,8 +401,60 @@
             "decision": { "type": "string", "enum": ["ALLOW", "DENY", "REQUIRE_APPROVAL"] },
             "reason": { "type": "string", "minLength": 1 },
             "approvalRequired": { "type": "boolean" },
-            "evaluatedAt": { "$ref": "#/$defs/timestamp" }
+            "evaluatedAt": { "$ref": "#/$defs/timestamp" },
+            "subject": { "type": "string", "minLength": 1 },
+            "resourceScope": { "$ref": "#/$defs/jsonObject" },
+            "evaluatedRule": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["scope", "policyRef", "ruleIndex", "effect"],
+                  "properties": {
+                    "scope": { "type": "string", "enum": ["Platform", "Workspace", "Workflow", "Task", "Agent", "Tool"] },
+                    "policyRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/policyRef" },
+                    "ruleIndex": { "type": "integer", "minimum": 0 },
+                    "effect": { "type": "string", "enum": ["allow", "deny", "require-approval"] }
+                  }
+                },
+                { "type": "null" }
+              ]
+            },
+            "matchedRules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["scope", "policyRef", "ruleIndex", "effect"],
+                "properties": {
+                  "scope": { "type": "string", "enum": ["Platform", "Workspace", "Workflow", "Task", "Agent", "Tool"] },
+                  "policyRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/policyRef" },
+                  "ruleIndex": { "type": "integer", "minimum": 0 },
+                  "effect": { "type": "string", "enum": ["allow", "deny", "require-approval"] }
+                }
+              }
+            }
           },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "gate": { "const": "PRE_EXECUTION_CAPABILITY" }
+                },
+                "required": ["gate"]
+              },
+              "then": {
+                "required": [
+                  "approvalRequired",
+                  "evaluatedAt",
+                  "subject",
+                  "resourceScope",
+                  "evaluatedRule",
+                  "matchedRules"
+                ]
+              }
+            }
+          ],
           "additionalProperties": true
         }
       ]

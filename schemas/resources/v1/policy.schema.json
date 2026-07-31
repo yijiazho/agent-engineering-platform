@@ -29,11 +29,34 @@
                 "items": { "type": "string", "minLength": 1 },
                 "uniqueItems": true
               },
-              "conditions": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" }
+              "conditions": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
+              "reason": { "type": "string", "minLength": 1 }
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": { "const": "pre-execution-capability" }
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": {
+              "rules": {
+                "items": {
+                  "required": ["capabilities"],
+                  "properties": {
+                    "capabilities": { "minItems": 1 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

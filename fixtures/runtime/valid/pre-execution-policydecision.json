@@ -1,18 +1,18 @@
 {
   "apiVersion": "aep.dev/v1alpha1",
   "kind": "PolicyDecision",
-  "id": "policydecision-000000000001",
+  "id": "policydecision-000000000020",
   "traceId": "trace-issue-to-pr-0001",
-  "createdAt": "2026-07-09T10:02:00Z",
-  "updatedAt": "2026-07-09T10:02:00Z",
+  "createdAt": "2026-07-30T12:00:00Z",
+  "updatedAt": "2026-07-30T12:00:00Z",
   "provenance": {
     "actor": "policy-engine",
-    "workflowExecutionId": "workflowexecution-000000000001",
+    "caller": "AgentInvocation:agentinvocation-000000000001",
     "taskExecutionId": "taskexecution-000000000001",
     "resourceRefs": [
       {
         "kind": "Policy",
-        "name": "publication-policy",
+        "name": "mvp-tool-capabilities",
         "version": "1.0.0"
       }
     ]
@@ -22,20 +22,20 @@
   "policyRefs": [
     {
       "kind": "Policy",
-      "name": "publication-policy",
+      "name": "mvp-tool-capabilities",
       "version": "1.0.0"
     }
   ],
-  "action": "github.read_issue",
-  "decision": "ALLOW",
-  "reason": "Read-only GitHub issue access is allowed.",
-  "approvalRequired": false,
-  "evaluatedAt": "2026-07-09T10:02:00Z",
+  "action": "git.push",
+  "decision": "REQUIRE_APPROVAL",
+  "reason": "External repository changes require human approval.",
+  "approvalRequired": true,
+  "evaluatedAt": "2026-07-30T12:00:00Z",
   "subject": "AgentInvocation:agentinvocation-000000000001",
   "resourceScope": {
     "toolRef": {
       "kind": "Tool",
-      "name": "github",
+      "name": "git",
       "version": "1.0.0"
     }
   },
@@ -43,22 +43,22 @@
     "scope": "Tool",
     "policyRef": {
       "kind": "Policy",
-      "name": "publication-policy",
+      "name": "mvp-tool-capabilities",
       "version": "1.0.0"
     },
-    "ruleIndex": 0,
-    "effect": "allow"
+    "ruleIndex": 1,
+    "effect": "require-approval"
   },
   "matchedRules": [
     {
       "scope": "Tool",
       "policyRef": {
         "kind": "Policy",
-        "name": "publication-policy",
+        "name": "mvp-tool-capabilities",
         "version": "1.0.0"
       },
-      "ruleIndex": 0,
-      "effect": "allow"
+      "ruleIndex": 1,
+      "effect": "require-approval"
     }
   ]
 }
