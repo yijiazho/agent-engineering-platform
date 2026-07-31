@@ -542,7 +542,38 @@ Individual Tool implementations remain interchangeable.
 
 ---
 
-# 21. MVP Filesystem Adapter
+# 21. Docker Validation Adapter
+
+The Docker validation adapter accepts a digest-pinned image, ordered command
+arguments, workspace bind mount, invocation timeout, and CPU and memory limits.
+It requires the `docker.run` capability to pass the shared Pre-Execution
+Capability Policy hook before provisioning begins.
+
+Before startup, the adapter canonicalizes the requested mount source and
+requires it to remain within its configured authorized workspace root after
+traversal and symlink resolution. The container destination is fixed at
+`/workspace`.
+
+The production Docker CLI executor creates one invocation-scoped container with
+networking disabled by default, the authorized mount, and configured CPU and
+memory limits. Every command executes with `/workspace` as its working
+directory. Create, start, and all commands consume one absolute invocation
+deadline rather than resetting the timeout at each phase.
+
+Its process and log storage boundaries remain injectable for
+daemon-independent tests. The executor exposes bounded wait, terminate, kill,
+and cleanup operations so the Tool Runtime retains lifecycle control, plus
+startup cleanup for partially provisioned resources. Each command result
+records its arguments, stdout, stderr, exit code, duration, and logs reference.
+If a later command times out, evidence and the immutable logs reference for
+completed commands remain on the timed-out result while termination and cleanup
+continue. If cleanup itself fails, the shared Tool Runtime changes the terminal
+classification to an adapter failure and appends the cleanup error without
+discarding captured output, logs, metrics, or timing. Startup, timeout, and
+nonzero-exit failures are classified separately. These records are execution
+evidence; build and test acceptance is evaluated separately.
+
+# 22. MVP Filesystem Adapter
 
 The Filesystem adapter exposes schema-declared UTF-8 `read` and `write`
 operations against one explicitly configured WorkflowExecution workspace. It
@@ -578,7 +609,7 @@ an identity conflict.
 
 ---
 
-# 22. Design Principles
+# 23. Design Principles
 
 ## Declarative Tools
 

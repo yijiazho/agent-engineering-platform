@@ -101,11 +101,13 @@ Implemented foundations currently include:
 * Workspace-confined Filesystem Tool reads and policy-authorized writes with
   trusted control-plane reads, race-safe handle confinement, and idempotent
   persisted invocation evidence.
+* Policy-gated, workspace-scoped Docker validation with digest-pinned images,
+  disabled networking, bounded execution, and per-command execution evidence.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 
-Workflow scheduling, ContextPackage construction, remaining concrete Tool
+Workflow scheduling, ContextPackage construction, the remaining concrete Tool
 adapters, publication policy, task handlers, service composition, and the
 end-to-end issue-to-pull-request harness remain to be implemented.
 
