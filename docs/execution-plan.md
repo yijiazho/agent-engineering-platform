@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 16 |
+| Completed | 18 |
 | In Progress | 0 |
-| Not Started | 21 |
+| Not Started | 19 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -41,9 +41,11 @@ validated deterministic execution plans with parallel-ready groups.
 Pre-execution capability policy composes versioned rules across all supported
 scopes and persists explainable decisions before Tool execution. The
 workspace-confined Filesystem Tool now supports policy-authorized reads and
-writes with persisted invocation evidence. Docker validation now captures
-deterministic per-command execution evidence behind that policy boundary. The
-end-to-end MVP workflow is not yet runnable.
+writes with persisted invocation evidence. The repository-bound Git Tool now
+provides branch, status, diff, and authorized push operations with redacted
+command evidence. Docker validation now captures deterministic per-command
+execution evidence behind that policy boundary. The end-to-end MVP workflow is
+not yet runnable.
 
 ---
 
@@ -72,7 +74,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 17 | [AEP-008: Create WorkflowExecution](tasks/AEP-008-create-workflowexecution.md) | Completed |
 | 18 | [AEP-012: Implement Agent Resolver](tasks/AEP-012-implement-agent-resolver.md) | Not Started |
 | 19 | [AEP-021: Implement Filesystem Tool](tasks/AEP-021-implement-filesystem-tool.md) | Completed |
-| 20 | [AEP-022: Implement Git Tool](tasks/AEP-022-implement-git-tool.md) | Not Started |
+| 20 | [AEP-022: Implement Git Tool](tasks/AEP-022-implement-git-tool.md) | Completed |
 | 21 | [AEP-023: Implement Docker Validation Tool](tasks/AEP-023-implement-docker-validation-tool.md) | Completed |
 | 22 | [AEP-024: Implement GitHub Tool](tasks/AEP-024-implement-github-tool.md) | Not Started |
 | 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Not Started |
@@ -118,7 +120,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-019 | AEP-001, AEP-002 | Completed |
 | AEP-020 | AEP-003, AEP-004, AEP-019 | Completed |
 | AEP-021 | AEP-019, AEP-020 | Completed |
-| AEP-022 | AEP-019, AEP-020 | Not Started |
+| AEP-022 | AEP-019, AEP-020 | Completed |
 | AEP-023 | AEP-019, AEP-020 | Completed |
 | AEP-024 | AEP-019, AEP-020 | Not Started |
 | AEP-025 | AEP-002 | Completed |
