@@ -402,9 +402,20 @@ def invoke_tool(
             cleanup_error = error
 
     if cleanup_error is not None:
-        return failure(
-            ToolResultStatus.FAILED,
-            ToolFailureClass.ADAPTER,
-            f"execution cleanup failed: {cleanup_error}",
+        cleanup_message = f"execution cleanup failed: {cleanup_error}"
+        message = (
+            f"{normalized_result.failure_message}; {cleanup_message}"
+            if normalized_result.failure_message
+            else cleanup_message
+        )
+        return ToolResult(
+            status=ToolResultStatus.FAILED,
+            output=normalized_result.output_record(),
+            logs_ref=normalized_result.logs_ref,
+            metrics=normalized_result.metrics,
+            started_at=normalized_result.started_at,
+            completed_at=normalized_result.completed_at,
+            failure_class=ToolFailureClass.ADAPTER,
+            failure_message=message,
         )
     return normalized_result

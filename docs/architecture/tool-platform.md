@@ -567,9 +567,11 @@ startup cleanup for partially provisioned resources. Each command result
 records its arguments, stdout, stderr, exit code, duration, and logs reference.
 If a later command times out, evidence and the immutable logs reference for
 completed commands remain on the timed-out result while termination and cleanup
-continue. Startup, timeout, and nonzero-exit failures are classified separately.
-These records are execution evidence; build and test acceptance is evaluated
-separately.
+continue. If cleanup itself fails, the shared Tool Runtime changes the terminal
+classification to an adapter failure and appends the cleanup error without
+discarding captured output, logs, metrics, or timing. Startup, timeout, and
+nonzero-exit failures are classified separately. These records are execution
+evidence; build and test acceptance is evaluated separately.
 
 ---
 

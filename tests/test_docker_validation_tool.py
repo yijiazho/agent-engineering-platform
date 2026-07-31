@@ -85,8 +85,13 @@ def outcome(*, exit_code: int = 0) -> DockerExecutionResult:
 
 
 class FakeDockerExecution(DockerExecution):
-    def __init__(self, result: DockerExecutionResult | None) -> None:
+    def __init__(
+        self,
+        result: DockerExecutionResult | None,
+        cleanup_error: Exception | None = None,
+    ) -> None:
         self.result = result
+        self.cleanup_error = cleanup_error
         self.wait_timeouts: list[int] = []
         self.terminated = False
         self.killed = False
@@ -104,6 +109,8 @@ class FakeDockerExecution(DockerExecution):
 
     def cleanup(self) -> None:
         self.cleaned_up = True
+        if self.cleanup_error is not None:
+            raise self.cleanup_error
 
 
 class FakeDockerExecutor(DockerExecutor):
@@ -112,8 +119,9 @@ class FakeDockerExecutor(DockerExecutor):
         result: DockerExecutionResult | None = None,
         *,
         startup_error: Exception | None = None,
+        cleanup_error: Exception | None = None,
     ) -> None:
-        self.execution = FakeDockerExecution(result)
+        self.execution = FakeDockerExecution(result, cleanup_error)
         self.startup_error = startup_error
         self.configurations: list[DockerRunConfiguration] = []
         self.startup_cleaned_up = False
@@ -199,6 +207,23 @@ def test_pass_captures_configuration_and_command_evidence() -> None:
     assert configuration.resources.cpu_limit == 2
     assert configuration.resources.memory_bytes == 536_870_912
     assert executor.execution.cleaned_up is True
+
+
+def test_cleanup_failure_after_success_preserves_docker_evidence() -> None:
+    executor = FakeDockerExecutor(
+        outcome(), cleanup_error=RuntimeError("remove failed")
+    )
+
+    result = invoke(executor)
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_class is ToolFailureClass.ADAPTER
+    assert result.failure_message == "execution cleanup failed: remove failed"
+    assert result.output["commands"][0]["stdout"] == "1 passed\n"
+    assert result.logs_ref == "sha256:" + "c" * 64
+    assert result.metrics.duration_ms == 25
+    assert result.started_at == "2026-07-30T00:00:00Z"
+    assert result.completed_at == "2026-07-30T00:00:00.025Z"
 
 
 def test_concrete_cli_executor_builds_scoped_container_and_evidence() -> None:
@@ -288,6 +313,36 @@ def test_later_command_timeout_preserves_completed_evidence_and_logs() -> None:
     assert ("docker", "stop", name) in [call[0] for call in process.calls]
     assert ("docker", "kill", name) in [call[0] for call in process.calls]
     assert process.calls[-1][0] == ("docker", "rm", "-f", name)
+
+
+def test_cleanup_failure_after_partial_timeout_preserves_evidence() -> None:
+    ok = DockerProcessResult("", "", 0, 1)
+    first = DockerProcessResult("built\n", "", 0, 8)
+    remove_failed = DockerProcessResult("", "remove failed", 1, 1)
+    process = FakeProcessBoundary(
+        [ok, ok, first, None, ok, ok, remove_failed]
+    )
+
+    result = invoke(
+        DockerCliExecutor(process, FakeLogStore()),
+        tool_request=request(
+            commands=[
+                {"argv": ["python", "-m", "build"]},
+                {"argv": ["python", "-m", "pytest"]},
+            ]
+        ),
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_class is ToolFailureClass.ADAPTER
+    assert result.failure_message == (
+        "adapter exceeded timeout of 30000ms; "
+        "execution cleanup failed: Docker container cleanup failed"
+    )
+    assert len(result.output["commands"]) == 1
+    assert result.output["commands"][0]["stdout"] == "built\n"
+    assert result.logs_ref == "sha256:" + f"{2:064x}"
+    assert result.metrics.duration_ms == 8
 
 
 def test_nonzero_exit_is_classified_without_interpreting_acceptance() -> None:

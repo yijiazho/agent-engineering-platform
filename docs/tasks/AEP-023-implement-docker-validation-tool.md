@@ -53,6 +53,8 @@ executes commands from `/workspace`, and uses one absolute deadline across
 create, start, and command execution. When a later command times out, completed
 command evidence and its immutable logs reference remain on the normalized
 timed-out result while the runtime terminates and cleans up the container.
+Cleanup failures append their error and change the terminal classification
+without replacing already captured output, logs, metrics, or timing.
 Startup, timeout, and nonzero-exit failures are classified separately. The
 adapter records execution evidence only; AEP-027 remains responsible for
 interpreting whether that evidence satisfies build and test expectations.
