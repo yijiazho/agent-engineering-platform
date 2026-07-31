@@ -98,6 +98,9 @@ Implemented foundations currently include:
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
 * Deterministic pre-execution capability policy with persisted decisions.
+* Workspace-confined Filesystem Tool reads and policy-authorized writes with
+  trusted control-plane reads, race-safe handle confinement, and idempotent
+  persisted invocation evidence.
 * Policy-gated, workspace-scoped Docker validation with digest-pinned images,
   disabled networking, bounded execution, and per-command execution evidence.
 * Deterministic JSON Schema evaluation.

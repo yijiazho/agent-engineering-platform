@@ -93,6 +93,7 @@ DOCKER_VALIDATION_OUTPUT_SCHEMA: Mapping[str, Any] = {
         "commands": {
             "type": "array",
             "minItems": 0,
+            "items": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": [
@@ -513,6 +514,7 @@ class _DockerCliExecution(DockerExecution):
     def kill(self) -> None:
         self._process.run(["docker", "kill", self._name], 5_000)
 
+    def cleanup(self) -> None:
         result = self._process.run(["docker", "rm", "-f", self._name], 5_000)
         if result is None:
             raise RuntimeError("Docker container cleanup timed out")

@@ -68,6 +68,9 @@ class ToolFailureClass(str, Enum):
     ADAPTER = "ADAPTER"
     STARTUP = "STARTUP"
     NONZERO_EXIT = "NONZERO_EXIT"
+    BOUNDARY = "BOUNDARY"
+    NOT_FOUND = "NOT_FOUND"
+    IO = "IO"
 
 
 @dataclass(frozen=True)

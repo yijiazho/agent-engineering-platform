@@ -337,7 +337,7 @@ def test_cleanup_failure_after_partial_timeout_preserves_evidence() -> None:
     assert result.failure_class is ToolFailureClass.ADAPTER
     assert result.failure_message == (
         "adapter exceeded timeout of 30000ms; "
-        "execution cleanup failed: Docker container cleanup failed"
+        "execution cleanup failed: Docker container cleanup failed (exit 1): remove failed"
     )
     assert len(result.output["commands"]) == 1
     assert result.output["commands"][0]["stdout"] == "built\n"
