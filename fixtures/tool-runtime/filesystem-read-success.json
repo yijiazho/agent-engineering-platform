@@ -10,8 +10,8 @@
       "path": "src/example.txt"
     },
     "caller": {
-      "kind": "AgentInvocation",
-      "id": "agentinvocation-123456789abc"
+      "kind": "ContextBuilder",
+      "id": "contextbuilder-123456789abc"
     },
     "capabilities": [
       "filesystem.read"

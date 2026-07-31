@@ -99,6 +99,7 @@ Implemented foundations currently include:
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
 * Deterministic pre-execution capability policy with persisted decisions.
 * Workspace-confined Filesystem Tool reads and policy-authorized writes with
+  trusted control-plane reads, race-safe handle confinement, and idempotent
   persisted invocation evidence.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.

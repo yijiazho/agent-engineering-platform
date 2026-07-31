@@ -36,10 +36,19 @@ Implement a Filesystem Tool adapter that:
 `src/aep/filesystem_tool.py` implements UTF-8 `read` and `write` operations
 through the provider-neutral Tool Runtime. The adapter is configured with one
 existing workspace directory. It rejects absolute paths, traversal components,
-missing parents, and paths whose resolved symlink target leaves that workspace.
+missing parents, and paths whose opened file handle leaves that workspace.
+POSIX adapters walk from a pinned workspace directory descriptor with
+no-follow opens; platforms without relative descriptor opens verify the
+kernel-resolved handle before reading, truncating, or writing. This closes the
+validation/open symlink replacement window.
 Writes require the request to declare `filesystem.write`; the shared
 Pre-Execution Capability Policy authorization hook runs before adapter startup
 and therefore before mutation.
+
+Repository reads reject `AgentInvocation` callers even when they hold
+`filesystem.read`; only the explicit `ContextBuilder`, `TaskExecution`, and
+`WorkflowRuntime` control-plane caller contracts may read. Agents continue to
+receive repository knowledge only through immutable ContextPackages.
 
 The adapter returns normalized relative paths, byte counts, and SHA-256 content
 digests. It stores content-addressed structured logs without logging file
@@ -47,9 +56,16 @@ contents. Schema, boundary, missing-file, and I/O failures remain distinct in
 Tool results and map to the platform runtime failure classes in persisted,
 terminal `ToolInvocation` evidence.
 
+Before any effect, the runtime atomically claims the invocation id with a
+SHA-256 fingerprint of all immutable request inputs and creates pending
+evidence. Identical retries and concurrent duplicates return the prior terminal
+result without repeating file effects; reuse with different inputs is rejected.
+
 The public JSON Schemas are
 `schemas/tools/v1/filesystem-input.schema.json` and
 `schemas/tools/v1/filesystem-output.schema.json`. Focused tests cover reads,
-writes, authorization allow and denial, traversal and symlink escape, malformed
-input, missing files, invalid UTF-8 I/O, capability mismatch, logs, output
-metadata, persistence, and runtime-schema compatibility.
+writes, authorization allow and denial, trusted read callers, Agent read
+denial, traversal and symlink escape, read/write replacement races, malformed
+input, missing files, invalid UTF-8 I/O, capability mismatch, invocation retry,
+concurrency and identity conflicts, logs, output metadata, persistence, and
+runtime-schema compatibility.

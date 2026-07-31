@@ -550,15 +550,27 @@ normalizes output paths relative to that workspace and returns byte counts and
 SHA-256 content digests.
 
 Absolute paths, traversal components, dangling symlinks, and resolved symlink
-targets outside the workspace are denied. A write request must declare
+targets outside the workspace are denied. POSIX implementations walk from a
+pinned workspace directory handle using no-follow relative opens. Other
+platform implementations verify the kernel-resolved opened handle before
+reading, truncating, or writing, so a path replacement between validation and
+open cannot redirect an effect. A write request must declare
 `filesystem.write`, and the shared Pre-Execution Capability Policy hook must
 authorize it before the adapter starts. Structured content-addressed logs omit
 file contents, while terminal `ToolInvocation` records preserve inputs,
 structured outputs, metrics, log addresses, and normalized failure evidence.
 
 This adapter performs file access for authorized workflow operations. It is not
-a repository-knowledge retrieval path for Agents; repository knowledge remains
-supplied through immutable ContextPackages.
+a repository-knowledge retrieval path for Agents: `AgentInvocation` read
+requests are denied regardless of capability policy. Only explicit
+`ContextBuilder`, `TaskExecution`, and `WorkflowRuntime` control-plane caller
+contracts may read; repository knowledge remains supplied to Agents through
+immutable ContextPackages.
+
+The Tool Runtime atomically claims each invocation id with a fingerprint over
+its immutable request before any file effect and persists pending evidence.
+Identical retries, including concurrent duplicates, reuse the terminal result.
+Reusing an id with different inputs is an identity conflict.
 
 ---
 

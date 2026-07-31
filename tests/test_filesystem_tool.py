@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
+from threading import Event, Lock
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -16,7 +18,9 @@ from aep.capability_policy import (
 from aep.filesystem_tool import (
     FILESYSTEM_INPUT_SCHEMA,
     FILESYSTEM_OUTPUT_SCHEMA,
+    FilesystemInvocationIdentityConflictError,
     FilesystemTool,
+    FilesystemToolAdapter,
 )
 from aep.runtime_store import InMemoryRuntimeObjectStore
 from aep.tool_runtime import (
@@ -31,13 +35,20 @@ ROOT = Path(__file__).parents[1]
 TASK_EXECUTION_ID = "taskexecution-123456789abc"
 
 
-def request(operation: str, path: str, **values: object) -> ToolRequest:
+def request(
+    operation: str,
+    path: str,
+    *,
+    caller_kind: str | None = None,
+    **values: object,
+) -> ToolRequest:
+    caller_kind = caller_kind or (
+        "ContextBuilder" if operation == "read" else "AgentInvocation"
+    )
     return ToolRequest(
         tool_ref={"kind": "Tool", "name": "filesystem", "version": "1.0.0"},
         input={"operation": operation, "path": path, **values},
-        caller=ToolCaller(
-            kind="AgentInvocation", id="agentinvocation-123456789abc"
-        ),
+        caller=ToolCaller(kind=caller_kind, id="agentinvocation-123456789abc"),
         capabilities=(f"filesystem.{operation}",),
         timeout_ms=1000,
         trace_id="trace-filesystem-123",
@@ -88,10 +99,21 @@ def invoke(
     )
 
 
+def _can_create_symlink(directory: Path, target: Path) -> bool:
+    probe = directory / "symlink-probe"
+    try:
+        probe.symlink_to(target)
+    except OSError:
+        return False
+    else:
+        probe.unlink()
+        return True
+
+
 def test_allowed_read_records_output_log_and_toolinvocation(tmp_path: Path) -> None:
     source = tmp_path / "src" / "message.txt"
     source.parent.mkdir()
-    source.write_text("hello\n", encoding="utf-8")
+    source.write_bytes(b"hello\n")
     store = InMemoryRuntimeObjectStore()
     tool = FilesystemTool(tmp_path, store)
 
@@ -130,10 +152,11 @@ def test_allowed_write_is_authorized_before_mutation_and_records_evidence(
     assert result.status is ToolResultStatus.SUCCEEDED
     assert result.output["bytesWritten"] == 11
     evidence = store.list_by_task_execution(TASK_EXECUTION_ID)
-    assert [item["kind"] for item in evidence] == ["PolicyDecision", "ToolInvocation"]
-    assert evidence[0]["action"] == "filesystem.write"
-    assert evidence[0]["decision"] == "ALLOW"
+    assert [item["kind"] for item in evidence] == ["ToolInvocation", "PolicyDecision"]
+    assert evidence[1]["action"] == "filesystem.write"
+    assert evidence[1]["decision"] == "ALLOW"
     assert invocation["capabilities"] == ["filesystem.write"]
+    assert invocation["requestFingerprint"].startswith("sha256:")
 
 
 def test_denied_write_does_not_mutate_workspace(tmp_path: Path) -> None:
@@ -153,6 +176,50 @@ def test_denied_write_does_not_mutate_workspace(tmp_path: Path) -> None:
     assert result.failure_class is ToolFailureClass.POLICY
     assert target.read_text(encoding="utf-8") == "original"
     assert invocation["failure"]["class"] == "POLICY"
+
+
+def test_agent_cannot_read_repository_files_even_with_capability_and_policy_allow(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "repository-secret.txt"
+    target.write_text("must enter a ContextPackage", encoding="utf-8")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    result, invocation = invoke(
+        tool,
+        store,
+        request(
+            "read",
+            "repository-secret.txt",
+            caller_kind="AgentInvocation",
+        ),
+        authorize=authorization(store, "allow", "filesystem.read"),
+    )
+
+    assert result.failure_class is ToolFailureClass.POLICY
+    assert result.output is None
+    assert invocation["failure"]["class"] == "POLICY"
+
+
+@pytest.mark.parametrize(
+    "caller_kind", ["ContextBuilder", "TaskExecution", "WorkflowRuntime"]
+)
+def test_explicit_trusted_control_plane_callers_can_read(
+    tmp_path: Path, caller_kind: str
+) -> None:
+    target = tmp_path / "context.txt"
+    target.write_text("selected context", encoding="utf-8")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    result, _ = invoke(
+        tool,
+        store,
+        request("read", "context.txt", caller_kind=caller_kind),
+    )
+
+    assert result.output["content"] == "selected context"
 
 
 @pytest.mark.parametrize(
@@ -190,6 +257,65 @@ def test_symlink_escape_is_denied(tmp_path: Path, tmp_path_factory) -> None:
 
     assert result.failure_class is ToolFailureClass.BOUNDARY
     assert result.output is None
+
+
+def test_read_replace_race_is_rejected_before_content_is_read(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("inside", encoding="utf-8")
+    outside = tmp_path_factory.mktemp("outside-read") / "secret.txt"
+    outside.write_text("outside secret", encoding="utf-8")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    adapter: FilesystemToolAdapter
+    use_real_symlink = _can_create_symlink(tmp_path, outside)
+
+    def replace_after_validation(path: Path, _operation: str) -> None:
+        if use_real_symlink:
+            path.unlink()
+            path.symlink_to(outside)
+        else:
+            adapter._handle_path_resolver = lambda _descriptor: outside
+
+    adapter = FilesystemToolAdapter(tmp_path, before_open=replace_after_validation)
+    tool.adapter = adapter
+
+    result, _ = invoke(tool, store, request("read", "source.txt"))
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert result.output is None
+
+
+def test_write_replace_race_is_rejected_before_truncate_or_write(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    target = tmp_path / "target.txt"
+    target.write_text("inside original", encoding="utf-8")
+    outside = tmp_path_factory.mktemp("outside-write") / "victim.txt"
+    outside.write_text("outside original", encoding="utf-8")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    adapter: FilesystemToolAdapter
+    use_real_symlink = _can_create_symlink(tmp_path, outside)
+
+    def replace_after_validation(path: Path, _operation: str) -> None:
+        if use_real_symlink:
+            path.unlink()
+            path.symlink_to(outside)
+        else:
+            adapter._handle_path_resolver = lambda _descriptor: outside
+
+    adapter = FilesystemToolAdapter(tmp_path, before_open=replace_after_validation)
+    tool.adapter = adapter
+
+    result, _ = invoke(
+        tool, store, request("write", "target.txt", content="malicious write")
+    )
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert target.read_text(encoding="utf-8") == "inside original"
+    assert outside.read_text(encoding="utf-8") == "outside original"
 
 
 def test_invalid_input_is_schema_failure_and_is_persisted(tmp_path: Path) -> None:
@@ -244,6 +370,81 @@ def test_write_capability_cannot_be_omitted_even_with_permissive_hook(
 
     assert result.failure_class is ToolFailureClass.POLICY
     assert not (tmp_path / "blocked.txt").exists()
+
+
+def test_identical_retry_returns_terminal_evidence_without_repeating_effect(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    calls = 0
+
+    def before_open(_path: Path, _operation: str) -> None:
+        nonlocal calls
+        calls += 1
+
+    tool.adapter._before_open = before_open
+    tool_request = request("write", "retry.txt", content="once")
+
+    first_result, first_evidence = invoke(tool, store, tool_request)
+    second_result, second_evidence = invoke(tool, store, tool_request)
+
+    assert calls == 1
+    assert second_result.output == first_result.output
+    assert second_evidence == first_evidence
+    assert len(store.list_by_task_execution(TASK_EXECUTION_ID)) == 1
+
+
+def test_invocation_id_reuse_with_different_request_is_rejected_before_effect(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    invoke(tool, store, request("write", "first.txt", content="first"))
+
+    with pytest.raises(
+        FilesystemInvocationIdentityConflictError,
+        match="different immutable request inputs",
+    ):
+        invoke(tool, store, request("write", "second.txt", content="second"))
+
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == "first"
+    assert not (tmp_path / "second.txt").exists()
+
+
+def test_concurrent_identical_invocations_execute_effect_once(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    entered = Event()
+    release = Event()
+    count_lock = Lock()
+    calls = 0
+
+    def before_open(_path: Path, _operation: str) -> None:
+        nonlocal calls
+        with count_lock:
+            calls += 1
+        entered.set()
+        assert release.wait(timeout=2)
+
+    tool.adapter._before_open = before_open
+    tool_request = request("write", "concurrent.txt", content="one effect")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(invoke, tool, store, tool_request)
+        assert entered.wait(timeout=2)
+        assert store.get("toolinvocation-123456789abc")["status"] == "PENDING"
+        second = executor.submit(invoke, tool, store, tool_request)
+        release.set()
+        first_result = first.result(timeout=2)
+        second_result = second.result(timeout=2)
+
+    assert calls == 1
+    assert first_result[0].output == second_result[0].output
+    assert first_result[1] == second_result[1]
+    assert (tmp_path / "concurrent.txt").read_text(encoding="utf-8") == "one effect"
 
 
 def test_published_schemas_match_runtime_contract_constants() -> None:
