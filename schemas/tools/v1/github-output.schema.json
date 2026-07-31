@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/tools/v1/github-output.schema.json",
+  "title": "GitHub Tool Output",
+  "type": "object",
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["traceId", "providerRequestId", "attemptCount"],
+      "properties": {
+        "traceId": { "type": "string", "minLength": 1 },
+        "providerRequestId": { "type": ["string", "null"] },
+        "attemptCount": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "required": ["operation", "repository", "issue", "metadata"],
+      "properties": {
+        "operation": { "const": "readIssue" },
+        "repository": { "type": "string" },
+        "issue": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "title", "body", "state", "url", "author", "labels"],
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "title": { "type": "string" },
+            "body": { "type": ["string", "null"] },
+            "state": { "type": "string" },
+            "url": { "type": "string", "minLength": 1 },
+            "author": { "type": ["string", "null"] },
+            "labels": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "metadata": { "$ref": "#/$defs/metadata" }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": ["operation", "repository", "pullRequest", "metadata"],
+      "properties": {
+        "operation": { "const": "createPullRequest" },
+        "repository": { "type": "string" },
+        "pullRequest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "url", "head", "base"],
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "url": { "type": "string", "minLength": 1 },
+            "head": { "type": "string", "minLength": 1 },
+            "base": { "type": "string", "minLength": 1 }
+          }
+        },
+        "metadata": { "$ref": "#/$defs/metadata" }
+      }
+    }
+  ]
+}

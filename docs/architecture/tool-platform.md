@@ -540,6 +540,23 @@ Publish Status
 
 Individual Tool implementations remain interchangeable.
 
+## GitHub Adapter
+
+The MVP GitHub adapter exposes two structured operations:
+
+* `readIssue` uses `github.issue.read` and returns normalized issue identity,
+  content, labels, URL, provider request ID, attempt count, and trace ID.
+* `createPullRequest` uses `github.create_pr` and accepts repository, head
+  branch, base branch, title, and body. Branch creation and push remain Git Tool
+  responsibilities.
+
+Pull-request publication is ordered as technical-evaluation evidence,
+Publication Policy, then pre-execution capability authorization. Every gate
+must allow before the provider client is called. Safe issue reads can retry
+recoverable failures within a bound. Pull-request creation is not automatically
+replayed after an ambiguous provider failure; its normalized failure evidence
+informs higher-level idempotent retry handling.
+
 ---
 
 # 21. Design Principles

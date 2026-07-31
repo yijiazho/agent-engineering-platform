@@ -1,0 +1,25 @@
+{
+  "input": {
+    "operation": "readIssue",
+    "repository": "acme/widgets",
+    "issueNumber": 42
+  },
+  "output": {
+    "operation": "readIssue",
+    "repository": "acme/widgets",
+    "issue": {
+      "number": 42,
+      "title": "Add widgets",
+      "body": "Please add widgets.",
+      "state": "open",
+      "url": "https://github.com/acme/widgets/issues/42",
+      "author": "octocat",
+      "labels": ["feature"]
+    },
+    "metadata": {
+      "traceId": "trace-github-001",
+      "providerRequestId": "github-request-read-1",
+      "attemptCount": 1
+    }
+  }
+}

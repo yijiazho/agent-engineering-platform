@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/tools/v1/github-input.schema.json",
+  "title": "GitHub Tool Input",
+  "type": "object",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "required": ["operation", "repository", "issueNumber"],
+      "properties": {
+        "operation": { "const": "readIssue" },
+        "repository": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" },
+        "issueNumber": { "type": "integer", "minimum": 1 }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": ["operation", "repository", "head", "base", "title", "body", "technicalEvaluation", "publicationPolicy"],
+      "properties": {
+        "operation": { "const": "createPullRequest" },
+        "repository": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" },
+        "head": { "type": "string", "minLength": 1 },
+        "base": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "issueNumber": { "type": "integer", "minimum": 1 },
+        "technicalEvaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["outcome", "evaluationResultIds", "traceId"],
+          "properties": {
+            "outcome": { "enum": ["PASS", "FAIL"] },
+            "evaluationResultIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "traceId": { "type": "string", "minLength": 1 }
+          }
+        },
+        "publicationPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["decision", "policyDecisionId", "action", "traceId"],
+          "properties": {
+            "decision": { "enum": ["ALLOW", "DENY", "REQUIRE_APPROVAL"] },
+            "policyDecisionId": { "type": "string", "minLength": 1 },
+            "action": { "const": "github.create_pr" },
+            "traceId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  ]
+}

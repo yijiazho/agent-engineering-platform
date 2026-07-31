@@ -1,0 +1,37 @@
+{
+  "input": {
+    "operation": "createPullRequest",
+    "repository": "acme/widgets",
+    "issueNumber": 42,
+    "head": "aep/issue-42",
+    "base": "main",
+    "title": "Implement issue 42",
+    "body": "Closes #42",
+    "technicalEvaluation": {
+      "outcome": "PASS",
+      "evaluationResultIds": ["evaluationresult-build123456"],
+      "traceId": "trace-github-001"
+    },
+    "publicationPolicy": {
+      "decision": "ALLOW",
+      "policyDecisionId": "policydecision-publication123456",
+      "action": "github.create_pr",
+      "traceId": "trace-github-001"
+    }
+  },
+  "output": {
+    "operation": "createPullRequest",
+    "repository": "acme/widgets",
+    "pullRequest": {
+      "number": 84,
+      "url": "https://github.com/acme/widgets/pull/84",
+      "head": "aep/issue-42",
+      "base": "main"
+    },
+    "metadata": {
+      "traceId": "trace-github-001",
+      "providerRequestId": "github-request-create-1",
+      "attemptCount": 1
+    }
+  }
+}

@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 15 |
+| Completed | 16 |
 | In Progress | 0 |
-| Not Started | 22 |
+| Not Started | 21 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -35,14 +35,14 @@ GitHub issue event normalization and deduplication, WorkflowExecution creation,
 TaskExecution lifecycle,
 provider-neutral model and Tool boundaries, schema evaluation, the initial
 repository-knowledge scanner and query API, and immutable content-addressed
-GeneratedArtifact storage. Normalized events now resolve deterministically to
+GeneratedArtifact storage. Normalized events resolve deterministically to
 explicitly versioned Workflow references, and Workflow Task DAGs resolve into
-validated deterministic execution plans with parallel-ready groups. The
-end-to-end MVP workflow is not yet runnable.
-explicitly versioned Workflow references. Pre-execution capability policy now
+validated deterministic execution plans with parallel-ready groups.
+Pre-execution capability policy now
 composes versioned rules across all supported scopes and persists explainable
-decisions before Tool execution. The end-to-end MVP workflow is not yet
-runnable.
+decisions before Tool execution. The GitHub Tool now performs structured issue
+reads and policy-gated pull-request creation through a provider-neutral client.
+The end-to-end MVP workflow is not yet runnable.
 
 ---
 
@@ -73,7 +73,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 19 | [AEP-021: Implement Filesystem Tool](tasks/AEP-021-implement-filesystem-tool.md) | Not Started |
 | 20 | [AEP-022: Implement Git Tool](tasks/AEP-022-implement-git-tool.md) | Not Started |
 | 21 | [AEP-023: Implement Docker Validation Tool](tasks/AEP-023-implement-docker-validation-tool.md) | Not Started |
-| 22 | [AEP-024: Implement GitHub Tool](tasks/AEP-024-implement-github-tool.md) | Not Started |
+| 22 | [AEP-024: Implement GitHub Tool](tasks/AEP-024-implement-github-tool.md) | Completed |
 | 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Not Started |
 | 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Not Started |
 | 25 | [AEP-027: Implement Build And Test Evaluation](tasks/AEP-027-implement-build-and-test-evaluation.md) | Not Started |
@@ -119,7 +119,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-021 | AEP-019, AEP-020 | Not Started |
 | AEP-022 | AEP-019, AEP-020 | Not Started |
 | AEP-023 | AEP-019, AEP-020 | Not Started |
-| AEP-024 | AEP-019, AEP-020 | Not Started |
+| AEP-024 | AEP-019, AEP-020 | Completed |
 | AEP-025 | AEP-002 | Completed |
 | AEP-026 | AEP-002, AEP-022 | Not Started |
 | AEP-027 | AEP-002, AEP-023 | Not Started |
