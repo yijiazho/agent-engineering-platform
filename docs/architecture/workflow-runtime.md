@@ -79,7 +79,27 @@ Agents own reasoning.
 
 ---
 
-# 3. Core Runtime Objects
+# 3. Task DAG Resolution
+
+Before scheduling begins, the Workflow Runtime resolves the Workflow's
+explicitly versioned Task references into an immutable execution plan.
+Resolution:
+
+* verifies that every Workflow node resolves to a loaded Task Resource;
+* rejects duplicate Task identities, dependencies outside the Workflow graph,
+  and dependency cycles;
+* preserves Workflow declaration order as the deterministic tie-breaker;
+* records each Task's dependencies and dependents; and
+* partitions the graph into ordered parallel-ready groups.
+
+The resolver validates graph structure only. It does not create
+TaskExecutions, execute handlers, or allow an Agent or model to choose
+execution order. The scheduler consumes the resolved plan in a separate
+lifecycle step.
+
+---
+
+# 4. Core Runtime Objects
 
 The runtime manipulates immutable Resources together with runtime-only objects.
 
@@ -122,7 +142,7 @@ They represent transient execution state.
 
 ---
 
-# 4. Agent Resolution
+# 5. Agent Resolution
 
 The Workflow Runtime does not host an Agent Runtime service.
 
@@ -136,7 +156,7 @@ The Agent Resolver owns no durable state.
 
 ---
 
-# 5. ContextPackage
+# 6. ContextPackage
 
 ContextPackage is the contract between the Workflow Runtime and the Context Builder.
 
@@ -161,7 +181,7 @@ This abstraction allows the Context Builder to evolve independently from the run
 
 ---
 
-# 6. ContextPackage Structure
+# 7. ContextPackage Structure
 
 A ContextPackage represents the minimum sufficient information required to execute a Task.
 
@@ -283,7 +303,7 @@ This enables deterministic prompt assembly and observability.
 
 ---
 
-# 7. Context Resolution Lifecycle
+# 8. Context Resolution Lifecycle
 
 For every Task execution:
 
@@ -329,7 +349,7 @@ It never determines how the package was constructed.
 
 ---
 
-# 8. Context Validation
+# 9. Context Validation
 
 Before invoking an Agent, the runtime validates the ContextPackage.
 
@@ -345,7 +365,7 @@ Invalid ContextPackages fail fast before model invocation.
 
 ---
 
-# 9. Context Immutability
+# 10. Context Immutability
 
 A ContextPackage is immutable.
 
@@ -359,7 +379,7 @@ Agents may invoke only the non-knowledge Tools allowed by their ResolvedAgent an
 
 ---
 
-# 10. Context Reproducibility
+# 11. Context Reproducibility
 
 Every WorkflowExecution records:
 
@@ -377,7 +397,7 @@ This makes executions reproducible and debuggable.
 
 ---
 
-# 11. Runtime Responsibilities
+# 12. Runtime Responsibilities
 
 The Workflow Runtime owns:
 
@@ -407,7 +427,7 @@ Those responsibilities belong to the Context Builder subsystem.
 
 ---
 
-# 12. Design Principles
+# 13. Design Principles
 
 ## Separation of Concerns
 
@@ -443,7 +463,7 @@ Neither the Workflow Runtime nor the Agent needs to understand the internal impl
 
 ---
 
-# 13. Summary
+# 14. Summary
 
 Introducing ContextPackage as a runtime object establishes a clear architectural boundary between execution and intelligence.
 
