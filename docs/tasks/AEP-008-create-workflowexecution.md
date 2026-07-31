@@ -1,6 +1,6 @@
 # AEP-008: Create WorkflowExecution
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -31,3 +31,21 @@ Implement a WorkflowExecution creation service that:
 * Initial status is `Pending` or `Running`.
 * ExecutionEvent is emitted for creation.
 * Tests verify provenance fields.
+
+## Implementation
+
+`aep.workflow_execution.WorkflowExecutionCreator` creates a `RUNNING`
+WorkflowExecution from a deduplicated normalized Event and the resolved,
+explicitly versioned Workflow and Event Resources. The execution binds the
+normalized Event identifier, Resource references, repository revision,
+knowledge graph version, initial timestamp, and a deterministic trace
+identifier.
+
+The normalized Event identifier and Workflow Resource identity form the
+deterministic persistence key. Repeated and concurrent creation attempts
+therefore return the first execution, while a deterministic
+`WorkflowExecutionStarted` ExecutionEvent makes event emission idempotent and
+allows a retry to repair an interruption after the trace root was persisted.
+Both complete runtime records are validated against their authoritative JSON
+Schemas, including RFC3339 timestamp formats, before the first persistence
+mutation.
