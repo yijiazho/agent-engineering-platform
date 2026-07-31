@@ -1,0 +1,37 @@
+{
+  "toolRef": {
+    "kind": "Tool",
+    "name": "docker-validation",
+    "version": "1.0.0"
+  },
+  "input": {
+    "image": "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "commands": [
+      {
+        "argv": [
+          "python",
+          "-m",
+          "pytest"
+        ]
+      }
+    ],
+    "workspaceMount": {
+      "hostPath": "C:\\work\\checkout",
+      "containerPath": "/workspace",
+      "readOnly": false
+    },
+    "resources": {
+      "cpuLimit": 2,
+      "memoryBytes": 536870912
+    }
+  },
+  "caller": {
+    "kind": "TaskExecution",
+    "id": "taskexecution-validation123"
+  },
+  "capabilities": [
+    "docker.run"
+  ],
+  "timeoutMs": 30000,
+  "traceId": "trace-docker-validation-0001"
+}

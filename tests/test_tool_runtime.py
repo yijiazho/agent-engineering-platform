@@ -162,6 +162,36 @@ def test_invalid_adapter_output_is_normalized() -> None:
     assert actual.failure_class is ToolFailureClass.VALIDATION
 
 
+def test_cleanup_failure_preserves_completed_result_evidence() -> None:
+    expected = result(load_fixture("success")["result"])
+
+    class CleanupFailureAdapter(FakeToolAdapter):
+        def start(self, tool_request):
+            execution = super().start(tool_request)
+
+            def fail_cleanup() -> None:
+                raise RuntimeError("remove failed")
+
+            execution.cleanup = fail_cleanup
+            return execution
+
+    actual = invoke_tool(
+        request(),
+        validator=validator(),
+        authorize=lambda _: True,
+        adapter=CleanupFailureAdapter([expected]),
+    )
+
+    assert actual.status is ToolResultStatus.FAILED
+    assert actual.failure_class is ToolFailureClass.ADAPTER
+    assert actual.failure_message == "execution cleanup failed: remove failed"
+    assert actual.output == expected.output
+    assert actual.logs_ref == expected.logs_ref
+    assert actual.metrics == expected.metrics
+    assert actual.started_at == expected.started_at
+    assert actual.completed_at == expected.completed_at
+
+
 def test_model_references_are_explicitly_excluded() -> None:
     data = load_fixture("success")["request"]
     data["toolRef"] = {"kind": "Model", "name": "provider", "version": "1.0.0"}

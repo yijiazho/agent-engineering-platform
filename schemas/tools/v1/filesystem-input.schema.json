@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/tools/v1/filesystem-input.schema.json",
+  "title": "Filesystem Tool Input",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "path"],
+      "properties": {
+        "operation": { "const": "read" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "path", "content"],
+      "properties": {
+        "operation": { "const": "write" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "content": { "type": "string" }
+      }
+    }
+  ]
+}

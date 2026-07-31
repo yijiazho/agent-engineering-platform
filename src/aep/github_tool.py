@@ -522,12 +522,15 @@ class _GitHubExecution(ToolExecution):
         self._wait_retry = wait_retry
         self._current: GitHubProviderOperation | None = None
         self._current_pending = False
+        self._terminated = False
         self._operations: list[GitHubProviderOperation] = []
         self._attempts: list[dict[str, Any]] = []
         self._started_at = datetime.now(UTC)
         self._started_clock = clock()
 
     def wait(self, timeout_ms: int) -> ToolResult | None:
+        if self._terminated:
+            return None
         deadline = self._clock() + timeout_ms / 1000
         for attempt in range(len(self._attempts) + 1, self._max_attempts + 1):
             remaining_ms = max(0, int((deadline - self._clock()) * 1000))
@@ -584,6 +587,7 @@ class _GitHubExecution(ToolExecution):
         raise AssertionError("GitHub attempt loop did not return")
 
     def terminate(self) -> None:
+        self._terminated = True
         if self._current is not None:
             self._current.terminate()
 
