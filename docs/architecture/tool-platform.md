@@ -542,7 +542,27 @@ Individual Tool implementations remain interchangeable.
 
 ---
 
-# 21. Design Principles
+# 21. MVP Filesystem Adapter
+
+The Filesystem adapter exposes schema-declared UTF-8 `read` and `write`
+operations against one explicitly configured WorkflowExecution workspace. It
+normalizes output paths relative to that workspace and returns byte counts and
+SHA-256 content digests.
+
+Absolute paths, traversal components, dangling symlinks, and resolved symlink
+targets outside the workspace are denied. A write request must declare
+`filesystem.write`, and the shared Pre-Execution Capability Policy hook must
+authorize it before the adapter starts. Structured content-addressed logs omit
+file contents, while terminal `ToolInvocation` records preserve inputs,
+structured outputs, metrics, log addresses, and normalized failure evidence.
+
+This adapter performs file access for authorized workflow operations. It is not
+a repository-knowledge retrieval path for Agents; repository knowledge remains
+supplied through immutable ContextPackages.
+
+---
+
+# 22. Design Principles
 
 ## Declarative Tools
 
@@ -580,7 +600,7 @@ Every external action produces a complete audit trail.
 
 ---
 
-# 22. Future Enhancements
+# 23. Future Enhancements
 
 The architecture supports future capabilities without changing the Tool contract.
 
@@ -597,7 +617,7 @@ Potential enhancements include:
 
 ---
 
-# 23. Summary
+# 24. Summary
 
 The Tool Platform provides a secure, declarative execution layer for non-model interactions with external systems.
 

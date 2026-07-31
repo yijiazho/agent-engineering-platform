@@ -80,7 +80,7 @@ Installed development package versions are captured in [requirements-dev.lock](r
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 15 of the 37 implementation tasks are complete.
+contracts are established, and 16 of the 37 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -98,15 +98,15 @@ Implemented foundations currently include:
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
 * Deterministic pre-execution capability policy with persisted decisions.
+* Workspace-confined Filesystem Tool reads and policy-authorized writes with
+  persisted invocation evidence.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 
-Workflow scheduling, ContextPackage construction, concrete Tool adapters,
-policy enforcement, task handlers, service composition, and the end-to-end
-DAG scheduling, ContextPackage construction, concrete Tool adapters,
-publication policy, task handlers, service composition, and the end-to-end
-issue-to-pull-request harness remain to be implemented.
+Workflow scheduling, ContextPackage construction, remaining concrete Tool
+adapters, publication policy, task handlers, service composition, and the
+end-to-end issue-to-pull-request harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 
