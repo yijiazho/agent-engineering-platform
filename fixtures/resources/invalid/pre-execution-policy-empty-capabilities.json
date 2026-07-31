@@ -1,0 +1,17 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Policy",
+  "metadata": {
+    "name": "empty-capabilities",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "type": "pre-execution-capability",
+    "rules": [
+      {
+        "effect": "allow",
+        "capabilities": []
+      }
+    ]
+  }
+}

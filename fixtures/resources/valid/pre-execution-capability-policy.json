@@ -1,0 +1,29 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Policy",
+  "metadata": {
+    "name": "mvp-tool-capabilities",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "type": "pre-execution-capability",
+    "rules": [
+      {
+        "effect": "allow",
+        "capabilities": [
+          "filesystem.write",
+          "docker.run"
+        ],
+        "reason": "Workspace automation may write files and run validation."
+      },
+      {
+        "effect": "require-approval",
+        "capabilities": [
+          "git.push",
+          "github.create_pr"
+        ],
+        "reason": "External repository changes require human approval."
+      }
+    ]
+  }
+}

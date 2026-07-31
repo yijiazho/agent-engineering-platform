@@ -341,9 +341,15 @@ Permissions may originate from:
 * Agent
 * Task
 * Workflow
+* Workspace
 * Platform Policy
 
 Permission evaluation follows the principle of least privilege.
+
+The shared Tool Runtime authorization hook evaluates every requested
+capability and persists one `PolicyDecision` per capability before adapter
+startup. Only `ALLOW` proceeds to execution. `DENY`, `REQUIRE_APPROVAL`, and
+the absence of a matching grant all block the adapter.
 
 ---
 

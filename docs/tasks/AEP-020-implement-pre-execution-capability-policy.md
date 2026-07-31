@@ -1,6 +1,6 @@
 # AEP-020: Implement Pre-Execution Capability Policy
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
