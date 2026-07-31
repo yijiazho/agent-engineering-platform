@@ -80,7 +80,7 @@ Installed development package versions are captured in [requirements-dev.lock](r
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 18 of the 37 implementation tasks are complete.
+contracts are established, and 19 of the 37 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -107,6 +107,7 @@ Implemented foundations currently include:
   evidence.
 * Policy-gated, workspace-scoped Docker validation with digest-pinned images,
   disabled networking, bounded execution, and per-command execution evidence.
+* A policy-gated GitHub Tool adapter for issue reads and pull-request creation.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.

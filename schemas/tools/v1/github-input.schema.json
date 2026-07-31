@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/tools/v1/github-input.schema.json",
+  "title": "GitHub Tool Input",
+  "type": "object",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "required": ["operation", "repository", "issueNumber"],
+      "properties": {
+        "operation": { "const": "readIssue" },
+        "repository": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" },
+        "issueNumber": { "type": "integer", "minimum": 1 }
+      }
+    },
+    {
+      "additionalProperties": false,
+      "required": ["operation", "repository", "head", "base", "title", "body", "publicationEvidence"],
+      "properties": {
+        "operation": { "const": "createPullRequest" },
+        "repository": { "type": "string", "pattern": "^[^/\\s]+/[^/\\s]+$" },
+        "head": { "type": "string", "minLength": 1 },
+        "base": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "issueNumber": { "type": "integer", "minimum": 1 },
+        "publicationEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["policyDecisionId", "taskExecutionId", "workflowExecutionId", "repositoryRevision", "evaluationResultIds", "generatedArtifactIds", "pushToolInvocationId"],
+          "properties": {
+            "policyDecisionId": { "type": "string", "minLength": 1 },
+            "taskExecutionId": { "type": "string", "minLength": 1 },
+            "workflowExecutionId": { "type": "string", "minLength": 1 },
+            "repositoryRevision": { "type": "string", "minLength": 7 },
+            "evaluationResultIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "generatedArtifactIds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "pushToolInvocationId": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  ]
+}
