@@ -92,8 +92,7 @@ DOCKER_VALIDATION_OUTPUT_SCHEMA: Mapping[str, Any] = {
         },
         "commands": {
             "type": "array",
-            "minItems": 1,
-            "items": {
+            "minItems": 0,
                 "type": "object",
                 "additionalProperties": False,
                 "required": [
