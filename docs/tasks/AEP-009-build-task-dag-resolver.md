@@ -1,6 +1,6 @@
 # AEP-009: Build Task DAG Resolver
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
