@@ -542,7 +542,43 @@ Individual Tool implementations remain interchangeable.
 
 ---
 
-# 21. Design Principles
+# 21. MVP Filesystem Adapter
+
+The Filesystem adapter exposes schema-declared UTF-8 `read` and `write`
+operations against one explicitly configured WorkflowExecution workspace. It
+normalizes output paths relative to that workspace and returns byte counts and
+SHA-256 content digests.
+
+Absolute paths, traversal components, dangling symlinks, and resolved symlink
+targets outside the workspace are denied. POSIX implementations walk from a
+pinned workspace directory handle using no-follow relative opens. Windows
+implementations pin and verify the workspace and parent directory handles,
+reject reparse points, and open or create the final child relative to the
+pinned parent with the native API. The kernel-resolved final handle is verified
+before reading, truncating, or writing, so replacing either a final or
+intermediate path cannot redirect an effect. A write request must declare
+`filesystem.write`, and the shared Pre-Execution Capability Policy hook must
+authorize it before the adapter starts. Structured content-addressed logs omit
+file contents, while terminal `ToolInvocation` records preserve inputs,
+structured outputs, metrics, log addresses, and normalized failure evidence.
+
+This adapter performs file access for authorized workflow operations. It is not
+a repository-knowledge retrieval path for Agents: `AgentInvocation` read
+requests are denied regardless of capability policy. Only explicit
+`ContextBuilder`, `TaskExecution`, and `WorkflowRuntime` control-plane caller
+contracts may read; repository knowledge remains supplied to Agents through
+immutable ContextPackages.
+
+In one atomic store operation, the Tool Runtime creates pending evidence that
+binds each invocation id to an immutable-request fingerprint and an ownership
+token before any file effect. A failed atomic create leaves no separate claim
+that can strand the invocation. Identical retries, including concurrent
+duplicates, reuse the terminal result. Reusing an id with different inputs is
+an identity conflict.
+
+---
+
+# 22. Design Principles
 
 ## Declarative Tools
 
@@ -580,7 +616,7 @@ Every external action produces a complete audit trail.
 
 ---
 
-# 22. Future Enhancements
+# 23. Future Enhancements
 
 The architecture supports future capabilities without changing the Tool contract.
 
@@ -597,7 +633,7 @@ Potential enhancements include:
 
 ---
 
-# 23. Summary
+# 24. Summary
 
 The Tool Platform provides a secure, declarative execution layer for non-model interactions with external systems.
 

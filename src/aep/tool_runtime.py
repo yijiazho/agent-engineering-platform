@@ -66,6 +66,9 @@ class ToolFailureClass(str, Enum):
     POLICY = "POLICY"
     TIMEOUT = "TIMEOUT"
     ADAPTER = "ADAPTER"
+    BOUNDARY = "BOUNDARY"
+    NOT_FOUND = "NOT_FOUND"
+    IO = "IO"
 
 
 @dataclass(frozen=True)

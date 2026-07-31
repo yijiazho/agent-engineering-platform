@@ -1,0 +1,29 @@
+{
+  "request": {
+    "toolRef": {
+      "kind": "Tool",
+      "name": "filesystem",
+      "version": "1.0.0"
+    },
+    "input": {
+      "operation": "read",
+      "path": "src/example.txt"
+    },
+    "caller": {
+      "kind": "ContextBuilder",
+      "id": "contextbuilder-123456789abc"
+    },
+    "capabilities": [
+      "filesystem.read"
+    ],
+    "timeoutMs": 1000,
+    "traceId": "trace-filesystem-123"
+  },
+  "output": {
+    "operation": "read",
+    "path": "src/example.txt",
+    "content": "hello\n",
+    "sizeBytes": 6,
+    "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03"
+  }
+}
