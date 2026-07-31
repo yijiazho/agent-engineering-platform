@@ -66,6 +66,11 @@ class ToolFailureClass(str, Enum):
     POLICY = "POLICY"
     TIMEOUT = "TIMEOUT"
     ADAPTER = "ADAPTER"
+    STARTUP = "STARTUP"
+    NONZERO_EXIT = "NONZERO_EXIT"
+    BOUNDARY = "BOUNDARY"
+    NOT_FOUND = "NOT_FOUND"
+    IO = "IO"
 
 
 @dataclass(frozen=True)
@@ -175,6 +180,12 @@ class ToolSchemaValidationError(ValueError):
         self.phase = phase
         self.messages = tuple(messages)
         super().__init__(f"{phase} schema validation failed: {'; '.join(self.messages)}")
+
+
+class ToolAdapterError(RuntimeError):
+    """Adapter failure that preserves a more specific runtime classification."""
+
+    failure_class = ToolFailureClass.ADAPTER
 
 
 class ToolSchemaValidator(ABC):
@@ -335,6 +346,12 @@ def invoke_tool(
 
     try:
         execution = adapter.start(request)
+    except ToolAdapterError as error:
+        return failure(
+            ToolResultStatus.FAILED,
+            error.failure_class,
+            str(error) or type(error).__name__,
+        )
     except Exception as error:
         return failure(
             ToolResultStatus.FAILED,
@@ -361,6 +378,11 @@ def invoke_tool(
                 ToolFailureClass.ADAPTER,
                 f"adapter returned {type(result).__name__}, expected ToolResult",
             )
+        elif result.status is ToolResultStatus.TIMED_OUT:
+            execution.terminate()
+            if execution.wait(TERMINATION_GRACE_MS) is None:
+                execution.kill()
+            normalized_result = result
         elif result.status is ToolResultStatus.SUCCEEDED:
             validator.validate_output(result.output)
             normalized_result = result
@@ -383,9 +405,20 @@ def invoke_tool(
             cleanup_error = error
 
     if cleanup_error is not None:
-        return failure(
-            ToolResultStatus.FAILED,
-            ToolFailureClass.ADAPTER,
-            f"execution cleanup failed: {cleanup_error}",
+        cleanup_message = f"execution cleanup failed: {cleanup_error}"
+        message = (
+            f"{normalized_result.failure_message}; {cleanup_message}"
+            if normalized_result.failure_message
+            else cleanup_message
+        )
+        return ToolResult(
+            status=ToolResultStatus.FAILED,
+            output=normalized_result.output_record(),
+            logs_ref=normalized_result.logs_ref,
+            metrics=normalized_result.metrics,
+            started_at=normalized_result.started_at,
+            completed_at=normalized_result.completed_at,
+            failure_class=ToolFailureClass.ADAPTER,
+            failure_message=message,
         )
     return normalized_result

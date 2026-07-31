@@ -26,7 +26,7 @@ from aep.tool_runtime import (
 
 def git(root: Path, *arguments: str) -> str:
     result = subprocess.run(
-        ("git", *arguments),
+        ("git", "-c", "safe.bareRepository=all", *arguments),
         cwd=root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -138,6 +138,7 @@ def local_repository(tmp_path: Path) -> tuple[Path, Path, str]:
     git(repository, "config", "user.name", "AEP Test")
     git(repository, "config", "user.email", "aep@example.test")
     git(repository, "config", "core.autocrlf", "false")
+    git(repository, "config", "commit.gpgsign", "false")
     git(repository, "remote", "add", "origin", str(remote))
     (repository / "tracked.txt").write_text("original\n", encoding="utf-8")
     git(repository, "add", "tracked.txt")

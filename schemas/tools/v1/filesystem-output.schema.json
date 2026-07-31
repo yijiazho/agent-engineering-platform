@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/tools/v1/filesystem-output.schema.json",
+  "title": "Filesystem Tool Output",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "path", "content", "sizeBytes", "sha256"],
+      "properties": {
+        "operation": { "const": "read" },
+        "path": { "type": "string" },
+        "content": { "type": "string" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "path", "bytesWritten", "sha256"],
+      "properties": {
+        "operation": { "const": "write" },
+        "path": { "type": "string" },
+        "bytesWritten": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  ]
+}
