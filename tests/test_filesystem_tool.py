@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
+import subprocess
 from threading import Event, Lock
 
 import pytest
@@ -318,6 +320,44 @@ def test_write_replace_race_is_rejected_before_truncate_or_write(
     assert outside.read_text(encoding="utf-8") == "outside original"
 
 
+def test_raced_intermediate_link_cannot_create_nonexistent_outside_file(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    outside = tmp_path_factory.mktemp("outside-create")
+    outside_target = outside / "must-not-exist.txt"
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    def replace_parent(_path: Path, _operation: str) -> None:
+        nested.rmdir()
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(nested), str(outside)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert completed.returncode == 0, completed.stderr
+        else:
+            nested.symlink_to(outside, target_is_directory=True)
+
+    tool.adapter._before_open = replace_parent
+    try:
+        result, _ = invoke(
+            tool,
+            store,
+            request("write", "nested/must-not-exist.txt", content="escape"),
+        )
+    finally:
+        if nested.exists():
+            nested.rmdir()
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert not outside_target.exists()
+
+
 def test_invalid_input_is_schema_failure_and_is_persisted(tmp_path: Path) -> None:
     store = InMemoryRuntimeObjectStore()
     tool = FilesystemTool(tmp_path, store)
@@ -445,6 +485,50 @@ def test_concurrent_identical_invocations_execute_effect_once(
     assert first_result[0].output == second_result[0].output
     assert first_result[1] == second_result[1]
     assert (tmp_path / "concurrent.txt").read_text(encoding="utf-8") == "one effect"
+
+
+def test_atomic_pending_create_failure_is_retryable_without_duplicate_effect(
+    tmp_path: Path,
+) -> None:
+    class FailFirstPendingCreateStore(InMemoryRuntimeObjectStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_pending_create = True
+
+        def create(self, runtime_object, *, deterministic_key):
+            if (
+                self.fail_pending_create
+                and runtime_object.get("kind") == "ToolInvocation"
+            ):
+                self.fail_pending_create = False
+                raise RuntimeError("atomic persistence unavailable")
+            return super().create(
+                runtime_object,
+                deterministic_key=deterministic_key,
+            )
+
+    store = FailFirstPendingCreateStore()
+    tool = FilesystemTool(tmp_path, store)
+    effects = 0
+
+    def count_effect(_path: Path, _operation: str) -> None:
+        nonlocal effects
+        effects += 1
+
+    tool.adapter._before_open = count_effect
+    tool_request = request("write", "recovered.txt", content="once")
+
+    with pytest.raises(RuntimeError, match="atomic persistence unavailable"):
+        invoke(tool, store, tool_request)
+
+    assert store.get("toolinvocation-123456789abc") is None
+    assert effects == 0
+    result, invocation = invoke(tool, store, tool_request)
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert invocation["status"] == "SUCCEEDED"
+    assert effects == 1
+    assert (tmp_path / "recovered.txt").read_text(encoding="utf-8") == "once"
 
 
 def test_published_schemas_match_runtime_contract_constants() -> None:

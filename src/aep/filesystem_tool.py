@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any, BinaryIO, Callable
+from uuid import uuid4
 
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import (
@@ -284,8 +285,17 @@ class FilesystemToolAdapter(ToolAdapter):
         try:
             if os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW"):
                 descriptor = self._open_from_pinned_workspace(relative, operation)
+            elif os.name == "nt":
+                descriptor = _windows_open_relative(
+                    self._workspace,
+                    relative,
+                    operation,
+                    self._verify_open_handle,
+                )
             else:
-                descriptor = self._open_and_verify_handle(relative, operation)
+                raise FilesystemBoundaryError(
+                    "platform does not provide confined relative file opens"
+                )
         except OSError as error:
             if error.errno in {errno.ELOOP, errno.ENOTDIR}:
                 raise FilesystemBoundaryError(
@@ -325,18 +335,6 @@ class FilesystemToolAdapter(ToolAdapter):
             if directory_descriptor != root_descriptor:
                 os.close(directory_descriptor)
             os.close(root_descriptor)
-
-    def _open_and_verify_handle(self, relative: Path, operation: str) -> int:
-        candidate = self._workspace / relative
-        flags = os.O_RDONLY if operation == "read" else os.O_RDWR | os.O_CREAT
-        flags |= getattr(os, "O_BINARY", 0)
-        descriptor = os.open(candidate, flags, 0o600)
-        try:
-            self._verify_open_handle(descriptor)
-        except Exception:
-            os.close(descriptor)
-            raise
-        return descriptor
 
     def _verify_open_handle(self, descriptor: int) -> None:
         opened_path = self._handle_path_resolver(descriptor)
@@ -406,22 +404,7 @@ class FilesystemTool:
         fingerprint = _request_fingerprint(
             task_execution_id, request, policy_decision_id
         )
-        claimed, claim = self._store.claim(
-            f"filesystem-tool-invocation-claim:{invocation_id}",
-            {
-                "invocationId": invocation_id,
-                "requestFingerprint": fingerprint,
-            },
-        )
-        if claim["requestFingerprint"] != fingerprint:
-            raise FilesystemInvocationIdentityConflictError(
-                f"invocation id {invocation_id!r} is already bound to different "
-                "immutable request inputs"
-            )
-        if not claimed:
-            prior = self._await_terminal_invocation(invocation_id)
-            return _result_from_invocation(prior), prior
-
+        owner_token = str(uuid4())
         started_at = _timestamp(datetime.now(UTC))
         pending = _pending_invocation_record(
             invocation_id,
@@ -430,15 +413,22 @@ class FilesystemTool:
             fingerprint,
             policy_decision_id,
             started_at,
+            owner_token,
         )
         created = self._store.create(
             pending,
             deterministic_key=f"filesystem-tool-invocation:{invocation_id}",
         )
-        if created["requestFingerprint"] != fingerprint:
+        if created.get("requestFingerprint") != fingerprint:
             raise FilesystemInvocationIdentityConflictError(
-                f"invocation id {invocation_id!r} conflicts with existing evidence"
+                f"invocation id {invocation_id!r} is already bound to different "
+                "immutable request inputs"
             )
+        if created.get("ownerToken") != owner_token:
+            if created.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _result_from_invocation(created), created
+            prior = self._await_terminal_invocation(invocation_id)
+            return _result_from_invocation(prior), prior
         try:
             result = invoke_tool(
                 request,
@@ -481,6 +471,7 @@ def _pending_invocation_record(
     request_fingerprint: str,
     policy_decision_id: str | None,
     timestamp: str,
+    owner_token: str,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "apiVersion": "aep.dev/v1alpha1",
@@ -501,6 +492,7 @@ def _pending_invocation_record(
         "input": _json_copy(request.input),
         "capabilities": list(request.capabilities),
         "requestFingerprint": request_fingerprint,
+        "ownerToken": owner_token,
     }
     if request.caller.kind == "AgentInvocation":
         record["agentInvocationId"] = request.caller.id
@@ -603,6 +595,239 @@ def _runtime_failure_class(value: ToolFailureClass) -> str:
 
 def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(dict(value)))
+
+
+def _windows_open_relative(
+    workspace: Path,
+    relative: Path,
+    operation: str,
+    verify_descriptor: Callable[[int], None],
+) -> int:
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    file_attribute_reparse_point = 0x00000400
+    file_flag_backup_semantics = 0x02000000
+    file_flag_open_reparse_point = 0x00200000
+    generic_read = 0x80000000
+    open_existing = 3
+    share_all = 0x00000007
+    invalid_handle = ctypes.c_void_p(-1).value
+
+    create_file = ctypes.windll.kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    close_handle = ctypes.windll.kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+
+    root = create_file(
+        str(workspace),
+        generic_read,
+        share_all,
+        None,
+        open_existing,
+        file_flag_backup_semantics | file_flag_open_reparse_point,
+        None,
+    )
+    if root == invalid_handle:
+        raise ctypes.WinError()
+    parent = root
+    try:
+        if _windows_handle_attributes(root) & file_attribute_reparse_point:
+            raise FilesystemBoundaryError(
+                "configured workspace was replaced by a reparse point"
+            )
+        for component in relative.parts[:-1]:
+            child = _windows_nt_open_relative(
+                parent,
+                component,
+                operation="directory",
+            )
+            if _windows_handle_attributes(child) & file_attribute_reparse_point:
+                close_handle(child)
+                raise FilesystemBoundaryError(
+                    f"path contains a reparse-point directory: {relative}"
+                )
+            if parent != root:
+                close_handle(parent)
+            parent = child
+
+        final_handle = _windows_nt_open_relative(
+            parent,
+            relative.name,
+            operation=operation,
+        )
+        if _windows_handle_attributes(final_handle) & file_attribute_reparse_point:
+            close_handle(final_handle)
+            raise FilesystemBoundaryError(
+                f"path targets a reparse point: {relative}"
+            )
+        descriptor_flags = getattr(os, "O_BINARY", 0)
+        descriptor_flags |= os.O_RDONLY if operation == "read" else os.O_RDWR
+        descriptor = msvcrt.open_osfhandle(final_handle.value, descriptor_flags)
+        try:
+            verify_descriptor(descriptor)
+        except Exception:
+            os.close(descriptor)
+            raise
+        return descriptor
+    finally:
+        if parent != root:
+            close_handle(parent)
+        close_handle(root)
+
+
+def _windows_nt_open_relative(
+    parent_handle: Any,
+    name: str,
+    *,
+    operation: str,
+) -> Any:
+    import ctypes
+    from ctypes import wintypes
+
+    class UnicodeString(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.USHORT),
+            ("MaximumLength", wintypes.USHORT),
+            ("Buffer", wintypes.LPWSTR),
+        ]
+
+    class ObjectAttributes(ctypes.Structure):
+        _fields_ = [
+            ("Length", wintypes.ULONG),
+            ("RootDirectory", wintypes.HANDLE),
+            ("ObjectName", ctypes.POINTER(UnicodeString)),
+            ("Attributes", wintypes.ULONG),
+            ("SecurityDescriptor", ctypes.c_void_p),
+            ("SecurityQualityOfService", ctypes.c_void_p),
+        ]
+
+    class IoStatusBlock(ctypes.Structure):
+        _fields_ = [
+            ("Status", ctypes.c_void_p),
+            ("Information", ctypes.c_size_t),
+        ]
+
+    file_directory_file = 0x00000001
+    file_non_directory_file = 0x00000040
+    file_open = 0x00000001
+    file_open_if = 0x00000003
+    file_open_reparse_point = 0x00200000
+    file_read_attributes = 0x00000080
+    file_share_all = 0x00000007
+    file_synchronous_io_nonalert = 0x00000020
+    generic_read = 0x80000000
+    generic_write = 0x40000000
+    obj_case_insensitive = 0x00000040
+    synchronize = 0x00100000
+
+    buffer = ctypes.create_unicode_buffer(name)
+    unicode_name = UnicodeString(
+        Length=len(name.encode("utf-16-le")),
+        MaximumLength=(len(name) + 1) * 2,
+        Buffer=ctypes.cast(buffer, wintypes.LPWSTR),
+    )
+    attributes = ObjectAttributes(
+        Length=ctypes.sizeof(ObjectAttributes),
+        RootDirectory=parent_handle,
+        ObjectName=ctypes.pointer(unicode_name),
+        Attributes=obj_case_insensitive,
+        SecurityDescriptor=None,
+        SecurityQualityOfService=None,
+    )
+    io_status = IoStatusBlock()
+    if operation == "directory":
+        access = file_read_attributes | synchronize
+        disposition = file_open
+        options = (
+            file_directory_file
+            | file_open_reparse_point
+            | file_synchronous_io_nonalert
+        )
+    else:
+        access = generic_read | synchronize
+        if operation == "write":
+            access |= generic_write
+        disposition = file_open if operation == "read" else file_open_if
+        options = (
+            file_non_directory_file
+            | file_open_reparse_point
+            | file_synchronous_io_nonalert
+        )
+
+    handle = wintypes.HANDLE()
+    nt_create_file = ctypes.windll.ntdll.NtCreateFile
+    nt_create_file.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE),
+        wintypes.ULONG,
+        ctypes.POINTER(ObjectAttributes),
+        ctypes.POINTER(IoStatusBlock),
+        ctypes.c_void_p,
+        wintypes.ULONG,
+        wintypes.ULONG,
+        wintypes.ULONG,
+        wintypes.ULONG,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+    nt_create_file.restype = wintypes.LONG
+    status = nt_create_file(
+        ctypes.byref(handle),
+        access,
+        ctypes.byref(attributes),
+        ctypes.byref(io_status),
+        None,
+        0,
+        file_share_all,
+        disposition,
+        options,
+        None,
+        0,
+    )
+    if status < 0:
+        error_code = ctypes.windll.ntdll.RtlNtStatusToDosError(status)
+        raise OSError(error_code, ctypes.FormatError(error_code), name)
+    return handle
+
+
+def _windows_handle_attributes(handle: Any) -> int:
+    import ctypes
+    from ctypes import wintypes
+
+    class FileAttributeTagInfo(ctypes.Structure):
+        _fields_ = [
+            ("FileAttributes", wintypes.DWORD),
+            ("ReparseTag", wintypes.DWORD),
+        ]
+
+    value = FileAttributeTagInfo()
+    get_information = ctypes.windll.kernel32.GetFileInformationByHandleEx
+    get_information.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    get_information.restype = wintypes.BOOL
+    if not get_information(
+        handle,
+        9,
+        ctypes.byref(value),
+        ctypes.sizeof(value),
+    ):
+        raise ctypes.WinError()
+    return value.FileAttributes
 
 
 def _open_handle_path(descriptor: int) -> Path:
