@@ -226,7 +226,11 @@ def test_explicit_trusted_control_plane_callers_can_read(
 
 @pytest.mark.parametrize(
     "path",
-    ["../outside.txt", "nested/../../outside.txt", str(Path("C:/outside.txt"))],
+    [
+        "../outside.txt",
+        "nested/../../outside.txt",
+        (r"C:\\outside.txt" if os.name == "nt" else "/outside.txt"),
+    ],
 )
 def test_path_traversal_and_absolute_paths_are_denied(
     tmp_path: Path, path: str
