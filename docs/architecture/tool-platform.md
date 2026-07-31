@@ -544,14 +544,21 @@ Individual Tool implementations remain interchangeable.
 
 # 21. Docker Validation Adapter
 
-The Docker validation adapter accepts an explicit image, ordered command
+The Docker validation adapter accepts a digest-pinned image, ordered command
 arguments, workspace bind mount, invocation timeout, and CPU and memory limits.
 It requires the `docker.run` capability to pass the shared Pre-Execution
 Capability Policy hook before provisioning begins.
 
-The adapter delegates container operations to an injectable executor. The
-executor exposes bounded wait, terminate, kill, and cleanup operations so the
-Tool Runtime retains lifecycle control, plus startup cleanup for partially
+Before startup, the adapter canonicalizes the requested mount source and
+requires it to remain within its configured authorized workspace root after
+traversal and symlink resolution. The container destination is fixed at
+`/workspace`.
+
+The production Docker CLI executor creates one invocation-scoped container with
+the authorized mount and configured CPU and memory limits. Its process and log
+storage boundaries remain injectable for daemon-independent tests. The executor
+exposes bounded wait, terminate, kill, and cleanup operations so the Tool
+Runtime retains lifecycle control, plus startup cleanup for partially
 provisioned resources. Each command result records its arguments, stdout,
 stderr, exit code, duration, and logs reference. Startup, timeout, and
 nonzero-exit failures are classified separately. These records are execution

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
+import subprocess
+from time import monotonic
 from typing import Any
+from uuid import uuid4
 
 from aep.tool_runtime import (
     JsonSchemaToolValidator,
@@ -21,13 +27,15 @@ from aep.tool_runtime import (
 
 
 DOCKER_RUN_CAPABILITY = "docker.run"
+DOCKER_WORKSPACE_DESTINATION = "/workspace"
+IMAGE_DIGEST_PATTERN = r"^[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$"
 
 DOCKER_VALIDATION_INPUT_SCHEMA: Mapping[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["image", "commands", "workspaceMount", "resources"],
     "properties": {
-        "image": {"type": "string", "minLength": 1},
+        "image": {"type": "string", "pattern": IMAGE_DIGEST_PATTERN},
         "commands": {
             "type": "array",
             "minItems": 1,
@@ -264,11 +272,203 @@ class DockerExecutor(ABC):
         """Remove resources left by an unsuccessful provisioning attempt."""
 
 
+@dataclass(frozen=True)
+class DockerProcessResult:
+    stdout: str
+    stderr: str
+    exit_code: int
+    duration_ms: int
+
+
+class DockerProcessBoundary(ABC):
+    """Injectable boundary around Docker CLI process execution."""
+
+    @abstractmethod
+    def run(
+        self, argv: Sequence[str], timeout_ms: int
+    ) -> DockerProcessResult | None:
+        """Run a Docker CLI command, returning None on timeout."""
+
+
+class SubprocessDockerProcessBoundary(DockerProcessBoundary):
+    """Production Docker CLI process boundary."""
+
+    def run(
+        self, argv: Sequence[str], timeout_ms: int
+    ) -> DockerProcessResult | None:
+        started = monotonic()
+        try:
+            completed = subprocess.run(
+                list(argv),
+                capture_output=True,
+                text=True,
+                timeout=timeout_ms / 1000,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        return DockerProcessResult(
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            exit_code=completed.returncode,
+            duration_ms=max(0, round((monotonic() - started) * 1000)),
+        )
+
+
+class DockerLogStore(ABC):
+    @abstractmethod
+    def write(self, content: str) -> str:
+        """Persist logs and return their content address."""
+
+
+class ContentAddressedDockerLogStore(DockerLogStore):
+    """Filesystem-backed content-addressed Docker log storage."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+        self._root.mkdir(parents=True, exist_ok=True)
+
+    def write(self, content: str) -> str:
+        encoded = content.encode("utf-8")
+        digest = sha256(encoded).hexdigest()
+        path = self._root / digest
+        if not path.exists():
+            path.write_bytes(encoded)
+        return f"sha256:{digest}"
+
+
+class DockerCliExecutor(DockerExecutor):
+    """Production-capable invocation-scoped Docker CLI executor."""
+
+    def __init__(
+        self, process: DockerProcessBoundary, logs: DockerLogStore
+    ) -> None:
+        self._process = process
+        self._logs = logs
+
+    def start(self, configuration: DockerRunConfiguration) -> DockerExecution:
+        container_name = f"aep-validation-{uuid4().hex}"
+        deadline = monotonic() + configuration.timeout_ms / 1000
+
+        def remaining_ms() -> int:
+            return max(1, round((deadline - monotonic()) * 1000))
+
+        mount = configuration.workspace_mount
+        mount_spec = (
+            f"type=bind,src={mount.host_path},dst={mount.container_path}"
+            + (",readonly" if mount.read_only else "")
+        )
+        create = [
+            "docker", "create", "--name", container_name,
+            "--cpus", str(configuration.resources.cpu_limit),
+            "--memory", str(configuration.resources.memory_bytes),
+            "--mount", mount_spec, configuration.image, "sleep", "infinity",
+        ]
+        try:
+            created = self._process.run(create, remaining_ms())
+            if created is None:
+                raise DockerStartupError("Docker create timed out")
+            if created.exit_code != 0:
+                raise DockerStartupError(
+                    f"Docker create failed: {created.stderr.strip()}"
+                )
+            started = self._process.run(
+                ["docker", "start", container_name], remaining_ms()
+            )
+            if started is None:
+                raise DockerStartupError("Docker start timed out")
+            if started.exit_code != 0:
+                raise DockerStartupError(
+                    f"Docker start failed: {started.stderr.strip()}"
+                )
+        except Exception:
+            self._process.run(
+                ["docker", "rm", "-f", container_name],
+                min(configuration.timeout_ms, 5_000),
+            )
+            raise
+        return _DockerCliExecution(
+            configuration, container_name, self._process, self._logs
+        )
+
+    def cleanup_startup(self) -> None:
+        # Invocation-scoped cleanup is performed inside start while the name is known.
+        return None
+
+
+class _DockerCliExecution(DockerExecution):
+    def __init__(
+        self,
+        configuration: DockerRunConfiguration,
+        container_name: str,
+        process: DockerProcessBoundary,
+        logs: DockerLogStore,
+    ) -> None:
+        self._configuration = configuration
+        self._name = container_name
+        self._process = process
+        self._logs = logs
+        self._timed_out = False
+
+    def wait(self, timeout_ms: int) -> DockerExecutionResult | None:
+        if self._timed_out:
+            return None
+        started_at = datetime.now(UTC)
+        deadline = monotonic() + timeout_ms / 1000
+        evidence: list[DockerCommandResult] = []
+        combined: list[str] = []
+        for command in self._configuration.commands:
+            remaining_ms = max(0, round((deadline - monotonic()) * 1000))
+            if remaining_ms < 1:
+                self._timed_out = True
+                return None
+            result = self._process.run(
+                ["docker", "exec", self._name, *command], remaining_ms
+            )
+            if result is None:
+                self._timed_out = True
+                return None
+            content = f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            combined.append(content)
+            evidence.append(
+                DockerCommandResult(
+                    argv=command,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    exit_code=result.exit_code,
+                    duration_ms=result.duration_ms,
+                    logs_ref=self._logs.write(content),
+                )
+            )
+            if result.exit_code != 0:
+                break
+        return DockerExecutionResult(
+            commands=tuple(evidence),
+            logs_ref=self._logs.write("\n".join(combined)),
+            started_at=started_at.isoformat().replace("+00:00", "Z"),
+            completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+
+    def terminate(self) -> None:
+        self._process.run(["docker", "stop", self._name], 5_000)
+
+    def kill(self) -> None:
+        self._process.run(["docker", "kill", self._name], 5_000)
+
+    def cleanup(self) -> None:
+        result = self._process.run(["docker", "rm", "-f", self._name], 5_000)
+        if result is None or result.exit_code != 0:
+            raise RuntimeError("Docker container cleanup failed")
+
+
 class DockerValidationAdapter(ToolAdapter):
     """Translate Docker validation requests into normalized Tool evidence."""
 
-    def __init__(self, executor: DockerExecutor) -> None:
+    def __init__(self, executor: DockerExecutor, authorized_workspace_root: Path) -> None:
         self._executor = executor
+        self._workspace_root = authorized_workspace_root.resolve(strict=True)
+        if not self._workspace_root.is_dir():
+            raise ValueError("authorized_workspace_root must be a directory")
 
     def start(self, request: ToolRequest) -> ToolExecution:
         if DOCKER_RUN_CAPABILITY not in request.capabilities:
@@ -277,12 +477,25 @@ class DockerValidationAdapter(ToolAdapter):
             )
         value = request.input
         mount = value["workspaceMount"]
+        if mount["containerPath"] != DOCKER_WORKSPACE_DESTINATION:
+            raise DockerStartupError(
+                f"containerPath must be {DOCKER_WORKSPACE_DESTINATION}"
+            )
+        try:
+            host_path = Path(mount["hostPath"]).resolve(strict=True)
+            host_path.relative_to(self._workspace_root)
+        except (OSError, ValueError) as error:
+            raise DockerStartupError(
+                "workspace mount must resolve within the authorized workspace root"
+            ) from error
+        if not host_path.is_dir():
+            raise DockerStartupError("workspace mount hostPath must be a directory")
         resources = value["resources"]
         configuration = DockerRunConfiguration(
             image=value["image"],
             commands=tuple(tuple(command["argv"]) for command in value["commands"]),
             workspace_mount=DockerWorkspaceMount(
-                host_path=mount["hostPath"],
+                host_path=str(host_path),
                 container_path=mount["containerPath"],
                 read_only=mount["readOnly"],
             ),

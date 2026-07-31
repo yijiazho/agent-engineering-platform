@@ -98,7 +98,8 @@ Implemented foundations currently include:
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
 * Deterministic pre-execution capability policy with persisted decisions.
-* Policy-gated Docker validation with per-command execution evidence.
+* Policy-gated, workspace-scoped Docker validation with digest-pinned images
+  and per-command execution evidence.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.

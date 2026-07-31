@@ -34,9 +34,13 @@ Implement a Docker validation Tool adapter that:
 ## Implementation
 
 `src/aep/docker_validation_tool.py` implements the Docker validation adapter
-over an injectable `DockerExecutor`. Its JSON Schema contract requires an
-explicit image, ordered command arguments, workspace bind mount, CPU and memory
-limits, while the shared `ToolRequest` supplies the invocation timeout. The
+and a production-capable Docker CLI executor over injectable process and log
+storage boundaries. Its JSON Schema contract requires a digest-pinned image,
+ordered command arguments, workspace bind mount, CPU and memory limits, while
+the shared `ToolRequest` supplies the invocation timeout. The mount source must
+resolve within the adapter's canonical authorized workspace root, including
+after symlink resolution, and the container destination is fixed at
+`/workspace`. The
 adapter refuses to start without the `docker.run` capability, so the shared
 Tool Runtime authorization hook must authorize that capability before the
 executor is called.
@@ -53,4 +57,6 @@ expectations.
 deterministic request fixture. It covers successful evidence capture, nonzero
 exit, timeout termination and cleanup, policy denial before startup, startup
 failure, the mandatory capability, and invalid input boundaries without
-requiring a Docker daemon.
+requiring a Docker daemon. Docker CLI construction, invocation-scoped
+containers, mount and resource arguments, evidence, and cleanup are tested
+through a fake process boundary.

@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -13,6 +15,10 @@ from aep.docker_validation_tool import (
     DockerExecution,
     DockerExecutionResult,
     DockerExecutor,
+    DockerCliExecutor,
+    DockerLogStore,
+    DockerProcessBoundary,
+    DockerProcessResult,
     DockerRunConfiguration,
     DockerValidationAdapter,
     docker_validation_validator,
@@ -32,8 +38,19 @@ FIXTURE = (
 )
 
 
-def request(*, capabilities: tuple[str, ...] = ("docker.run",)) -> ToolRequest:
+def request(
+    *,
+    capabilities: tuple[str, ...] = ("docker.run",),
+    workspace_host: Path | None = None,
+    image: str | None = None,
+    container_path: str | None = None,
+) -> ToolRequest:
     value = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    value["input"]["workspaceMount"]["hostPath"] = str(workspace_host or Path.cwd())
+    if image is not None:
+        value["input"]["image"] = image
+    if container_path is not None:
+        value["input"]["workspaceMount"]["containerPath"] = container_path
     return ToolRequest(
         tool_ref=value["toolRef"],
         input=value["input"],
@@ -108,12 +125,31 @@ class FakeDockerExecutor(DockerExecutor):
         self.startup_cleaned_up = True
 
 
+class FakeProcessBoundary(DockerProcessBoundary):
+    def __init__(self, results: list[DockerProcessResult | None]) -> None:
+        self.results = list(results)
+        self.calls: list[tuple[tuple[str, ...], int]] = []
+
+    def run(self, argv, timeout_ms):
+        self.calls.append((tuple(argv), timeout_ms))
+        return self.results.pop(0)
+
+
+class FakeLogStore(DockerLogStore):
+    def __init__(self) -> None:
+        self.contents: list[str] = []
+
+    def write(self, content: str) -> str:
+        self.contents.append(content)
+        return "sha256:" + f"{len(self.contents):064x}"
+
+
 def invoke(executor: DockerExecutor, *, authorize=lambda _: True, tool_request=None):
     return invoke_tool(
         tool_request or request(),
         validator=docker_validation_validator(),
         authorize=authorize,
-        adapter=DockerValidationAdapter(executor),
+        adapter=DockerValidationAdapter(executor, Path.cwd()),
     )
 
 
@@ -142,6 +178,47 @@ def test_pass_captures_configuration_and_command_evidence() -> None:
     assert configuration.resources.cpu_limit == 2
     assert configuration.resources.memory_bytes == 536_870_912
     assert executor.execution.cleaned_up is True
+
+
+def test_concrete_cli_executor_builds_scoped_container_and_evidence() -> None:
+    ok = DockerProcessResult("", "", 0, 2)
+    process = FakeProcessBoundary(
+        [
+            ok,
+            ok,
+            DockerProcessResult("passed\n", "", 0, 18),
+            ok,
+        ]
+    )
+    logs = FakeLogStore()
+    result = invoke(DockerCliExecutor(process, logs))
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    create = process.calls[0][0]
+    assert create[:3] == ("docker", "create", "--name")
+    assert create[3].startswith("aep-validation-")
+    assert "--cpus" in create and "--memory" in create and "--mount" in create
+    assert str(Path.cwd().resolve()) in create[create.index("--mount") + 1]
+    assert process.calls[1][0] == ("docker", "start", create[3])
+    assert process.calls[2][0] == (
+        "docker", "exec", create[3], "python", "-m", "pytest"
+    )
+    assert process.calls[3][0] == ("docker", "rm", "-f", create[3])
+    assert result.output["commands"][0]["stdout"] == "passed\n"
+    assert len(logs.contents) == 2
+
+
+def test_concrete_cli_executor_timeout_is_stopped_killed_and_removed() -> None:
+    ok = DockerProcessResult("", "", 0, 1)
+    process = FakeProcessBoundary([ok, ok, None, ok, ok, ok])
+
+    result = invoke(DockerCliExecutor(process, FakeLogStore()))
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    name = process.calls[0][0][3]
+    assert process.calls[3][0] == ("docker", "stop", name)
+    assert process.calls[4][0] == ("docker", "kill", name)
+    assert process.calls[5][0] == ("docker", "rm", "-f", name)
 
 
 def test_nonzero_exit_is_classified_without_interpreting_acceptance() -> None:
@@ -234,6 +311,72 @@ def test_docker_run_capability_is_required_even_with_an_allowing_hook() -> None:
 
 
 @pytest.mark.parametrize(
+    "image",
+    ["python:3.12", "python", "sha256:" + "a" * 64, "python@sha256:ABC"],
+)
+def test_image_must_be_digest_pinned(image: str) -> None:
+    executor = FakeDockerExecutor(outcome())
+    result = invoke(executor, tool_request=request(image=image))
+
+    assert result.failure_class is ToolFailureClass.VALIDATION
+    assert executor.configurations == []
+
+
+def test_mount_outside_authorized_workspace_is_denied() -> None:
+    executor = FakeDockerExecutor(outcome())
+    result = invoke(
+        executor,
+        tool_request=request(workspace_host=Path.cwd().parent),
+    )
+
+    assert result.failure_class is ToolFailureClass.STARTUP
+    assert executor.configurations == []
+
+
+def test_noncanonical_container_destination_is_denied() -> None:
+    executor = FakeDockerExecutor(outcome())
+    result = invoke(
+        executor,
+        tool_request=request(container_path="/host"),
+    )
+
+    assert result.failure_class is ToolFailureClass.STARTUP
+    assert executor.configurations == []
+
+
+def test_symlink_escape_from_authorized_workspace_is_denied(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    link = root / "escape"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        if os.name != "nt":
+            pytest.skip(f"directory symlinks unavailable: {error}")
+        junction = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(outside)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if junction.returncode != 0:
+            pytest.skip(f"directory links unavailable: {junction.stderr}")
+    executor = FakeDockerExecutor(outcome())
+
+    result = invoke_tool(
+        request(workspace_host=link),
+        validator=docker_validation_validator(),
+        authorize=lambda _: True,
+        adapter=DockerValidationAdapter(executor, root),
+    )
+
+    assert result.failure_class is ToolFailureClass.STARTUP
+    assert executor.configurations == []
+
+
+@pytest.mark.parametrize(
     ("path", "value"),
     [
         (("image",), ""),
@@ -247,6 +390,7 @@ def test_invalid_configuration_is_rejected_before_policy_and_execution(
     path: tuple[str, ...], value
 ) -> None:
     raw = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    raw["input"]["workspaceMount"]["hostPath"] = str(Path.cwd())
     target = raw["input"]
     for key in path[:-1]:
         target = target[key]
