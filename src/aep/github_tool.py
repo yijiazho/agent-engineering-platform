@@ -1,11 +1,12 @@
-"""GitHub Tool adapter with explicit publication and capability gates."""
+"""GitHub Tool adapter with trusted publication evidence and bounded execution."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any, Protocol
 
 from aep.tool_runtime import (
@@ -28,7 +29,12 @@ CREATE_PULL_REQUEST = "createPullRequest"
 READ_CAPABILITY = "github.issue.read"
 CREATE_PR_CAPABILITY = "github.create_pr"
 
-
+_ID_LIST = {
+    "type": "array",
+    "minItems": 1,
+    "uniqueItems": True,
+    "items": {"type": "string", "minLength": 1},
+}
 GITHUB_INPUT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -51,8 +57,7 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
                 "base",
                 "title",
                 "body",
-                "technicalEvaluation",
-                "publicationPolicy",
+                "publicationEvidence",
             ],
             "properties": {
                 "operation": {"const": CREATE_PULL_REQUEST},
@@ -62,37 +67,24 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
                 "title": {"type": "string", "minLength": 1},
                 "body": {"type": "string"},
                 "issueNumber": {"type": "integer", "minimum": 1},
-                "technicalEvaluation": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "required": ["outcome", "evaluationResultIds", "traceId"],
-                    "properties": {
-                        "outcome": {"enum": ["PASS", "FAIL"]},
-                        "evaluationResultIds": {
-                            "type": "array",
-                            "minItems": 1,
-                            "uniqueItems": True,
-                            "items": {"type": "string", "minLength": 1},
-                        },
-                        "traceId": {"type": "string", "minLength": 1},
-                    },
-                },
-                "publicationPolicy": {
+                "publicationEvidence": {
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "decision",
                         "policyDecisionId",
-                        "action",
-                        "traceId",
+                        "taskExecutionId",
+                        "workflowExecutionId",
+                        "repositoryRevision",
+                        "evaluationResultIds",
+                        "generatedArtifactIds",
                     ],
                     "properties": {
-                        "decision": {
-                            "enum": ["ALLOW", "DENY", "REQUIRE_APPROVAL"]
-                        },
                         "policyDecisionId": {"type": "string", "minLength": 1},
-                        "action": {"const": CREATE_PR_CAPABILITY},
-                        "traceId": {"type": "string", "minLength": 1},
+                        "taskExecutionId": {"type": "string", "minLength": 1},
+                        "workflowExecutionId": {"type": "string", "minLength": 1},
+                        "repositoryRevision": {"type": "string", "minLength": 7},
+                        "evaluationResultIds": deepcopy(_ID_LIST),
+                        "generatedArtifactIds": deepcopy(_ID_LIST),
                     },
                 },
             },
@@ -100,18 +92,39 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
     ],
 }
 
-
+_ATTEMPT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "attempt",
+        "providerRequestId",
+        "classification",
+        "retryable",
+        "retryAfterMs",
+        "outcome",
+    ],
+    "properties": {
+        "attempt": {"type": "integer", "minimum": 1},
+        "providerRequestId": {"type": ["string", "null"]},
+        "classification": {
+            "enum": ["SUCCESS", "RATE_LIMIT", "PROVIDER", "TIMEOUT"]
+        },
+        "retryable": {"type": "boolean"},
+        "retryAfterMs": {"type": ["integer", "null"], "minimum": 0},
+        "outcome": {"enum": ["SUCCEEDED", "FAILED", "TIMED_OUT"]},
+    },
+}
 _METADATA_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["traceId", "providerRequestId", "attemptCount"],
+    "required": ["traceId", "providerRequestId", "attemptCount", "attempts"],
     "properties": {
         "traceId": {"type": "string", "minLength": 1},
         "providerRequestId": {"type": ["string", "null"]},
         "attemptCount": {"type": "integer", "minimum": 1},
+        "attempts": {"type": "array", "minItems": 1, "items": _ATTEMPT_SCHEMA},
     },
 }
-
 GITHUB_OUTPUT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -141,10 +154,7 @@ GITHUB_OUTPUT_SCHEMA: dict[str, Any] = {
                         "state": {"type": "string"},
                         "url": {"type": "string", "minLength": 1},
                         "author": {"type": ["string", "null"]},
-                        "labels": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
+                        "labels": {"type": "array", "items": {"type": "string"}},
                     },
                 },
                 "metadata": _METADATA_SCHEMA,
@@ -174,13 +184,26 @@ GITHUB_OUTPUT_SCHEMA: dict[str, Any] = {
 }
 
 
+class GitHubProviderOperation(Protocol):
+    """Cancellable provider operation, normally backed by an isolated process."""
+
+    def wait(self, timeout_ms: int) -> JsonObject | Exception | None: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+    def cleanup(self) -> None: ...
+
+
 class GitHubClient(Protocol):
-    """Provider-neutral client boundary implemented by a GitHub integration."""
+    """Client boundary whose start methods must return before network work blocks."""
 
-    def read_issue(self, repository: str, issue_number: int) -> JsonObject:
-        """Return provider issue data and an optional ``requestId``."""
+    def start_read_issue(
+        self, repository: str, issue_number: int
+    ) -> GitHubProviderOperation: ...
 
-    def create_pull_request(
+    def start_create_pull_request(
         self,
         repository: str,
         *,
@@ -188,13 +211,10 @@ class GitHubClient(Protocol):
         base: str,
         title: str,
         body: str,
-    ) -> JsonObject:
-        """Create a pull request and return provider data."""
+    ) -> GitHubProviderOperation: ...
 
 
 class GitHubProviderError(RuntimeError):
-    """Provider failure carrying stable retry and request metadata."""
-
     def __init__(
         self,
         message: str,
@@ -225,80 +245,290 @@ class GitHubRateLimitError(GitHubProviderError):
         )
 
 
-@dataclass
-class _CompletedExecution(ToolExecution):
-    result: ToolResult
-    cleaned_up: bool = False
+@dataclass(frozen=True)
+class PublicationVerification:
+    allowed: bool
+    reason: str
 
-    def wait(self, timeout_ms: int) -> ToolResult:
-        return self.result
 
-    def terminate(self) -> None:
-        return None
+class PublicationPolicyVerifier(Protocol):
+    """Trusted boundary resolving immutable publication and evaluation evidence."""
 
-    def kill(self) -> None:
-        return None
+    def verify(self, request: ToolRequest) -> PublicationVerification: ...
 
-    def cleanup(self) -> None:
-        self.cleaned_up = True
+
+class PersistedPublicationPolicyVerifier:
+    """Verify a publication decision and its complete persisted evidence graph."""
+
+    def __init__(self, resolve: Callable[[str], JsonObject | None]) -> None:
+        self._resolve = resolve
+
+    def verify(self, request: ToolRequest) -> PublicationVerification:
+        evidence = request.input["publicationEvidence"]
+        if (
+            request.caller.kind != "TaskExecution"
+            or request.caller.id != evidence["taskExecutionId"]
+        ):
+            return PublicationVerification(False, "Publication task identity mismatch")
+        artifacts = self._resolve_many(evidence["generatedArtifactIds"])
+        evaluations = self._resolve_many(evidence["evaluationResultIds"])
+        policy = self._resolve(evidence["policyDecisionId"])
+        if policy is None:
+            return PublicationVerification(False, "Publication Policy decision not found")
+
+        common = {
+            "traceId": request.trace_id,
+            "taskExecutionId": evidence["taskExecutionId"],
+        }
+        workflow_id = evidence["workflowExecutionId"]
+        revision = evidence["repositoryRevision"]
+        artifact_ids = tuple(evidence["generatedArtifactIds"])
+        evaluation_ids = tuple(evidence["evaluationResultIds"])
+
+        for artifact_id, artifact in zip(artifact_ids, artifacts, strict=True):
+            if not _matches(artifact, kind="GeneratedArtifact", id=artifact_id, **common):
+                return PublicationVerification(False, "GeneratedArtifact identity mismatch")
+            if artifact.get("repositoryRevision") != revision:
+                return PublicationVerification(False, "GeneratedArtifact revision mismatch")
+            if artifact.get("provenance", {}).get("workflowExecutionId") != workflow_id:
+                return PublicationVerification(False, "GeneratedArtifact workflow mismatch")
+            if set(artifact.get("evaluationResultIds", ())) != set(evaluation_ids):
+                return PublicationVerification(
+                    False, "GeneratedArtifact evaluation binding mismatch"
+                )
+
+        for evaluation_id, evaluation in zip(
+            evaluation_ids, evaluations, strict=True
+        ):
+            if not _matches(
+                evaluation, kind="EvaluationResult", id=evaluation_id, **common
+            ):
+                return PublicationVerification(False, "EvaluationResult identity mismatch")
+            if evaluation.get("status") != "SUCCEEDED" or evaluation.get("outcome") != "PASS":
+                return PublicationVerification(False, "Technical evaluation did not pass")
+            if evaluation.get("provenance", {}).get("workflowExecutionId") != workflow_id:
+                return PublicationVerification(False, "EvaluationResult workflow mismatch")
+            if evaluation.get("target", {}).get("id") not in artifact_ids:
+                return PublicationVerification(False, "EvaluationResult artifact mismatch")
+
+        expected_policy = {
+            "kind": "PolicyDecision",
+            "id": evidence["policyDecisionId"],
+            "traceId": request.trace_id,
+            "taskExecutionId": evidence["taskExecutionId"],
+            "gate": "PUBLICATION",
+            "action": CREATE_PR_CAPABILITY,
+            "decision": "ALLOW",
+            "repositoryRevision": revision,
+        }
+        if any(policy.get(key) != value for key, value in expected_policy.items()):
+            return PublicationVerification(False, "Publication Policy evidence mismatch")
+        if set(policy.get("evaluationResultIds", ())) != set(evaluation_ids):
+            return PublicationVerification(False, "Publication evaluation binding mismatch")
+        if set(policy.get("generatedArtifactIds", ())) != set(artifact_ids):
+            return PublicationVerification(False, "Publication artifact binding mismatch")
+        provenance = policy.get("provenance", {})
+        if provenance.get("workflowExecutionId") != workflow_id:
+            return PublicationVerification(False, "Publication Policy workflow mismatch")
+        scope = policy.get("resourceScope", {})
+        if scope.get("repository") != request.input["repository"]:
+            return PublicationVerification(False, "Publication Policy repository mismatch")
+        return PublicationVerification(True, policy.get("reason", "Publication allowed"))
+
+    def _resolve_many(self, ids: Sequence[str]) -> list[JsonObject]:
+        values: list[JsonObject] = []
+        for runtime_id in ids:
+            value = self._resolve(runtime_id)
+            if value is None:
+                return [{} for _ in ids]
+            values.append(value)
+        return values
+
+
+def _matches(value: JsonObject, **expected: Any) -> bool:
+    return all(value.get(key) == item for key, item in expected.items())
 
 
 class GitHubToolAdapter(ToolAdapter):
-    """Execute structured GitHub operations against an injected client."""
+    """Create a cancellable Tool execution over an injected GitHub client."""
 
-    def __init__(self, client: GitHubClient, *, max_read_attempts: int = 2) -> None:
+    def __init__(
+        self,
+        client: GitHubClient,
+        *,
+        max_read_attempts: int = 2,
+        clock: Callable[[], float] = monotonic,
+        wait_retry: Callable[[int], None] | None = None,
+    ) -> None:
         if max_read_attempts < 1:
             raise ValueError("max_read_attempts must be positive")
         self._client = client
         self._max_read_attempts = max_read_attempts
+        self._clock = clock
+        self._wait_retry = wait_retry or (lambda ms: sleep(ms / 1000))
 
     def start(self, request: ToolRequest) -> ToolExecution:
-        started_at = datetime.now(UTC)
-        started_clock = monotonic()
-        operation = request.input["operation"]
-        attempts = self._max_read_attempts if operation == READ_ISSUE else 1
+        return _GitHubExecution(
+            request,
+            self._client,
+            self._max_read_attempts,
+            self._clock,
+            self._wait_retry,
+        )
 
-        for attempt in range(1, attempts + 1):
+
+class _GitHubExecution(ToolExecution):
+    def __init__(
+        self,
+        request: ToolRequest,
+        client: GitHubClient,
+        max_read_attempts: int,
+        clock: Callable[[], float],
+        wait_retry: Callable[[int], None],
+    ) -> None:
+        self._request = request
+        self._client = client
+        self._max_attempts = (
+            max_read_attempts
+            if request.input["operation"] == READ_ISSUE
+            else 1
+        )
+        self._clock = clock
+        self._wait_retry = wait_retry
+        self._current: GitHubProviderOperation | None = None
+        self._current_pending = False
+        self._operations: list[GitHubProviderOperation] = []
+        self._attempts: list[dict[str, Any]] = []
+        self._started_at = datetime.now(UTC)
+        self._started_clock = clock()
+
+    def wait(self, timeout_ms: int) -> ToolResult | None:
+        deadline = self._clock() + timeout_ms / 1000
+        for attempt in range(len(self._attempts) + 1, self._max_attempts + 1):
+            remaining_ms = max(0, int((deadline - self._clock()) * 1000))
+            if remaining_ms < 1:
+                return None
             try:
-                if operation == READ_ISSUE:
-                    provider = self._client.read_issue(
-                        request.input["repository"], request.input["issueNumber"]
-                    )
-                    output = _issue_output(request, provider, attempt)
-                else:
-                    provider = self._client.create_pull_request(
-                        request.input["repository"],
-                        head=request.input["head"],
-                        base=request.input["base"],
-                        title=request.input["title"],
-                        body=request.input["body"],
-                    )
-                    output = _pull_request_output(request, provider, attempt)
-                return _CompletedExecution(
-                    _result(
-                        started_at,
-                        started_clock,
-                        ToolResultStatus.SUCCEEDED,
-                        output,
-                    )
-                )
-            except GitHubProviderError as error:
-                if error.retryable and attempt < attempts:
-                    continue
-                return _CompletedExecution(
-                    _provider_failure(
-                        request, started_at, started_clock, error, attempt
-                    )
-                )
+                if not self._current_pending:
+                    self._current = self._start_operation()
+                    self._operations.append(self._current)
+                    self._current_pending = True
+                outcome = self._current.wait(remaining_ms)
             except Exception as error:
-                normalized = GitHubProviderError(str(error) or type(error).__name__)
-                return _CompletedExecution(
-                    _provider_failure(
-                        request, started_at, started_clock, normalized, attempt
-                    )
+                outcome = error
+            if outcome is None:
+                return None
+            self._current_pending = False
+            if isinstance(outcome, Exception):
+                error = (
+                    outcome
+                    if isinstance(outcome, GitHubProviderError)
+                    else GitHubProviderError(str(outcome) or type(outcome).__name__)
                 )
-
+                record = _attempt_record(attempt, error)
+                self._attempts.append(record)
+                if error.retryable and attempt < self._max_attempts:
+                    retry_after = error.retry_after_ms or 0
+                    remaining_ms = max(0, int((deadline - self._clock()) * 1000))
+                    if retry_after >= remaining_ms:
+                        return self._failure(error)
+                    self._wait_retry(retry_after)
+                    continue
+                return self._failure(error)
+            request_id = (
+                outcome.get("requestId")
+                if isinstance(outcome.get("requestId"), str)
+                else None
+            )
+            self._attempts.append(
+                {
+                    "attempt": attempt,
+                    "providerRequestId": request_id,
+                    "classification": "SUCCESS",
+                    "retryable": False,
+                    "retryAfterMs": None,
+                    "outcome": "SUCCEEDED",
+                }
+            )
+            output = (
+                _issue_output(self._request, outcome, self._attempts)
+                if self._request.input["operation"] == READ_ISSUE
+                else _pull_request_output(self._request, outcome, self._attempts)
+            )
+            return self._result(ToolResultStatus.SUCCEEDED, output)
         raise AssertionError("GitHub attempt loop did not return")
+
+    def terminate(self) -> None:
+        if self._current is not None:
+            self._current.terminate()
+
+    def kill(self) -> None:
+        if self._current is not None:
+            self._current.kill()
+
+    def cleanup(self) -> None:
+        for operation in self._operations:
+            operation.cleanup()
+
+    def _start_operation(self) -> GitHubProviderOperation:
+        value = self._request.input
+        if value["operation"] == READ_ISSUE:
+            return self._client.start_read_issue(
+                value["repository"], value["issueNumber"]
+            )
+        return self._client.start_create_pull_request(
+            value["repository"],
+            head=value["head"],
+            base=value["base"],
+            title=value["title"],
+            body=value["body"],
+        )
+
+    def _failure(self, error: GitHubProviderError) -> ToolResult:
+        category = (
+            "RATE_LIMIT" if isinstance(error, GitHubRateLimitError) else "PROVIDER"
+        )
+        return self._result(
+            ToolResultStatus.FAILED,
+            {
+                "operation": self._request.input["operation"],
+                "repository": self._request.input["repository"],
+                "failure": {
+                    "category": category,
+                    "retryable": error.retryable,
+                    "retryAfterMs": error.retry_after_ms,
+                    "attemptCount": len(self._attempts),
+                    "providerRequestId": error.request_id,
+                    "traceId": self._request.trace_id,
+                    "attempts": deepcopy(self._attempts),
+                },
+            },
+            failure_class=ToolFailureClass.ADAPTER,
+            failure_message=str(error),
+        )
+
+    def _result(
+        self,
+        status: ToolResultStatus,
+        output: Any,
+        *,
+        failure_class: ToolFailureClass | None = None,
+        failure_message: str | None = None,
+    ) -> ToolResult:
+        return ToolResult(
+            status=status,
+            output=output,
+            logs_ref=None,
+            metrics=ToolMetrics(
+                duration_ms=max(
+                    0, round((self._clock() - self._started_clock) * 1000)
+                )
+            ),
+            started_at=self._started_at.isoformat().replace("+00:00", "Z"),
+            completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            failure_class=failure_class,
+            failure_message=failure_message,
+        )
 
 
 def invoke_github_tool(
@@ -306,14 +536,14 @@ def invoke_github_tool(
     *,
     pre_execute_authorize: Callable[[ToolRequest], bool],
     adapter: GitHubToolAdapter,
+    publication_verifier: PublicationPolicyVerifier | None = None,
 ) -> ToolResult:
-    """Apply technical, publication, then pre-execution gates and invoke GitHub."""
+    """Validate, verify publication evidence, authorize, and invoke GitHub."""
 
     validator = JsonSchemaToolValidator(GITHUB_INPUT_SCHEMA, GITHUB_OUTPUT_SCHEMA)
     try:
         validator.validate_input(request.input)
     except ToolSchemaValidationError:
-        # The common runtime produces the canonical validation failure.
         return invoke_tool(
             request,
             validator=validator,
@@ -322,45 +552,25 @@ def invoke_github_tool(
         )
 
     operation = request.input["operation"]
-    expected = (
-        (READ_CAPABILITY,)
-        if operation == READ_ISSUE
-        else (CREATE_PR_CAPABILITY,)
-    )
+    expected = (READ_CAPABILITY,) if operation == READ_ISSUE else (CREATE_PR_CAPABILITY,)
     if tuple(request.capabilities) != expected:
         return _policy_failure(
             request,
             "request capabilities do not match the GitHub operation",
             gate="pre-execution-capability",
         )
-
     if operation == CREATE_PULL_REQUEST:
-        if request.input["technicalEvaluation"]["traceId"] != request.trace_id:
+        if publication_verifier is None:
             return _policy_failure(
                 request,
-                "technical evaluation trace does not match the Tool trace",
-                gate="technical-evaluation",
-            )
-        if request.input["technicalEvaluation"]["outcome"] != "PASS":
-            return _policy_failure(
-                request,
-                "technical evaluation did not pass",
-                gate="technical-evaluation",
-            )
-        if request.input["publicationPolicy"]["traceId"] != request.trace_id:
-            return _policy_failure(
-                request,
-                "Publication Policy trace does not match the Tool trace",
+                "trusted Publication Policy verifier is required",
                 gate="publication-policy",
             )
-        publication = request.input["publicationPolicy"]["decision"]
-        if publication != "ALLOW":
+        verification = publication_verifier.verify(request)
+        if not verification.allowed:
             return _policy_failure(
-                request,
-                f"Publication Policy decision was {publication}",
-                gate="publication-policy",
+                request, verification.reason, gate="publication-policy"
             )
-
     return invoke_tool(
         request,
         validator=validator,
@@ -369,8 +579,21 @@ def invoke_github_tool(
     )
 
 
+def _attempt_record(attempt: int, error: GitHubProviderError) -> dict[str, Any]:
+    return {
+        "attempt": attempt,
+        "providerRequestId": error.request_id,
+        "classification": (
+            "RATE_LIMIT" if isinstance(error, GitHubRateLimitError) else "PROVIDER"
+        ),
+        "retryable": error.retryable,
+        "retryAfterMs": error.retry_after_ms,
+        "outcome": "FAILED",
+    }
+
+
 def _issue_output(
-    request: ToolRequest, provider: JsonObject, attempt: int
+    request: ToolRequest, provider: JsonObject, attempts: Sequence[JsonObject]
 ) -> dict[str, Any]:
     return {
         "operation": READ_ISSUE,
@@ -384,12 +607,12 @@ def _issue_output(
             "author": provider.get("author"),
             "labels": list(provider.get("labels", [])),
         },
-        "metadata": _metadata(request, provider.get("requestId"), attempt),
+        "metadata": _metadata(request, provider.get("requestId"), attempts),
     }
 
 
 def _pull_request_output(
-    request: ToolRequest, provider: JsonObject, attempt: int
+    request: ToolRequest, provider: JsonObject, attempts: Sequence[JsonObject]
 ) -> dict[str, Any]:
     return {
         "operation": CREATE_PULL_REQUEST,
@@ -400,49 +623,21 @@ def _pull_request_output(
             "head": request.input["head"],
             "base": request.input["base"],
         },
-        "metadata": _metadata(request, provider.get("requestId"), attempt),
+        "metadata": _metadata(request, provider.get("requestId"), attempts),
     }
 
 
 def _metadata(
-    request: ToolRequest, provider_request_id: Any, attempt: int
+    request: ToolRequest, provider_request_id: Any, attempts: Sequence[JsonObject]
 ) -> dict[str, Any]:
     return {
         "traceId": request.trace_id,
         "providerRequestId": (
             provider_request_id if isinstance(provider_request_id, str) else None
         ),
-        "attemptCount": attempt,
+        "attemptCount": len(attempts),
+        "attempts": deepcopy(list(attempts)),
     }
-
-
-def _provider_failure(
-    request: ToolRequest,
-    started_at: datetime,
-    started_clock: float,
-    error: GitHubProviderError,
-    attempt: int,
-) -> ToolResult:
-    category = "RATE_LIMIT" if isinstance(error, GitHubRateLimitError) else "PROVIDER"
-    return _result(
-        started_at,
-        started_clock,
-        ToolResultStatus.FAILED,
-        {
-            "operation": request.input["operation"],
-            "repository": request.input["repository"],
-            "failure": {
-                "category": category,
-                "retryable": error.retryable,
-                "retryAfterMs": error.retry_after_ms,
-                "attemptCount": attempt,
-                "providerRequestId": error.request_id,
-                "traceId": request.trace_id,
-            },
-        },
-        failure_class=ToolFailureClass.ADAPTER,
-        failure_message=str(error),
-    )
 
 
 def _policy_failure(request: ToolRequest, message: str, *, gate: str) -> ToolResult:
@@ -465,27 +660,4 @@ def _policy_failure(request: ToolRequest, message: str, *, gate: str) -> ToolRes
         completed_at=now,
         failure_class=ToolFailureClass.POLICY,
         failure_message=message,
-    )
-
-
-def _result(
-    started_at: datetime,
-    started_clock: float,
-    status: ToolResultStatus,
-    output: Any,
-    *,
-    failure_class: ToolFailureClass | None = None,
-    failure_message: str | None = None,
-) -> ToolResult:
-    return ToolResult(
-        status=status,
-        output=output,
-        logs_ref=None,
-        metrics=ToolMetrics(
-            duration_ms=max(0, round((monotonic() - started_clock) * 1000))
-        ),
-        started_at=started_at.isoformat().replace("+00:00", "Z"),
-        completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        failure_class=failure_class,
-        failure_message=failure_message,
     )

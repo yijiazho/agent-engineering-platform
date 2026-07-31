@@ -19,7 +19,17 @@
     "metadata": {
       "traceId": "trace-github-001",
       "providerRequestId": "github-request-read-1",
-      "attemptCount": 1
+      "attemptCount": 1,
+      "attempts": [
+        {
+          "attempt": 1,
+          "providerRequestId": "github-request-read-1",
+          "classification": "SUCCESS",
+          "retryable": false,
+          "retryAfterMs": null,
+          "outcome": "SUCCEEDED"
+        }
+      ]
     }
   }
 }

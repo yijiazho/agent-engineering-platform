@@ -38,15 +38,21 @@ and a Tool Runtime adapter for `readIssue` and `createPullRequest`. The adapter
 normalizes issue and pull-request identifiers, URLs, repository identity,
 provider request IDs, attempt counts, and the Tool trace ID.
 
-Pull-request creation requires passing technical-evaluation evidence followed
-by an `ALLOW` Publication Policy decision and then the shared pre-execution
-authorization hook for the exact `github.create_pr` capability. A denial or
-approval-required decision stops before the provider client is called. Issue
+Pull-request creation supplies only immutable runtime-object identifiers to a
+trusted Publication Policy verifier. The verifier resolves persisted
+`GeneratedArtifact`, `EvaluationResult`, and `PolicyDecision` evidence and
+binds task and workflow execution, repository and revision, trace, artifact,
+evaluation, `PUBLICATION` gate, and `github.create_pr` action. It checks passing
+technical evidence and an `ALLOW` decision before the shared pre-execution
+authorization hook runs. Caller-supplied decision fields are rejected. Issue
 reads use `github.issue.read`.
 
-Provider rate limits and failures produce stable failure evidence including
-retryability, retry-after hints, attempt count, provider request ID, and trace
-ID. Read-only issue requests may be retried within a configured bound.
+Provider operations use a cancellable execution handle so the Tool Runtime can
+enforce timeout, termination, kill, and cleanup without a synchronous network
+call blocking adapter startup. Rate limits and failures produce immutable
+per-attempt evidence including retryability, retry-after hints, provider request
+ID, classification, outcome, and trace ID. Read-only issue requests honor
+retry-after within one invocation deadline and may retry within a configured bound.
 Pull-request creation is attempted once so that a provider failure cannot
 silently duplicate an external publication; retry orchestration can use the
 reported classification.
