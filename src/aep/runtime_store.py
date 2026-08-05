@@ -76,6 +76,16 @@ class RuntimeObjectStore(ABC):
         """Append an ExecutionEvent to the audit stream."""
 
     @abstractmethod
+    def append_task_execution_id(
+        self,
+        workflow_execution_id: str,
+        task_execution_id: str,
+        *,
+        updated_at: str | None = None,
+    ) -> RuntimeObject:
+        """Atomically attach a TaskExecution to its owning WorkflowExecution."""
+
+    @abstractmethod
     def get(self, object_id: str) -> RuntimeObject | None:
         """Return an object by id, if present."""
 
@@ -190,6 +200,44 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         if value.get("kind") != "ExecutionEvent":
             raise ValueError("append_event requires an ExecutionEvent")
         return self.create(value, deterministic_key=f"execution-event:{value['id']}")
+
+    def append_task_execution_id(
+        self,
+        workflow_execution_id: str,
+        task_execution_id: str,
+        *,
+        updated_at: str | None = None,
+    ) -> RuntimeObject:
+        if not isinstance(task_execution_id, str) or not task_execution_id:
+            raise ValueError("task_execution_id must be a non-empty string")
+        with self._lock:
+            workflow = self._require(workflow_execution_id)
+            if workflow.get("kind") != "WorkflowExecution":
+                raise ValueError(
+                    f"runtime object {workflow_execution_id!r} is not a WorkflowExecution"
+                )
+            task = self._require(task_execution_id)
+            if (
+                task.get("kind") != "TaskExecution"
+                or task.get("workflowExecutionId") != workflow_execution_id
+            ):
+                raise ValueError(
+                    f"TaskExecution {task_execution_id!r} does not belong to "
+                    f"WorkflowExecution {workflow_execution_id!r}"
+                )
+            task_execution_ids = workflow.setdefault("taskExecutionIds", [])
+            if not isinstance(task_execution_ids, list):
+                raise ValueError("WorkflowExecution.taskExecutionIds must be an array")
+            if task_execution_id not in task_execution_ids:
+                if workflow.get("status") in TERMINAL_STATUSES:
+                    raise ImmutableRuntimeObjectError(
+                        f"completed runtime object {workflow_execution_id!r} is immutable"
+                    )
+                task_execution_ids.append(task_execution_id)
+                workflow["updatedAt"] = updated_at or datetime.now(
+                    timezone.utc
+                ).isoformat().replace("+00:00", "Z")
+            return _snapshot(workflow)
 
     def get(self, object_id: str) -> RuntimeObject | None:
         with self._lock:
