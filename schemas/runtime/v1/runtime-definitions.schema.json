@@ -409,6 +409,7 @@
               "type": "array",
               "items": { "type": "string" }
             },
+            "logsAddress": { "$ref": "#/$defs/contentAddress" },
             "evidence": { "$ref": "#/$defs/jsonObject" },
             "evidenceAddress": { "$ref": "#/$defs/contentAddress" },
             "failure": { "$ref": "#/$defs/failure" },

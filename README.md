@@ -94,6 +94,8 @@ Implemented foundations currently include:
 * GitHub issue-created event normalization and deduplication.
 * Deterministic Event-to-Workflow resolution with explicit versioned references.
 * Deterministic Task DAG resolution with dependency metadata and parallel-ready groups.
+* Stateless Agent resolution into immutable, execution-scoped ResolvedAgent
+  inputs with explicit Prompt, Model, non-model Tool, and Policy versions.
 * Idempotent WorkflowExecution trace-root creation with provenance events.
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
@@ -107,6 +109,8 @@ Implemented foundations currently include:
   evidence.
 * Policy-gated, workspace-scoped Docker validation with digest-pinned images,
   disabled networking, bounded execution, and per-command execution evidence.
+* Deterministic build and test evaluation with separate immutable outcomes,
+  durations, logs addresses, and timeout or missing-output evidence.
 * A policy-gated GitHub Tool adapter for issue reads and pull-request creation.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
