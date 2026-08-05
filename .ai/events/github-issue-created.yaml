@@ -1,0 +1,16 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Event",
+  "metadata": {
+    "name": "github-issue-created",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "source": "github",
+    "type": "github.issue.created",
+    "schema": {
+      "type": "object",
+      "required": ["id", "repository", "issue", "sender", "receivedAt", "deduplicationKey"]
+    }
+  }
+}
