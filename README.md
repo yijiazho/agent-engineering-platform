@@ -109,6 +109,8 @@ Implemented foundations currently include:
   evidence.
 * Policy-gated, workspace-scoped Docker validation with digest-pinned images,
   disabled networking, bounded execution, and per-command execution evidence.
+* Deterministic build and test evaluation with separate immutable outcomes,
+  durations, logs addresses, and timeout or missing-output evidence.
 * A policy-gated GitHub Tool adapter for issue reads and pull-request creation.
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.

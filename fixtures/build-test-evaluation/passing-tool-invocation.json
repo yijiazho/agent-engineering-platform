@@ -1,0 +1,58 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ToolInvocation",
+  "id": "toolinvocation-aaaabbbb0001",
+  "traceId": "trace-validation-0001",
+  "createdAt": "2026-08-04T10:00:00Z",
+  "updatedAt": "2026-08-04T10:00:03Z",
+  "provenance": {
+    "actor": "tool-runtime",
+    "workflowExecutionId": "workflowexecution-aaaabbbb0001",
+    "taskExecutionId": "taskexecution-aaaabbbb0001",
+    "resourceRefs": [
+      {
+        "kind": "Tool",
+        "name": "docker-validation",
+        "version": "1.0.0"
+      }
+    ]
+  },
+  "taskExecutionId": "taskexecution-aaaabbbb0001",
+  "toolRef": {
+    "kind": "Tool",
+    "name": "docker-validation",
+    "version": "1.0.0"
+  },
+  "status": "SUCCEEDED",
+  "resultStatus": "SUCCEEDED",
+  "input": {
+    "commands": [
+      {"argv": ["python", "-m", "build"]},
+      {"argv": ["python", "-m", "pytest"]}
+    ]
+  },
+  "output": {
+    "commands": [
+      {
+        "argv": ["python", "-m", "build"],
+        "stdout": "built\n",
+        "stderr": "",
+        "exitCode": 0,
+        "durationMs": 1200,
+        "logsRef": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "argv": ["python", "-m", "pytest"],
+        "stdout": "12 passed\n",
+        "stderr": "",
+        "exitCode": 0,
+        "durationMs": 1800,
+        "logsRef": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "logsAddress": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "metrics": {"durationMs": 3000},
+  "startedAt": "2026-08-04T10:00:00Z",
+  "completedAt": "2026-08-04T10:00:03Z"
+}
