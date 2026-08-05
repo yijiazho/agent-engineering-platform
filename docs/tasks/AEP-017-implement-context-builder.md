@@ -1,6 +1,6 @@
 # AEP-017: Implement Context Builder
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -33,3 +33,24 @@ Implement MVP ContextPackage construction that:
 * Token budget metadata is recorded, even if approximate.
 * Context construction is deterministic for identical inputs.
 * Tests cover each MVP Task type.
+
+## Implementation
+
+`src/aep/context_builder.py` implements deterministic ContextPackage assembly
+over the provider-neutral Repository Knowledge and GeneratedArtifact store
+boundaries. It validates TaskExecution, WorkflowExecution, trace, Resource,
+artifact, repository-revision, and knowledge-snapshot relationships; requires
+exact KnowledgeBase and Policy versions declared by the Task; resolves
+mandatory and optional context; preserves source and selection provenance;
+estimates tokens; and prunes only optional candidates. Prior artifacts must be
+produced by successful dependency TaskExecutions in the same workflow, trace,
+and revision. Normalized Event identity and GitHub issue fields are bound to
+the WorkflowExecution event identifier before inclusion. Mandatory context
+that cannot be resolved or fit within the budget fails before invocation.
+
+The builder produces recursively immutable, schema-valid runtime evidence and
+can persist it idempotently through the Runtime Object Store. The fixture in
+`fixtures/context-builder/mvp-task-types.json` and focused tests cover all six
+ADR-003 MVP Task types, missing and unsupported requirements, mixed revisions,
+budget exhaustion, optional pruning, artifact provenance, determinism, and
+immutability.

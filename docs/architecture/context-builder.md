@@ -599,3 +599,37 @@ The Context Builder is the knowledge assembly engine of AEP.
 It transforms Tasks and repository state into immutable ContextPackages by combining structured repository intelligence, knowledge bases, artifacts, policies, and events through a deterministic retrieval and optimization pipeline.
 
 By treating context construction as a first-class subsystem rather than a helper function, AEP ensures that every Agent operates on compact, explainable, reproducible, and authoritative information, independent of the underlying LLM.
+
+---
+
+# 21. MVP Implementation Contract
+
+The MVP implementation is `aep.context_builder.ContextBuilder`. Callers supply
+an explicit Task Resource, its TaskExecution and WorkflowExecution, the
+normalized Event when applicable, explicitly versioned KnowledgeBase and
+Policy Resources, prior producer TaskExecution identifiers, a token budget,
+and a deterministic creation timestamp.
+
+Repository elements are obtained only through the Repository Knowledge query
+API. Prior GeneratedArtifacts and their verified content are obtained only
+through the GeneratedArtifact store. The builder rejects mismatched revisions,
+execution relationships, floating or unsupported context requirements, and
+missing mandatory context. Supplied KnowledgeBase and Policy Resources must
+exactly match the immutable references declared by the Task. Repository query
+results must match both the WorkflowExecution repository revision and its
+bound knowledge-graph version. Prior artifacts must come from successful
+dependency TaskExecutions in the same WorkflowExecution and trace, and artifact
+elements retain the producer TaskExecution in their provenance. Normalized
+Event input must match `WorkflowExecution.eventId` and its immutable Event
+reference; the MVP `github.issue.created` payload is validated before its issue
+context can enter a package. Event input without a WorkflowExecution binding is
+rejected.
+
+Mandatory elements are assembled before optional candidates. Optional
+candidates are selected in stable provider order while budget remains and are
+otherwise recorded as discarded with a `TOKEN_BUDGET` reason. Mandatory
+elements are never truncated; if they exceed the budget, construction fails.
+The package records the estimator algorithm, selected and discarded context,
+element estimates, aggregate token estimate, and provenance. Its identifier is
+derived from canonical construction inputs, and the returned value is
+recursively immutable.

@@ -31,6 +31,7 @@
     "name": "github-issue-created",
     "version": "1.0.0"
   },
+  "eventId": "event-11111111-1111-1111-1111-111111111111",
   "repositoryRevision": "abc1234",
   "knowledgeGraphVersion": "kg-20260709-0001",
   "status": "SUCCEEDED",

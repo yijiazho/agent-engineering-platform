@@ -32,6 +32,36 @@
   "repositoryRevision": "abc1234",
   "elements": [
     {
+      "type": "task",
+      "content": {
+        "apiVersion": "aep.dev/v1alpha1",
+        "kind": "Task",
+        "metadata": {
+          "name": "analyze-issue",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "objective": "Classify a GitHub issue and extract acceptance criteria.",
+          "outputs": {
+            "type": "object"
+          },
+          "requiredContext": ["issue"]
+        }
+      },
+      "provenance": {
+        "actor": "resource-loader",
+        "resourceRefs": [
+          {
+            "kind": "Task",
+            "name": "analyze-issue",
+            "version": "1.0.0"
+          }
+        ]
+      },
+      "tokenCount": 128,
+      "truncated": false
+    },
+    {
       "type": "event",
       "content": {
         "issueNumber": 42,
@@ -52,6 +82,16 @@
     }
   ],
   "tokenBudget": 32000,
-  "tokenCount": 48,
-  "truncation": "NONE"
+  "tokenCount": 176,
+  "tokenEstimate": {
+    "algorithm": "utf8-bytes-ceiling-divided-by-4",
+    "count": 176
+  },
+  "truncation": "NONE",
+  "selection": {
+    "requiredContext": ["issue"],
+    "optionalContext": [],
+    "selected": ["task", "event"],
+    "discarded": []
+  }
 }
