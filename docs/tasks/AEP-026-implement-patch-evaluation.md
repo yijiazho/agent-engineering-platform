@@ -1,6 +1,6 @@
 # AEP-026: Implement Patch Evaluation
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,27 @@ Implement patch Evaluation that:
 * Evaluation records changed file list as evidence.
 * Evaluation fails before validation if patch is invalid.
 * Tests cover clean patch, conflicting patch, and disallowed path.
+
+## Implementation
+
+`src/aep/patch_evaluation.py` validates PATCH GeneratedArtifact identity,
+content address, and repository revision before requesting the repository-bound
+Git adapter's read-only `check_patch` operation. The adapter runs
+`git apply --numstat` and `git apply --check --cached` through its injected
+isolated sandbox with patch content on standard input. It requires HEAD at the
+immutable expected revision and a clean index and worktree, and never applies
+the patch.
+
+The evaluator normalizes allowed repository-relative roots, checks both current
+and previous paths for renamed files (including Git C-style octal-quoted UTF-8
+paths), and persists an immutable
+`EvaluationResult` containing sorted changed files, applicability diagnostics,
+boundary checks, Git log provenance, and stable failure codes. Revision,
+content-integrity, empty, malformed, conflicting, and out-of-scope failures are
+technical `FAIL` outcomes rather than publication decisions.
+
+Deterministic fixtures under `fixtures/patch-evaluation/` and
+`tests/test_patch_evaluation.py` cover clean, conflicting, malformed, empty,
+revision-mismatched, disallowed, renamed, and Git-quoted Unicode patches,
+path-root semantics, worktree non-mutation, immutable persistence, and unsafe
+rule rejection.

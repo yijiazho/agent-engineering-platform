@@ -262,6 +262,17 @@ current `RuntimeObjectStore` has no atomic multi-create operation, so a backend
 failure between the two valid creates remains a storage-level limitation. This
 evaluator performs neither LLM reasoning nor a Publication Policy decision.
 
+## 9.2 Patch Evaluation
+
+For patch artifacts, deterministic evaluation first verifies the
+GeneratedArtifact content address and immutable repository revision. It then
+uses the repository-bound Git adapter's non-mutating applicability check and
+compares every changed path, including rename sources, with normalized allowed
+repository-relative roots. The EvaluationResult records the sorted changed-file
+list, Git diagnostics and log reference, per-path boundary decisions, and
+stable failure codes. A failed check is correctness evidence only; it never
+authorizes a write, push, or publication action.
+
 ---
 
 # 10. Evaluation Composition

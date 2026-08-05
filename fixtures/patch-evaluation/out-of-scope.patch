@@ -1,0 +1,6 @@
+diff --git a/private/secret.txt b/private/secret.txt
+new file mode 100644
+--- /dev/null
++++ b/private/secret.txt
+@@ -0,0 +1 @@
++secret

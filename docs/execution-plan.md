@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 20 |
+| Completed | 25 |
 | In Progress | 0 |
-| Not Started | 17 |
+| Not Started | 12 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -43,7 +43,9 @@ scopes and persists explainable decisions before Tool execution. The
 workspace-confined Filesystem Tool now supports policy-authorized reads and
 writes with persisted invocation evidence. The repository-bound Git Tool now
 provides branch, status, diff, and authorized push operations with redacted
-command evidence. Docker validation now captures deterministic per-command
+command evidence and read-only patch applicability checks. Deterministic patch
+evaluation binds generated patches to an immutable revision and allowed paths.
+Docker validation now captures deterministic per-command
 execution evidence behind that policy boundary, and build/test evaluation
 converts terminal Docker evidence into separate immutable technical outcomes.
 The GitHub Tool now performs
@@ -86,7 +88,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 21 | [AEP-023: Implement Docker Validation Tool](tasks/AEP-023-implement-docker-validation-tool.md) | Completed |
 | 22 | [AEP-024: Implement GitHub Tool](tasks/AEP-024-implement-github-tool.md) | Completed |
 | 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Completed |
-| 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Not Started |
+| 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Completed |
 | 25 | [AEP-027: Implement Build And Test Evaluation](tasks/AEP-027-implement-build-and-test-evaluation.md) | Completed |
 | 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Not Started |
 | 27 | [AEP-013: Implement AgentInvocation Contract](tasks/AEP-013-implement-agentinvocation-contract.md) | Not Started |
@@ -132,7 +134,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-023 | AEP-019, AEP-020 | Completed |
 | AEP-024 | AEP-019, AEP-020 | Completed |
 | AEP-025 | AEP-002 | Completed |
-| AEP-026 | AEP-002, AEP-022 | Not Started |
+| AEP-026 | AEP-002, AEP-022 | Completed |
 | AEP-027 | AEP-002, AEP-023 | Completed |
 | AEP-028 | AEP-004, AEP-020, AEP-025, AEP-026, AEP-027 | Not Started |
 | AEP-029 | AEP-010, AEP-013, AEP-017, AEP-018, AEP-025 | Not Started |

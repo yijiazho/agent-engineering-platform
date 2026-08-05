@@ -32,11 +32,22 @@ GIT_INPUT_SCHEMA: Mapping[str, Any] = {
     "properties": {
         "operation": {
             "type": "string",
-            "enum": ["create_branch", "status", "diff", "push_branch"],
+            "enum": ["create_branch", "status", "diff", "check_patch", "push_branch"],
         },
         "expectedRevision": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
         "branch": {"type": "string", "minLength": 1},
+        "patch": {"type": "string"},
     },
+    "allOf": [
+        {
+            "if": {
+                "properties": {"operation": {"const": "check_patch"}},
+                "required": ["operation"],
+            },
+            "then": {"required": ["patch"]},
+            "else": {"not": {"required": ["patch"]}},
+        }
+    ],
     "additionalProperties": False,
 }
 
@@ -112,6 +123,8 @@ GIT_OUTPUT_SCHEMA: Mapping[str, Any] = {
             "type": "array",
             "items": _COMMAND_RESULT_SCHEMA,
         },
+        "applicable": {"type": ["boolean", "null"]},
+        "diagnostics": {"type": "array", "items": {"type": "string"}},
     },
     "additionalProperties": False,
 }
@@ -188,6 +201,7 @@ class GitSandbox(Protocol):
         arguments: Sequence[str],
         environment: Mapping[str, str],
         timeout_ms: int,
+        stdin: bytes | None = None,
     ) -> GitSandboxCommandResult:
         """Run Git in isolation with exactly the supplied scoped environment."""
 
@@ -342,6 +356,11 @@ class GitToolAdapter(ToolAdapter):
             working_branch=self._working_branch,
             remote=self._remote,
             operation=str(operation),
+            patch=(
+                str(value.get("patch", "")).encode("utf-8")
+                if operation == "check_patch"
+                else None
+            ),
             trace_id=request.trace_id,
             log_store=self._log_store,
             sandbox=self._sandbox,
@@ -359,6 +378,7 @@ class _GitToolExecution(ToolExecution):
         working_branch: str,
         remote: str,
         operation: str,
+        patch: bytes | None,
         trace_id: str,
         log_store: GitCommandLogStore,
         sandbox: GitSandbox,
@@ -370,6 +390,7 @@ class _GitToolExecution(ToolExecution):
         self._working_branch = working_branch
         self._remote = remote
         self._operation = operation
+        self._patch = patch
         self._trace_id = trace_id
         self._log_store = log_store
         self._sandbox = sandbox
@@ -492,7 +513,7 @@ class _GitToolExecution(ToolExecution):
                     self._remote_mutation_state = RemoteMutationState.CONFIRMED
                 finally:
                     credentials.close()
-            elif self._operation not in {"status", "diff"}:
+            elif self._operation not in {"status", "diff", "check_patch"}:
                 raise GitToolContractError(
                     f"unsupported Git operation {self._operation!r}"
                 )
@@ -506,6 +527,39 @@ class _GitToolExecution(ToolExecution):
         ).stdout
         changed_files = _parse_status(status)
         diff_value: dict[str, Any] | None = None
+        applicable: bool | None = None
+        diagnostics: list[str] = []
+        if self._operation == "check_patch":
+            head = self._run(("rev-parse", "HEAD"), deadline).stdout.decode(
+                "ascii"
+            ).strip().lower()
+            if head != self._expected_revision:
+                raise GitToolContractError(
+                    "check_patch requires HEAD at the expected revision"
+                )
+            if status:
+                raise GitToolContractError(
+                    "check_patch requires a clean index and worktree"
+                )
+            assert self._patch is not None
+            numstat = self._run(
+                ("apply", "--numstat", "-z", "--"),
+                deadline,
+                accepted_exit_codes=(0, 1, 128),
+                stdin=self._patch,
+            )
+            changed_files = (
+                _parse_numstat(numstat.stdout) if numstat.exit_code == 0 else []
+            )
+            changed_files = _merge_patch_source_paths(changed_files, self._patch)
+            check = self._run(
+                ("apply", "--check", "--cached", "--"),
+                deadline,
+                accepted_exit_codes=(0, 1, 128),
+                stdin=self._patch,
+            )
+            applicable = check.exit_code == 0
+            diagnostics = _diagnostics(numstat.stderr, check.stderr)
         if self._operation == "diff":
             patch_parts = [
                 self._run(
@@ -555,6 +609,8 @@ class _GitToolExecution(ToolExecution):
             "diff": diff_value,
             "remoteMutationState": self._remote_mutation_state.value,
             "commandResults": [command.metadata() for command in self._commands],
+            "applicable": applicable,
+            "diagnostics": diagnostics,
         }
 
     def _failure_output(self) -> dict[str, Any]:
@@ -580,6 +636,7 @@ class _GitToolExecution(ToolExecution):
         accepted_exit_codes: tuple[int, ...] = (0,),
         environment: Mapping[str, str] | None = None,
         begins_remote_mutation: bool = False,
+        stdin: bytes | None = None,
     ) -> _CommandResult:
         remaining = deadline - monotonic()
         if remaining <= 0:
@@ -609,6 +666,7 @@ class _GitToolExecution(ToolExecution):
                 arguments=controlled_arguments,
                 environment=scoped_environment,
                 timeout_ms=max(1, round(remaining * 1000)),
+                stdin=stdin,
             )
         except GitSandboxTimeout as error:
             result = _CommandResult(
@@ -701,6 +759,128 @@ def _parse_status(value: bytes) -> list[dict[str, str]]:
             index += 1
         changed.append(record)
     return changed
+
+
+def _parse_numstat(value: bytes) -> list[dict[str, str]]:
+    """Parse ``git apply --numstat -z`` into stable changed-path evidence."""
+
+    entries = value.split(b"\0")
+    changed: list[dict[str, str]] = []
+    index = 0
+    while index < len(entries):
+        raw = entries[index]
+        index += 1
+        if not raw:
+            continue
+        fields = raw.split(b"\t", 2)
+        if len(fields) != 3:
+            raise GitToolContractError("git apply returned malformed path evidence")
+        path = fields[2]
+        previous_path: bytes | None = None
+        if not path:
+            if index + 1 >= len(entries):
+                raise GitToolContractError("git apply returned malformed rename evidence")
+            previous_path = entries[index]
+            path = entries[index + 1]
+            index += 2
+        record = {
+            "path": path.decode("utf-8", errors="surrogateescape"),
+            "status": "PATCH",
+        }
+        if previous_path is not None:
+            record["previousPath"] = previous_path.decode(
+                "utf-8", errors="surrogateescape"
+            )
+        changed.append(record)
+    return sorted(changed, key=lambda item: (item["path"].casefold(), item["path"]))
+
+
+def _diagnostics(*values: bytes) -> list[str]:
+    lines = {
+        _redact(line.strip())
+        for value in values
+        for line in value.decode("utf-8", errors="replace").splitlines()
+        if line.strip()
+    }
+    return sorted(lines, key=lambda line: (line.casefold(), line))
+
+
+def _merge_patch_source_paths(
+    changed: list[dict[str, str]], patch: bytes
+) -> list[dict[str, str]]:
+    """Include rename/copy sources that ``--numstat`` collapses into destinations."""
+
+    records = {record["path"]: record for record in changed}
+    for raw_line in patch.splitlines():
+        if raw_line.startswith(b"rename from "):
+            value = raw_line[len(b"rename from ") :]
+        elif raw_line.startswith(b"copy from "):
+            value = raw_line[len(b"copy from ") :]
+        else:
+            continue
+        path = _decode_patch_path(value)
+        records.setdefault(path, {"path": path, "status": "PATCH_SOURCE"})
+    return sorted(records.values(), key=lambda item: (item["path"].casefold(), item["path"]))
+
+
+def _decode_patch_path(value: bytes) -> str:
+    if not value.startswith(b'"'):
+        try:
+            return value.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            raise GitToolContractError("patch path is not valid UTF-8") from error
+    if len(value) < 2 or not value.endswith(b'"'):
+        raise GitToolContractError("patch contains malformed quoted path")
+
+    escapes = {
+        ord("a"): 0x07,
+        ord("b"): 0x08,
+        ord("t"): 0x09,
+        ord("n"): 0x0A,
+        ord("v"): 0x0B,
+        ord("f"): 0x0C,
+        ord("r"): 0x0D,
+        ord("\\"): ord("\\"),
+        ord('"'): ord('"'),
+    }
+    encoded = bytearray()
+    quoted = value[1:-1]
+    index = 0
+    while index < len(quoted):
+        current = quoted[index]
+        index += 1
+        if current != ord("\\"):
+            encoded.append(current)
+            continue
+        if index >= len(quoted):
+            raise GitToolContractError("patch contains malformed quoted path")
+        escaped = quoted[index]
+        if escaped in escapes:
+            encoded.append(escapes[escaped])
+            index += 1
+            continue
+        if ord("0") <= escaped <= ord("7"):
+            digits = bytearray()
+            while (
+                index < len(quoted)
+                and len(digits) < 3
+                and ord("0") <= quoted[index] <= ord("7")
+            ):
+                digits.append(quoted[index])
+                index += 1
+            decoded_byte = int(digits.decode("ascii"), 8)
+            if decoded_byte > 0xFF:
+                raise GitToolContractError("patch contains invalid octal path escape")
+            encoded.append(decoded_byte)
+            continue
+        raise GitToolContractError("patch contains unsupported quoted path escape")
+
+    if b"\0" in encoded:
+        raise GitToolContractError("patch path must not contain NUL")
+    try:
+        return bytes(encoded).decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise GitToolContractError("patch path is not valid UTF-8") from error
 
 
 def _valid_branch(value: str) -> bool:

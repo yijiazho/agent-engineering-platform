@@ -51,6 +51,7 @@ class LocalGitSandbox:
         arguments: Sequence[str],
         environment: Mapping[str, str],
         timeout_ms: int,
+        stdin: bytes | None = None,
     ) -> GitSandboxCommandResult:
         self.environments.append(dict(environment))
         process_environment = dict(environment)
@@ -61,7 +62,8 @@ class LocalGitSandbox:
                 ("git", *arguments),
                 cwd=repository,
                 env=process_environment,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL if stdin is None else None,
+                input=stdin,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=timeout_ms / 1000,
@@ -91,6 +93,7 @@ class TimeoutGitSandbox(LocalGitSandbox):
         arguments: Sequence[str],
         environment: Mapping[str, str],
         timeout_ms: int,
+        stdin: bytes | None = None,
     ) -> GitSandboxCommandResult:
         if self._command in arguments:
             self.environments.append(dict(environment))
@@ -101,6 +104,7 @@ class TimeoutGitSandbox(LocalGitSandbox):
             arguments=arguments,
             environment=environment,
             timeout_ms=timeout_ms,
+            stdin=stdin,
         )
 
 
