@@ -165,11 +165,12 @@
         { "$ref": "#/$defs/runtimeBase" },
         {
           "type": "object",
-          "required": ["kind", "workflowRef", "eventRef", "repositoryRevision", "status", "taskExecutionIds"],
+          "required": ["kind", "workflowRef", "eventRef", "eventId", "repositoryRevision", "status", "taskExecutionIds"],
           "properties": {
             "kind": { "const": "WorkflowExecution" },
             "workflowRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/workflowRef" },
             "eventRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/eventRef" },
+            "eventId": { "type": "string", "minLength": 1 },
             "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
             "knowledgeGraphVersion": { "type": "string", "minLength": 1 },
             "status": { "$ref": "#/$defs/status" },
@@ -223,7 +224,7 @@
         { "$ref": "#/$defs/runtimeBase" },
         {
           "type": "object",
-          "required": ["kind", "taskExecutionId", "taskRef", "repositoryRevision", "elements", "tokenBudget", "tokenCount"],
+          "required": ["kind", "taskExecutionId", "taskRef", "repositoryRevision", "elements", "tokenBudget", "tokenCount", "tokenEstimate", "truncation", "selection"],
           "properties": {
             "kind": { "const": "ContextPackage" },
             "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
@@ -246,7 +247,39 @@
             },
             "tokenBudget": { "type": "integer", "minimum": 1 },
             "tokenCount": { "type": "integer", "minimum": 0 },
-            "truncation": { "type": "string", "enum": ["NONE", "SUMMARIZED", "PRUNED"] }
+            "tokenEstimate": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["algorithm", "count"],
+              "properties": {
+                "algorithm": { "type": "string", "minLength": 1 },
+                "count": { "type": "integer", "minimum": 0 }
+              }
+            },
+            "truncation": { "type": "string", "enum": ["NONE", "SUMMARIZED", "PRUNED"] },
+            "selection": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["requiredContext", "optionalContext", "selected", "discarded"],
+              "properties": {
+                "requiredContext": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+                "optionalContext": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+                "selected": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                "discarded": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["context", "reason", "estimatedTokens"],
+                    "properties": {
+                      "context": { "type": "string", "minLength": 1 },
+                      "reason": { "const": "TOKEN_BUDGET" },
+                      "estimatedTokens": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                }
+              }
+            }
           },
           "additionalProperties": true
         }

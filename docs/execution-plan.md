@@ -50,7 +50,10 @@ The GitHub Tool now performs
 structured issue reads and policy-gated pull-request creation through a
 provider-neutral client. Agent resolution now binds Task-assigned Agents to
 explicit Prompt, Model, non-model Tool, and Task/Agent Policy versions in an
-immutable ResolvedAgent. The end-to-end MVP workflow is not yet runnable.
+immutable ResolvedAgent. The end-to-end MVP workflow is not yet runnable. 
+Deterministic ContextPackage construction now assembles provenance-complete
+Resources, events, repository knowledge, policies, and prior artifacts within
+an explicit token budget.
 
 ---
 
@@ -82,7 +85,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 20 | [AEP-022: Implement Git Tool](tasks/AEP-022-implement-git-tool.md) | Completed |
 | 21 | [AEP-023: Implement Docker Validation Tool](tasks/AEP-023-implement-docker-validation-tool.md) | Completed |
 | 22 | [AEP-024: Implement GitHub Tool](tasks/AEP-024-implement-github-tool.md) | Completed |
-| 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Not Started |
+| 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Completed |
 | 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Not Started |
 | 25 | [AEP-027: Implement Build And Test Evaluation](tasks/AEP-027-implement-build-and-test-evaluation.md) | Completed |
 | 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Not Started |
@@ -120,7 +123,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-014 | AEP-001, AEP-002 | Completed |
 | AEP-015 | None | Completed |
 | AEP-016 | AEP-015 | Completed |
-| AEP-017 | AEP-003, AEP-004, AEP-016, AEP-018 | Not Started |
+| AEP-017 | AEP-003, AEP-004, AEP-016, AEP-018 | Completed |
 | AEP-018 | AEP-002, AEP-004 | Completed |
 | AEP-019 | AEP-001, AEP-002 | Completed |
 | AEP-020 | AEP-003, AEP-004, AEP-019 | Completed |
@@ -151,7 +154,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Completed |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | In Progress |
-| Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | In Progress |
+| Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Completed |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | In Progress |
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Not Started |

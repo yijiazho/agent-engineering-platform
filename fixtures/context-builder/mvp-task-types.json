@@ -1,0 +1,44 @@
+[
+  {
+    "name": "analyze-issue",
+    "objective": "Analyze the issue and locate affected repository areas.",
+    "requiredContext": ["issue", "repository-inventory", "knowledge"],
+    "optionalContext": ["candidate-files"],
+    "expectedTypes": ["task", "event", "repository", "knowledge"]
+  },
+  {
+    "name": "build-implementation-plan",
+    "objective": "Build an implementation plan grounded in repository documentation.",
+    "requiredContext": ["issue", "documentation", "prior-artifacts"],
+    "optionalContext": ["candidate-files"],
+    "expectedTypes": ["task", "event", "repository", "artifact"]
+  },
+  {
+    "name": "generate-patch",
+    "objective": "Generate a scoped patch from the implementation plan.",
+    "requiredContext": ["repository-inventory", "prior-artifacts", "policies"],
+    "optionalContext": ["documentation"],
+    "expectedTypes": ["task", "event", "repository", "artifact", "policy"]
+  },
+  {
+    "name": "run-validation",
+    "objective": "Run deterministic build and test validation for the patch.",
+    "requiredContext": ["dependency-manifests", "test-hints", "prior-artifacts", "policies"],
+    "optionalContext": [],
+    "expectedTypes": ["task", "event", "repository", "artifact", "policy"]
+  },
+  {
+    "name": "evaluate-acceptance",
+    "objective": "Evaluate prior evidence against issue acceptance criteria.",
+    "requiredContext": ["issue", "prior-artifacts", "policies"],
+    "optionalContext": [],
+    "expectedTypes": ["task", "event", "artifact", "policy"]
+  },
+  {
+    "name": "create-pull-request",
+    "objective": "Create a pull request from accepted implementation evidence.",
+    "requiredContext": ["issue", "prior-artifacts", "policies"],
+    "optionalContext": ["documentation"],
+    "expectedTypes": ["task", "event", "artifact", "policy"]
+  }
+]

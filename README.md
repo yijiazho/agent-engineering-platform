@@ -115,10 +115,12 @@ Implemented foundations currently include:
 * Deterministic JSON Schema evaluation.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
+* Deterministic, budget-aware ContextPackage construction with provenance for
+  repository knowledge, Resources, events, policies, and prior artifacts.
 
-Workflow scheduling, ContextPackage construction, the remaining concrete Tool
-adapters, publication policy, task handlers, service composition, and the
-end-to-end issue-to-pull-request harness remain to be implemented.
+Workflow scheduling, the remaining concrete Tool adapters, publication policy,
+task handlers, service composition, and the end-to-end issue-to-pull-request
+harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 
