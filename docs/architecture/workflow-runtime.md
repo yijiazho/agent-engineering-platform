@@ -152,6 +152,13 @@ The Agent Resolver produces a ResolvedAgent runtime object.
 
 ResolvedAgent contains the immutable model configuration, prompt reference, tool allowlist, and policy constraints required for a single AgentInvocation.
 
+Resolution verifies that the Task assigns the requested Agent, loads every
+reference at an explicit immutable version, and rejects wrong-kind or missing
+Resources. Task and Agent policy references are retained in declaration order.
+An unconditional pre-execution policy denial makes a configured Tool invalid at
+resolution time; conditional and approval rules remain attached for evaluation
+with the execution-time policy input.
+
 The Agent Resolver owns no durable state.
 
 ---
