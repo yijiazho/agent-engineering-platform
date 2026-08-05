@@ -233,6 +233,35 @@ Contains:
 
 EvaluationResults are immutable.
 
+## 9.1 Build And Test Evaluation
+
+Build and test evaluation consumes a terminal Docker `ToolInvocation`; it does
+not execute commands. The caller supplies the canonical, immutable Docker Tool
+reference, which must exactly match the invocation. Runtime `status` and Tool
+`resultStatus` must both be present and form a consistent completed state. Two
+configured expectations bind immutable Evaluation references to distinct
+indexes in the invocation's ordered command list. The evaluator creates
+separate build and test `EvaluationResult` records so a completed build remains
+visible when testing fails or times out.
+
+Each result records the selected command status, exit code, duration, logs
+address, Tool result status, and deterministic evidence hash. Exit code zero
+passes the selected evaluation. A nonzero exit fails it. When Docker stops
+after a failed command, later configured commands are recorded as `NOT_RUN`;
+when the deadline expires, the first command lacking completion evidence is
+`TIMED_OUT` and later commands are `NOT_RUN`.
+
+Missing invocation output, incomplete command records, and expectations that
+select an unconfigured command produce a failed `EvaluationResult` with a
+`CONFIGURATION` failure. Sequence corruption, including extra, reordered, or
+trailing records after a nonzero exit, invalidates both results because neither
+command can be trusted independently. Technical failures such as nonzero exits
+and timeouts produce successfully completed evaluations with a `FAIL` outcome.
+Both results are constructed and contract-validated before persistence. The
+current `RuntimeObjectStore` has no atomic multi-create operation, so a backend
+failure between the two valid creates remains a storage-level limitation. This
+evaluator performs neither LLM reasoning nor a Publication Policy decision.
+
 ---
 
 # 10. Evaluation Composition
