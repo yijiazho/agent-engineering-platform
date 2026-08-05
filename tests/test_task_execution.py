@@ -66,6 +66,30 @@ def test_attempt_must_be_a_positive_integer() -> None:
 
 
 @pytest.mark.parametrize(
+    "timestamp",
+    ["not-a-timestamp", "2026-08-04T20:00:00+0000", "2026-08-04T20:00:00+00:00:30"],
+)
+def test_schema_invalid_timestamp_is_rejected_before_persistence(
+    timestamp: str,
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    lifecycle = TaskExecutionLifecycle(store)
+
+    with pytest.raises(ValueError, match=r"invalid TaskExecution at \$.createdAt"):
+        lifecycle.create(
+            execution_id="taskexecution-abcdef123456",
+            workflow_execution_id="workflowexecution-123456789abc",
+            task_ref={"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
+            attempt=1,
+            trace_id="trace-123",
+            timestamp=timestamp,
+            provenance={"actor": "workflow-runtime", "resourceRefs": []},
+        )
+
+    assert store.get("taskexecution-abcdef123456") is None
+
+
+@pytest.mark.parametrize(
     "task_ref",
     [
         {"kind": "Task", "name": "analyze-issue"},

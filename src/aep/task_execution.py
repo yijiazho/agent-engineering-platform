@@ -10,11 +10,12 @@ import json
 from pathlib import Path
 from typing import Any, Final
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
+from aep.runtime_validation import is_rfc3339_timestamp
 
 
 class TaskStatus(str, Enum):
@@ -107,6 +108,7 @@ class TaskExecutionLifecycle:
         task_identity = ":".join(
             str(task_ref[field]) for field in ("kind", "name", "version")
         )
+        _validate_task_execution(record)
         key = f"task-execution:{workflow_execution_id}:{task_identity}:{attempt}"
         return self._store.create(record, deterministic_key=key)
 
@@ -228,6 +230,17 @@ def _validate_task_ref(task_ref: Mapping[str, Any]) -> None:
         raise InvalidTaskReferenceError(f"invalid Task reference at {path}: {error.message}")
 
 
+def _validate_task_execution(record: Mapping[str, Any]) -> None:
+    errors = sorted(
+        _task_execution_validator().iter_errors(dict(record)),
+        key=lambda error: (list(error.absolute_path), error.message),
+    )
+    if errors:
+        error = errors[0]
+        path = "$" + "".join(f".{part}" for part in error.absolute_path)
+        raise ValueError(f"invalid TaskExecution at {path}: {error.message}")
+
+
 @cache
 def _task_ref_validator() -> Draft202012Validator:
     schema_path = (
@@ -244,4 +257,31 @@ def _task_ref_validator() -> Draft202012Validator:
     )
     return Draft202012Validator(
         {"$ref": f"{schema['$id']}#/$defs/taskRef"}, registry=registry
+    )
+
+
+@cache
+def _task_execution_validator() -> Draft202012Validator:
+    schema_root = Path(__file__).parents[2] / "schemas"
+    schema_paths = (
+        schema_root / "resources" / "v1" / "resource-definitions.schema.json",
+        schema_root / "runtime" / "v1" / "runtime-definitions.schema.json",
+        schema_root / "runtime" / "v1" / "taskexecution.schema.json",
+    )
+    schemas = [
+        json.loads(schema_path.read_text(encoding="utf-8"))
+        for schema_path in schema_paths
+    ]
+    registry = Registry().with_resources(
+        (
+            schema["$id"],
+            SchemaResource.from_contents(schema, default_specification=DRAFT202012),
+        )
+        for schema in schemas
+    )
+    format_checker = FormatChecker()
+    format_checker.checkers = dict(format_checker.checkers)
+    format_checker.checkers["date-time"] = (is_rfc3339_timestamp, ())
+    return Draft202012Validator(
+        schemas[-1], registry=registry, format_checker=format_checker
     )

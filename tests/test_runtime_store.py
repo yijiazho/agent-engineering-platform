@@ -100,6 +100,70 @@ def test_append_event_and_list_by_workflow_execution() -> None:
     ]
 
 
+def test_task_execution_ids_are_attached_atomically_and_idempotently() -> None:
+    store = InMemoryRuntimeObjectStore()
+    workflow = {
+        "kind": "WorkflowExecution",
+        "id": WORKFLOW_ID,
+        "taskExecutionIds": [],
+    }
+    first = runtime_object("taskexecution-123456789abc")
+    second = runtime_object("taskexecution-abcdef123456")
+    store.create(workflow, deterministic_key="workflow")
+    store.create(first, deterministic_key="first-task")
+    store.create(second, deterministic_key="second-task")
+
+    task_ids = [first["id"], second["id"]] * 20
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(
+            executor.map(
+                lambda task_id: store.append_task_execution_id(
+                    WORKFLOW_ID, task_id
+                ),
+                task_ids,
+            )
+        )
+
+    attached = store.get(WORKFLOW_ID)["taskExecutionIds"]
+    assert len(attached) == 2
+    assert set(attached) == {first["id"], second["id"]}
+
+
+def test_task_execution_membership_rejects_wrong_owner() -> None:
+    store = InMemoryRuntimeObjectStore()
+    store.create(
+        {"kind": "WorkflowExecution", "id": WORKFLOW_ID, "taskExecutionIds": []},
+        deterministic_key="workflow",
+    )
+    task = runtime_object("taskexecution-123456789abc")
+    task["workflowExecutionId"] = "workflowexecution-abcdef123456"
+    store.create(task, deterministic_key="task")
+
+    with pytest.raises(ValueError, match="does not belong"):
+        store.append_task_execution_id(WORKFLOW_ID, task["id"])
+
+
+def test_terminal_workflow_membership_is_immutable_but_idempotent() -> None:
+    store = InMemoryRuntimeObjectStore()
+    first = runtime_object("taskexecution-123456789abc")
+    second = runtime_object("taskexecution-abcdef123456")
+    workflow = {
+        "kind": "WorkflowExecution",
+        "id": WORKFLOW_ID,
+        "status": "SUCCEEDED",
+        "taskExecutionIds": [first["id"]],
+    }
+    store.create(workflow, deterministic_key="workflow")
+    store.create(first, deterministic_key="first-task")
+    store.create(second, deterministic_key="second-task")
+
+    assert store.append_task_execution_id(WORKFLOW_ID, first["id"])[
+        "taskExecutionIds"
+    ] == [first["id"]]
+    with pytest.raises(ImmutableRuntimeObjectError):
+        store.append_task_execution_id(WORKFLOW_ID, second["id"])
+
+
 def test_list_by_task_execution_uses_persisted_metadata_index() -> None:
     store = InMemoryRuntimeObjectStore()
     artifact = {

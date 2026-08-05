@@ -30,3 +30,9 @@ Implement a TaskExecution lifecycle component that:
 * Failure class is recorded for failed executions.
 * Completed evidence cannot be mutated.
 * Tests cover success, recoverable failure, configuration failure, evaluation failure, and policy denial.
+
+## Implementation Note
+
+TaskExecution creation validates the complete record against the authoritative
+runtime schema, including timestamp formats, before the lifecycle performs its
+first persistence mutation.

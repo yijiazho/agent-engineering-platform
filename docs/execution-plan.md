@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 20 |
+| Completed | 25 |
 | In Progress | 0 |
-| Not Started | 17 |
+| Not Started | 12 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -50,10 +50,13 @@ The GitHub Tool now performs
 structured issue reads and policy-gated pull-request creation through a
 provider-neutral client. Agent resolution now binds Task-assigned Agents to
 explicit Prompt, Model, non-model Tool, and Task/Agent Policy versions in an
-immutable ResolvedAgent. The end-to-end MVP workflow is not yet runnable. 
-Deterministic ContextPackage construction now assembles provenance-complete
-Resources, events, repository knowledge, policies, and prior artifacts within
-an explicit token budget.
+immutable ResolvedAgent. Deterministic ContextPackage construction now
+assembles provenance-complete Resources, events, repository knowledge,
+policies, and prior artifacts within an explicit token budget. The Workflow
+scheduler now reconciles deterministic parallel-ready waves,
+persists numbered TaskExecution attempts, blocks dependents until prerequisite
+success, and emits append-only lifecycle events through a provider-neutral Task
+executor boundary. The end-to-end MVP workflow is not yet runnable.
 
 ---
 
@@ -88,7 +91,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Completed |
 | 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Not Started |
 | 25 | [AEP-027: Implement Build And Test Evaluation](tasks/AEP-027-implement-build-and-test-evaluation.md) | Completed |
-| 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Not Started |
+| 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Completed |
 | 27 | [AEP-013: Implement AgentInvocation Contract](tasks/AEP-013-implement-agentinvocation-contract.md) | Not Started |
 | 28 | [AEP-028: Implement Publication Policy](tasks/AEP-028-implement-publication-policy.md) | Not Started |
 | 29 | [AEP-029: Implement AnalyzeIssue Task Handler](tasks/AEP-029-implement-analyzeissue-task-handler.md) | Not Started |
@@ -116,7 +119,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-007 | AEP-003, AEP-005 | Completed |
 | AEP-008 | AEP-004, AEP-006, AEP-007 | Completed |
 | AEP-009 | AEP-003 | Completed |
-| AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Not Started |
+| AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Completed |
 | AEP-011 | AEP-002, AEP-004 | Completed |
 | AEP-012 | AEP-003, AEP-011 | Completed |
 | AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |

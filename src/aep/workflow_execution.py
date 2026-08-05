@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-from datetime import datetime
 from functools import cache
 import json
 from pathlib import Path
-import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -17,17 +15,12 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.resource_loader import Resource, ResourceRef
+from aep.runtime_validation import is_rfc3339_timestamp
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 
 
 class InvalidWorkflowExecutionInputError(ValueError):
     """Raised when execution inputs do not describe one resolved trigger."""
-
-
-RFC3339_TIMESTAMP = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:(?P<second>\d{2})"
-    r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
-)
 
 
 class WorkflowExecutionCreator:
@@ -237,29 +230,12 @@ def _runtime_validator(schema_name: str) -> Draft202012Validator:
     # RFC3339 dependency is not installed. Register it locally so validation
     # never silently treats the authoritative timestamp format as an annotation.
     format_checker.checkers = dict(format_checker.checkers)
-    format_checker.checkers["date-time"] = (_is_rfc3339_timestamp, ())
+    format_checker.checkers["date-time"] = (is_rfc3339_timestamp, ())
     return Draft202012Validator(
         schemas[-1],
         registry=registry,
         format_checker=format_checker,
     )
-
-
-def _is_rfc3339_timestamp(value: object) -> bool:
-    if not isinstance(value, str):
-        return True
-    match = RFC3339_TIMESTAMP.fullmatch(value)
-    if match is None:
-        return False
-    parseable = value
-    if match.group("second") == "60":
-        start, end = match.span("second")
-        parseable = f"{value[:start]}59{value[end:]}"
-    try:
-        parsed = datetime.fromisoformat(parseable.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    return parsed.utcoffset() is not None
 
 
 def _ref_identity(ref: ResourceRef) -> str:

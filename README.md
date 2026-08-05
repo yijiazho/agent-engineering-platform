@@ -80,7 +80,7 @@ Installed development package versions are captured in [requirements-dev.lock](r
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 20 of the 37 implementation tasks are complete.
+contracts are established, and 25 of the 37 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -94,6 +94,8 @@ Implemented foundations currently include:
 * GitHub issue-created event normalization and deduplication.
 * Deterministic Event-to-Workflow resolution with explicit versioned references.
 * Deterministic Task DAG resolution with dependency metadata and parallel-ready groups.
+* Retry-safe Workflow scheduling with dependency blocking, numbered attempts,
+  provider-neutral Task executors, and append-only lifecycle events.
 * Stateless Agent resolution into immutable, execution-scoped ResolvedAgent
   inputs with explicit Prompt, Model, non-model Tool, and Policy versions.
 * Idempotent WorkflowExecution trace-root creation with provenance events.
@@ -118,9 +120,8 @@ Implemented foundations currently include:
 * Deterministic, budget-aware ContextPackage construction with provenance for
   repository knowledge, Resources, events, policies, and prior artifacts.
 
-Workflow scheduling, the remaining concrete Tool adapters, publication policy,
-task handlers, service composition, and the end-to-end issue-to-pull-request
-harness remain to be implemented.
+Patch evaluation, publication policy, task handlers, service composition, and
+the end-to-end issue-to-pull-request harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 

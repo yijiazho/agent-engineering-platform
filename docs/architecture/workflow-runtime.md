@@ -97,6 +97,37 @@ TaskExecutions, execute handlers, or allow an Agent or model to choose
 execution order. The scheduler consumes the resolved plan in a separate
 lifecycle step.
 
+## Scheduler Reconciliation
+
+The MVP scheduler advances a resolved plan one parallel-ready wave per
+reconciliation. It reads all persisted TaskExecution attempts for the
+WorkflowExecution, then:
+
+* selects Tasks whose declared dependencies have a successful attempt;
+* creates one idempotent attempt for every ready Task before execution begins;
+* invokes Task handlers through a provider-neutral executor boundary;
+* retries only recoverable failures while the configured attempt limit allows;
+* binds dependents to the exact successful prerequisite attempt identifiers;
+  and
+* records queued, started, succeeded, and failed ExecutionEvents.
+
+Task and event identifiers are deterministic. The atomic TaskExecution status
+transition from `PENDING` to `RUNNING` keeps concurrent reconcilers from
+invoking the same attempt twice. The MVP never reclaims a `RUNNING` attempt from
+elapsed time alone: `startedAt` is evidence, not an ownership lease, and the
+executor may still be live. Genuinely abandoned attempts require explicit
+external resolution until atomic owner-token leases and renewal are available.
+Reconciliation repairs idempotent lifecycle events and WorkflowExecution
+membership before advancing the DAG. A later reconciliation observes newly
+successful prerequisites and schedules the next wave; configuration,
+evaluation, policy, permanent, and exhausted recoverable failures leave
+dependents blocked.
+
+The scheduler loads the authoritative WorkflowExecution from runtime storage,
+verifies immutable caller evidence against it, and validates all
+WorkflowExecution, TaskExecution, and ExecutionEvent records against their
+runtime schemas before scheduler persistence.
+
 ---
 
 # 4. Core Runtime Objects

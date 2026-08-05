@@ -36,3 +36,7 @@ The metadata boundary also indexes runtime objects by producer TaskExecution,
 using either the object's top-level association or its provenance, so artifact
 and execution-evidence lookup remains available across service or adapter
 recreation.
+Workflow schedulers can atomically and idempotently attach a persisted
+TaskExecution identifier to its owning WorkflowExecution. The store verifies
+both objects and their ownership relationship, preventing concurrent
+reconcilers from losing or duplicating `taskExecutionIds` membership.
