@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 19 |
+| Completed | 20 |
 | In Progress | 0 |
-| Not Started | 18 |
+| Not Started | 17 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -46,7 +46,9 @@ provides branch, status, diff, and authorized push operations with redacted
 command evidence. Docker validation now captures deterministic per-command
 execution evidence behind that policy boundary. The GitHub Tool now performs
 structured issue reads and policy-gated pull-request creation through a
-provider-neutral client. The end-to-end MVP workflow is not yet runnable.
+provider-neutral client. Agent resolution now binds Task-assigned Agents to
+explicit Prompt, Model, non-model Tool, and Task/Agent Policy versions in an
+immutable ResolvedAgent. The end-to-end MVP workflow is not yet runnable.
 
 ---
 
@@ -73,7 +75,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 15 | [AEP-009: Build Task DAG Resolver](tasks/AEP-009-build-task-dag-resolver.md) | Completed |
 | 16 | [AEP-020: Implement Pre-Execution Capability Policy](tasks/AEP-020-implement-pre-execution-capability-policy.md) | Completed |
 | 17 | [AEP-008: Create WorkflowExecution](tasks/AEP-008-create-workflowexecution.md) | Completed |
-| 18 | [AEP-012: Implement Agent Resolver](tasks/AEP-012-implement-agent-resolver.md) | Not Started |
+| 18 | [AEP-012: Implement Agent Resolver](tasks/AEP-012-implement-agent-resolver.md) | Completed |
 | 19 | [AEP-021: Implement Filesystem Tool](tasks/AEP-021-implement-filesystem-tool.md) | Completed |
 | 20 | [AEP-022: Implement Git Tool](tasks/AEP-022-implement-git-tool.md) | Completed |
 | 21 | [AEP-023: Implement Docker Validation Tool](tasks/AEP-023-implement-docker-validation-tool.md) | Completed |
@@ -111,7 +113,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-009 | AEP-003 | Completed |
 | AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Not Started |
 | AEP-011 | AEP-002, AEP-004 | Completed |
-| AEP-012 | AEP-003, AEP-011 | Not Started |
+| AEP-012 | AEP-003, AEP-011 | Completed |
 | AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |
 | AEP-014 | AEP-001, AEP-002 | Completed |
 | AEP-015 | None | Completed |

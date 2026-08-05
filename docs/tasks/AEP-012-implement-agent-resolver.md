@@ -1,6 +1,6 @@
 # AEP-012: Implement Agent Resolver
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
