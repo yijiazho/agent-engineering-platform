@@ -48,7 +48,11 @@ def evaluate(
         docker_tool_ref=configured_tool_ref or docker_tool_ref(),
         build_expectation=expectation("build", 0),
         test_expectation=expectation("test", 1),
-        trace_id="trace-validation-0001",
+        correlation={
+            "traceId": "trace-validation-0001",
+            "workflowExecutionId": "workflowexecution-aaaabbbb0001",
+            "taskExecutionId": "taskexecution-aaaabbbb0001",
+        },
         timestamp="2026-08-04T10:01:00Z",
         provenance={
             "actor": "build-test-evaluator",
@@ -298,7 +302,11 @@ def test_floating_evaluation_reference_is_rejected_before_persistence() -> None:
                 {"kind": "Evaluation", "name": "build", "version": "latest"}, 0
             ),
             test_expectation=expectation("test", 1),
-            trace_id="trace-validation-0001",
+            correlation={
+                "traceId": "trace-validation-0001",
+                "workflowExecutionId": "workflowexecution-aaaabbbb0001",
+                "taskExecutionId": "taskexecution-aaaabbbb0001",
+            },
             timestamp="2026-08-04T10:01:00Z",
             provenance={"actor": "evaluator", "resourceRefs": []},
         )

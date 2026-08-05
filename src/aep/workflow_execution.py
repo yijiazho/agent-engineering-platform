@@ -15,6 +15,7 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.resource_loader import Resource, ResourceRef
+from aep.observability import StructuredLifecycleLogger
 from aep.runtime_validation import is_rfc3339_timestamp
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 
@@ -26,8 +27,14 @@ class InvalidWorkflowExecutionInputError(ValueError):
 class WorkflowExecutionCreator:
     """Create one trace root for a deduplicated Event and Workflow pair."""
 
-    def __init__(self, store: RuntimeObjectStore) -> None:
+    def __init__(
+        self,
+        store: RuntimeObjectStore,
+        *,
+        lifecycle_logger: StructuredLifecycleLogger | None = None,
+    ) -> None:
         self._store = store
+        self._lifecycle_logger = lifecycle_logger
 
     def create(
         self,
@@ -96,6 +103,13 @@ class WorkflowExecutionCreator:
             creation_event = _started_event(execution)
             _validate_runtime_record(creation_event, "executionevent.schema.json")
         self._store.append_event(creation_event)
+        if self._lifecycle_logger is not None:
+            self._lifecycle_logger.emit(
+                event_name="WorkflowExecutionStarted",
+                service="workflow-controller",
+                runtime_object=execution,
+                emitted_at=str(execution["createdAt"]),
+            )
         return execution
 
 

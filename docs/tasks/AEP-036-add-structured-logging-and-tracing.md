@@ -1,6 +1,6 @@
 # AEP-036: Add Structured Logging And Tracing
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,19 @@ Implement shared observability support that:
 * TaskExecution, ContextPackage, AgentInvocation, ToolInvocation, EvaluationResult, and PolicyDecision include traceId.
 * Logs include execution id, task id, resource versions, repository revision, and status.
 * Tests verify trace propagation across fake workflow execution.
+
+## Implementation Notes
+
+The shared `aep.observability` module defines validated correlation fields,
+trace-continuity checks, recursive redaction, and an injected-sink lifecycle
+logger. The provider-neutral log schema and deterministic fixture live under
+`schemas/observability/v1/` and `fixtures/observability/`. Required event names,
+fields, propagation rules, and payload exclusions are documented in
+`docs/architecture/observability.md`.
+
+Implemented runtime producers consume `CorrelationContext` or validated
+boundary fields, reject direct/provenance identity conflicts, and carry the
+context through Agent resolution, model and Tool requests, deterministic
+evaluations, policy decisions, and artifact publication. Redaction covers
+compound credential keys, credential-bearing URLs, and artifact body aliases
+without mutating caller data.

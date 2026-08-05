@@ -74,13 +74,14 @@ Installed development package versions are captured in [requirements-dev.lock](r
 * [Architecture Overview](docs/architecture/overview.md)
 * [Runtime Object Model](docs/adr/ADR-002-runtime-object-model.md)
 * [MVP Vertical Slice](docs/adr/ADR-003-mvp-vertical-slice.md)
+* [Structured Observability](docs/architecture/observability.md)
 * [Execution Plan](docs/execution-plan.md)
 * [Implementation Tasks](docs/implementation-tasks.md)
 
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 25 of the 37 implementation tasks are complete.
+contracts are established, and 26 of the 37 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -96,6 +97,9 @@ Implemented foundations currently include:
 * Deterministic Task DAG resolution with dependency metadata and parallel-ready groups.
 * Retry-safe Workflow scheduling with dependency blocking, numbered attempts,
   provider-neutral Task executors, and append-only lifecycle events.
+* Provider-neutral structured lifecycle logging with shared trace correlation,
+  service-boundary propagation, Resource/revision fields, and recursive secret
+  and artifact-body redaction.
 * Stateless Agent resolution into immutable, execution-scoped ResolvedAgent
   inputs with explicit Prompt, Model, non-model Tool, and Policy versions.
 * Idempotent WorkflowExecution trace-root creation with provenance events.

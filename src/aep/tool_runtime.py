@@ -15,6 +15,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from aep.observability import CorrelationContext, bind_correlation
 
 JsonObject = Mapping[str, Any]
 SEMVER_PATTERN = re.compile(
@@ -97,7 +98,7 @@ class ToolRequest:
     caller: ToolCaller
     capabilities: Sequence[str]
     timeout_ms: int
-    trace_id: str
+    correlation: CorrelationContext | Mapping[str, Any]
 
     def __post_init__(self) -> None:
         if self.tool_ref.get("kind") != "Tool":
@@ -117,11 +118,25 @@ class ToolRequest:
             raise ValueError("capabilities must be unique")
         if self.timeout_ms < 1:
             raise ValueError("timeout_ms must be positive")
-        if not self.trace_id:
-            raise ValueError("trace_id must not be empty")
+        context = bind_correlation(self.correlation)
+        if context.task_execution_id is None:
+            raise ValueError("correlation requires taskExecutionId")
+        if (
+            self.caller.kind == "TaskExecution"
+            and self.caller.id != context.task_execution_id
+        ):
+            raise ValueError("caller TaskExecution conflicts with correlation")
         object.__setattr__(self, "tool_ref", _mapping(self.tool_ref))
         object.__setattr__(self, "input", _mapping(self.input))
         object.__setattr__(self, "capabilities", capabilities)
+        object.__setattr__(self, "correlation", context)
+
+    @property
+    def trace_id(self) -> str:
+        """Return the trace carried by the validated boundary context."""
+
+        assert isinstance(self.correlation, CorrelationContext)
+        return self.correlation.trace_id
 
 
 @dataclass(frozen=True)

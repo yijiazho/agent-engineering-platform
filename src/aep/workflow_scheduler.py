@@ -231,12 +231,19 @@ class WorkflowScheduler:
         timestamp: str,
     ) -> RuntimeObject:
         task_ref = _ref_record(node.task_ref)
+        task_execution_id = _task_execution_id(
+            workflow_id, node.task_ref, attempt
+        )
         return self._lifecycle.create(
-            execution_id=_task_execution_id(workflow_id, node.task_ref, attempt),
+            execution_id=task_execution_id,
             workflow_execution_id=workflow_id,
             task_ref=task_ref,
             attempt=attempt,
-            trace_id=trace_id,
+            correlation={
+                "traceId": trace_id,
+                "workflowExecutionId": workflow_id,
+                "taskExecutionId": task_execution_id,
+            },
             timestamp=timestamp,
             provenance={
                 "actor": "workflow-scheduler",

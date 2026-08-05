@@ -25,7 +25,11 @@ def lifecycle_with_pending():
         workflow_execution_id="workflowexecution-123456789abc",
         task_ref={"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
         attempt=1,
-        trace_id="trace-123",
+        correlation={
+            "traceId": "trace-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
         timestamp=CREATED,
         provenance={
             "actor": "workflow-runtime",
@@ -59,7 +63,11 @@ def test_attempt_must_be_a_positive_integer() -> None:
             workflow_execution_id="workflowexecution-123456789abc",
             task_ref={"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
             attempt=True,
-            trace_id="trace-123",
+            correlation={
+                "traceId": "trace-123",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-abcdef123456",
+            },
             timestamp=CREATED,
             provenance={"actor": "workflow-runtime", "resourceRefs": []},
         )
@@ -81,7 +89,11 @@ def test_schema_invalid_timestamp_is_rejected_before_persistence(
             workflow_execution_id="workflowexecution-123456789abc",
             task_ref={"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
             attempt=1,
-            trace_id="trace-123",
+            correlation={
+                "traceId": "trace-123",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-abcdef123456",
+            },
             timestamp=timestamp,
             provenance={"actor": "workflow-runtime", "resourceRefs": []},
         )
@@ -109,7 +121,11 @@ def test_task_reference_must_be_versioned_and_task_specific(
             workflow_execution_id="workflowexecution-123456789abc",
             task_ref=task_ref,
             attempt=1,
-            trace_id="trace-123",
+            correlation={
+                "traceId": "trace-123",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-abcdef123456",
+            },
             timestamp=CREATED,
             provenance={"actor": "workflow-runtime", "resourceRefs": []},
         )
@@ -123,7 +139,11 @@ def test_task_versions_have_distinct_idempotency_keys() -> None:
     common = {
         "workflow_execution_id": "workflowexecution-123456789abc",
         "attempt": 1,
-        "trace_id": "trace-123",
+        "correlation": {
+            "traceId": "trace-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
         "timestamp": CREATED,
         "provenance": {"actor": "workflow-runtime", "resourceRefs": []},
     }
@@ -133,10 +153,16 @@ def test_task_versions_have_distinct_idempotency_keys() -> None:
         task_ref={"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
         **common,
     )
+    version_two_arguments = dict(common)
+    version_two_arguments["correlation"] = {
+        "traceId": "trace-123",
+        "workflowExecutionId": "workflowexecution-123456789abc",
+        "taskExecutionId": "taskexecution-abcdef123456",
+    }
     version_two = lifecycle.create(
         execution_id="taskexecution-abcdef123456",
         task_ref={"kind": "Task", "name": "analyze-issue", "version": "2.0.0"},
-        **common,
+        **version_two_arguments,
     )
 
     assert version_one["id"] != version_two["id"]

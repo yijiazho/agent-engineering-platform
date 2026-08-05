@@ -18,6 +18,7 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.generated_artifact_store import GeneratedArtifactStore
+from aep.observability import StructuredLifecycleLogger, propagation_fields
 from aep.repository_knowledge import (
     CandidateFileQuery,
     DependencyManifestQuery,
@@ -82,6 +83,7 @@ class ContextBuilder:
         repository_knowledge: RepositoryKnowledgeProvider,
         artifact_store: GeneratedArtifactStore,
         runtime_store: RuntimeObjectStore | None = None,
+        lifecycle_logger: StructuredLifecycleLogger | None = None,
     ) -> None:
         if not isinstance(repository_knowledge, RepositoryKnowledgeProvider):
             raise TypeError("repository_knowledge must implement RepositoryKnowledgeProvider")
@@ -90,6 +92,7 @@ class ContextBuilder:
         self._repository_knowledge = repository_knowledge
         self._artifact_store = artifact_store
         self._runtime_store = runtime_store
+        self._lifecycle_logger = lifecycle_logger
 
     def build(
         self,
@@ -143,9 +146,12 @@ class ContextBuilder:
 
         task_ref = _resource_ref(task_data)
         repository_revision = workflow_execution["repositoryRevision"]
-        trace_id = workflow_execution["traceId"]
-        workflow_execution_id = workflow_execution["id"]
         task_execution_id = task_execution["id"]
+        correlation = propagation_fields(
+            workflow_execution, task_execution_id=task_execution_id
+        )
+        trace_id = correlation["traceId"]
+        workflow_execution_id = correlation["workflowExecutionId"]
         base_provenance = {
             "actor": "context-builder",
             "workflowExecutionId": workflow_execution_id,
@@ -348,6 +354,14 @@ class ContextBuilder:
                     "immutable ContextPackage"
                 )
             package = dict(stored)
+        if self._lifecycle_logger is not None:
+            self._lifecycle_logger.emit(
+                event_name="ContextPackageCreated",
+                service="context-builder",
+                runtime_object=package,
+                emitted_at=created_at,
+                status="CREATED",
+            )
         return _freeze(package)
 
     def _validate_prior_producer(

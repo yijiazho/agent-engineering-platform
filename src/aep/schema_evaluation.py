@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator, SchemaError, ValidationError, valid
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
+from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 
 
@@ -31,12 +32,17 @@ def evaluate_schema(
     target: Mapping[str, Any],
     content: Any,
     schema: Mapping[str, Any],
-    trace_id: str,
+    correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
     provenance: Mapping[str, Any],
 ) -> RuntimeObject:
     """Validate content, persist immutable evidence, and return the saved result."""
 
+    context = bind_correlation(
+        correlation,
+        task_execution_id=task_execution_id,
+        provenance=provenance,
+    )
     schema_copy = deepcopy(dict(schema))
     errors = _validation_errors(content, schema_copy)
     outcome = "PASS" if not errors else "FAIL"
@@ -57,7 +63,7 @@ def evaluate_schema(
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "EvaluationResult",
         "id": result_id,
-        "traceId": trace_id,
+        "traceId": context.trace_id,
         "createdAt": timestamp,
         "updatedAt": timestamp,
         "provenance": deepcopy(dict(provenance)),

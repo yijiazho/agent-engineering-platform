@@ -164,7 +164,11 @@ def request(
         caller=ToolCaller(kind="TaskExecution", id="taskexecution-git00000001"),
         capabilities=capabilities,
         timeout_ms=5_000,
-        trace_id=f"trace-{operation}",
+        correlation={
+            "traceId": f"trace-{operation}",
+            "workflowExecutionId": "workflowexecution-git00000001",
+            "taskExecutionId": "taskexecution-git00000001",
+        },
     )
 
 
@@ -452,7 +456,11 @@ def test_request_cannot_escape_configured_revision_or_branch(
         caller=ToolCaller(kind="TaskExecution", id="taskexecution-git00000001"),
         capabilities=("git.read",),
         timeout_ms=5_000,
-        trace_id="trace-invalid-state",
+        correlation={
+            "traceId": "trace-invalid-state",
+            "workflowExecutionId": "workflowexecution-git00000001",
+            "taskExecutionId": "taskexecution-git00000001",
+        },
     )
 
     result = invoke(invalid_request, adapter(repository, revision, logs))

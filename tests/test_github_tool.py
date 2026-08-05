@@ -180,7 +180,11 @@ def request(
         caller=ToolCaller(kind="TaskExecution", id=TASK_ID),
         capabilities=capabilities,
         timeout_ms=timeout_ms,
-        trace_id=TRACE_ID,
+        correlation={
+            "traceId": TRACE_ID,
+            "workflowExecutionId": WORKFLOW_ID,
+            "taskExecutionId": TASK_ID,
+        },
     )
 
 

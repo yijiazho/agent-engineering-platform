@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/observability/v1/lifecycle-log.schema.json",
+  "title": "AEP structured lifecycle log",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "eventName", "emittedAt", "service", "level",
+    "traceId", "executionId", "taskId", "runtimeKind", "runtimeObjectId",
+    "resourceVersions", "repositoryRevision", "status", "failureClass"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "aep.dev/observability/v1alpha1" },
+    "eventName": {
+      "type": "string",
+      "enum": [
+        "WorkflowExecutionStarted", "WorkflowExecutionCompleted", "WorkflowExecutionFailed", "WorkflowExecutionCancelled",
+        "TaskExecutionQueued", "TaskExecutionStarted", "TaskExecutionSucceeded", "TaskExecutionFailed", "TaskExecutionCancelled", "TaskExecutionAwaitingApproval",
+        "ContextPackageCreated", "AgentResolved",
+        "AgentInvocationStarted", "AgentInvocationCompleted", "AgentInvocationFailed",
+        "ModelInvocationStarted", "ModelInvocationCompleted", "ModelInvocationFailed",
+        "ToolInvocationStarted", "ToolInvocationCompleted", "ToolInvocationFailed",
+        "EvaluationCompleted", "EvaluationFailed", "PolicyDecisionRecorded",
+        "ApprovalRequested", "ApprovalRecorded", "GeneratedArtifactCreated"
+      ]
+    },
+    "emittedAt": { "type": "string", "format": "date-time" },
+    "service": { "type": "string", "minLength": 1 },
+    "level": { "type": "string", "enum": ["INFO", "ERROR"] },
+    "traceId": { "type": "string", "minLength": 8 },
+    "executionId": { "type": "string", "minLength": 1 },
+    "taskId": { "type": ["string", "null"], "minLength": 1 },
+    "runtimeKind": { "type": "string", "minLength": 1 },
+    "runtimeObjectId": { "type": "string", "minLength": 1 },
+    "resourceVersions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "name", "version"],
+        "properties": {
+          "kind": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "version": { "type": "string", "minLength": 1, "not": { "const": "latest" } }
+        }
+      }
+    },
+    "repositoryRevision": { "type": "string", "minLength": 7 },
+    "status": { "type": "string", "minLength": 1 },
+    "failureClass": {
+      "type": ["string", "null"],
+      "enum": [null, "RECOVERABLE", "CONFIGURATION", "EVALUATION", "POLICY", "PERMANENT"]
+    },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "attributes": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionStarted", "WorkflowExecutionCompleted", "WorkflowExecutionFailed", "WorkflowExecutionCancelled"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "WorkflowExecution" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["TaskExecutionQueued", "TaskExecutionStarted", "TaskExecutionSucceeded", "TaskExecutionFailed", "TaskExecutionCancelled", "TaskExecutionAwaitingApproval"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "TaskExecution" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "ContextPackageCreated" } } },
+      "then": { "properties": { "runtimeKind": { "const": "ContextPackage" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "AgentResolved" } } },
+      "then": { "properties": { "runtimeKind": { "const": "ResolvedAgent" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["AgentInvocationStarted", "AgentInvocationCompleted", "AgentInvocationFailed"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "AgentInvocation" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["ModelInvocationStarted", "ModelInvocationCompleted", "ModelInvocationFailed"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "ModelInvocation" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["ToolInvocationStarted", "ToolInvocationCompleted", "ToolInvocationFailed"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "ToolInvocation" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["EvaluationCompleted", "EvaluationFailed"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "EvaluationResult" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "PolicyDecisionRecorded" } } },
+      "then": { "properties": { "runtimeKind": { "const": "PolicyDecision" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["ApprovalRequested", "ApprovalRecorded"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "Approval" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "GeneratedArtifactCreated" } } },
+      "then": { "properties": { "runtimeKind": { "const": "GeneratedArtifact" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionStarted", "TaskExecutionStarted", "AgentInvocationStarted", "ModelInvocationStarted", "ToolInvocationStarted"] } } },
+      "then": { "properties": { "status": { "const": "RUNNING" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "TaskExecutionQueued" } } },
+      "then": { "properties": { "status": { "enum": ["PENDING", "QUEUED"] } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionCompleted", "TaskExecutionSucceeded", "AgentInvocationCompleted", "ModelInvocationCompleted", "ToolInvocationCompleted", "EvaluationCompleted"] } } },
+      "then": { "properties": { "status": { "const": "SUCCEEDED" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionFailed", "TaskExecutionFailed", "AgentInvocationFailed", "ModelInvocationFailed", "ToolInvocationFailed", "EvaluationFailed"] } } },
+      "then": {
+        "properties": {
+          "status": { "const": "FAILED" },
+          "failureClass": { "type": "string", "enum": ["RECOVERABLE", "CONFIGURATION", "EVALUATION", "POLICY", "PERMANENT"] },
+          "level": { "const": "ERROR" }
+        }
+      },
+      "else": { "properties": { "failureClass": { "const": null }, "level": { "const": "INFO" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionCancelled", "TaskExecutionCancelled"] } } },
+      "then": { "properties": { "status": { "const": "CANCELLED" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "TaskExecutionAwaitingApproval" } } },
+      "then": { "properties": { "status": { "const": "AWAITING_APPROVAL" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["ContextPackageCreated", "AgentResolved", "GeneratedArtifactCreated"] } } },
+      "then": { "properties": { "status": { "const": "CREATED" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "PolicyDecisionRecorded" } } },
+      "then": { "properties": { "status": { "const": "RECORDED" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "ApprovalRequested" } } },
+      "then": { "properties": { "status": { "const": "PENDING" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "const": "ApprovalRecorded" } } },
+      "then": { "properties": { "status": { "enum": ["APPROVED", "REJECTED", "EXPIRED"] } } }
+    }
+  ]
+}

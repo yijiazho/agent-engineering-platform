@@ -35,9 +35,18 @@ def evaluate(
         target=target or {"type": "GeneratedArtifact", "id": "generatedartifact-123456789abc"},
         content=content,
         schema=SCHEMA if schema is None else schema,
-        trace_id="trace-123",
+        correlation={
+            "traceId": "trace-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
         timestamp="2026-07-11T00:00:00Z",
-        provenance={"actor": "schema-evaluator", "resourceRefs": []},
+        provenance={
+            "actor": "schema-evaluator",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+            "resourceRefs": [],
+        },
     )
     return store, result
 

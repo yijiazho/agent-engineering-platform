@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
+from aep.observability import CorrelationContext, ObservabilityContractError
 from aep.runtime_store import InMemoryRuntimeObjectStore, RuntimeObjectStore
 
 
@@ -163,6 +164,12 @@ class InMemoryGeneratedArtifactStore(GeneratedArtifactStore):
         created_at = value.get("createdAt")
         if "publishedAt" not in value and isinstance(created_at, str):
             value["publishedAt"] = created_at
+        try:
+            CorrelationContext.from_runtime_object(value)
+        except ObservabilityContractError as error:
+            raise GeneratedArtifactValidationError(
+                f"invalid GeneratedArtifact correlation: {error}"
+            ) from error
         _validate_metadata(value)
 
         artifact_id = value["id"]

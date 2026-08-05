@@ -13,6 +13,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, SchemaError
 
+from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import (
     RuntimeObject,
     RuntimeObjectAlreadyExistsError,
@@ -99,7 +100,7 @@ class PreExecutionCapabilityPolicy:
         resource_scope: Mapping[str, Any],
         execution_context: Mapping[str, Any],
         applicable_policies: Sequence[ApplicablePolicy],
-        trace_id: str,
+        correlation: CorrelationContext | Mapping[str, Any],
         timestamp: str,
     ) -> RuntimeObject:
         """Compose all matching rules and persist the most restrictive decision."""
@@ -108,7 +109,9 @@ class PreExecutionCapabilityPolicy:
         _require_text("task_execution_id", task_execution_id)
         _require_text("capability", capability)
         _require_text("actor", actor)
-        _require_text("trace_id", trace_id)
+        context = bind_correlation(
+            correlation, task_execution_id=task_execution_id
+        )
         _require_text("timestamp", timestamp)
         if not isinstance(resource_scope, Mapping):
             raise CapabilityPolicyContractError("resource_scope must be a mapping")
@@ -176,6 +179,7 @@ class PreExecutionCapabilityPolicy:
         provenance = {
             "actor": "policy-engine",
             "caller": actor,
+            "workflowExecutionId": context.workflow_execution_id,
             "taskExecutionId": task_execution_id,
             "resourceRefs": policy_refs,
         }
@@ -183,7 +187,7 @@ class PreExecutionCapabilityPolicy:
             "apiVersion": "aep.dev/v1alpha1",
             "kind": "PolicyDecision",
             "id": decision_id,
-            "traceId": trace_id,
+            "traceId": context.trace_id,
             "createdAt": timestamp,
             "updatedAt": timestamp,
             "provenance": provenance,
@@ -203,7 +207,7 @@ class PreExecutionCapabilityPolicy:
         deterministic_key = _decision_key(
             decision_id=decision_id,
             task_execution_id=task_execution_id,
-            trace_id=trace_id,
+            trace_id=context.trace_id,
             capability=capability,
             actor=actor,
             resource_scope=resource_scope,
@@ -271,7 +275,7 @@ class PreExecutionCapabilityPolicy:
                     resource_scope=scope_copy,
                     execution_context=context_copy,
                     applicable_policies=policies_copy,
-                    trace_id=request.trace_id,
+                    correlation=request.correlation,
                     timestamp=timestamp,
                 )
                 if result["decision"] != PolicyDecision.ALLOW.value:

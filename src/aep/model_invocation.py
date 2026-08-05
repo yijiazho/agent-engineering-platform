@@ -14,6 +14,8 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
+from aep.observability import CorrelationContext, bind_correlation
+
 
 JsonObject = Mapping[str, Any]
 
@@ -55,9 +57,14 @@ class ModelRequest:
 
     configuration: ModelConfiguration
     input: JsonObject
+    correlation: CorrelationContext | Mapping[str, Any]
 
     def __post_init__(self) -> None:
+        context = bind_correlation(self.correlation)
+        if context.task_execution_id is None:
+            raise ValueError("correlation requires taskExecutionId")
         object.__setattr__(self, "input", _mapping(self.input))
+        object.__setattr__(self, "correlation", context)
 
 
 @dataclass(frozen=True)
@@ -148,7 +155,6 @@ def model_invocation_record(
     *,
     invocation_id: str,
     agent_invocation_id: str,
-    trace_id: str,
     request: ModelRequest,
     response: ModelResponse,
     started_at: str,
@@ -160,11 +166,12 @@ def model_invocation_record(
 ) -> dict[str, Any]:
     """Build the persistence-ready successful ModelInvocation runtime record."""
 
+    context = bind_correlation(request.correlation, provenance=provenance)
     record: dict[str, Any] = {
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "ModelInvocation",
         "id": invocation_id,
-        "traceId": trace_id,
+        "traceId": context.trace_id,
         "createdAt": started_at,
         "updatedAt": completed_at,
         "agentInvocationId": agent_invocation_id,

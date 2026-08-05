@@ -16,6 +16,11 @@ from referencing.jsonschema import DRAFT202012
 
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.runtime_validation import is_rfc3339_timestamp
+from aep.observability import (
+    CorrelationContext,
+    StructuredLifecycleLogger,
+    bind_correlation,
+)
 
 
 class TaskStatus(str, Enum):
@@ -73,8 +78,14 @@ class InvalidTaskReferenceError(ValueError):
 class TaskExecutionLifecycle:
     """Persist explicit TaskExecution state changes through a runtime store."""
 
-    def __init__(self, store: RuntimeObjectStore) -> None:
+    def __init__(
+        self,
+        store: RuntimeObjectStore,
+        *,
+        lifecycle_logger: StructuredLifecycleLogger | None = None,
+    ) -> None:
         self._store = store
+        self._lifecycle_logger = lifecycle_logger
 
     def create(
         self,
@@ -83,7 +94,7 @@ class TaskExecutionLifecycle:
         workflow_execution_id: str,
         task_ref: Mapping[str, Any],
         attempt: int,
-        trace_id: str,
+        correlation: CorrelationContext | Mapping[str, Any],
         timestamp: str,
         provenance: Mapping[str, Any],
         dependency_task_execution_ids: tuple[str, ...] = (),
@@ -91,11 +102,20 @@ class TaskExecutionLifecycle:
         if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
             raise ValueError("attempt must be positive")
         _validate_task_ref(task_ref)
+        context = bind_correlation(
+            correlation,
+            task_execution_id=execution_id,
+            provenance=provenance,
+        )
+        if context.workflow_execution_id != workflow_execution_id:
+            raise ValueError(
+                "workflow_execution_id conflicts with the correlation context"
+            )
         record = {
             "apiVersion": "aep.dev/v1alpha1",
             "kind": "TaskExecution",
             "id": execution_id,
-            "traceId": trace_id,
+            "traceId": context.trace_id,
             "createdAt": timestamp,
             "updatedAt": timestamp,
             "provenance": deepcopy(dict(provenance)),
@@ -110,7 +130,9 @@ class TaskExecutionLifecycle:
         )
         _validate_task_execution(record)
         key = f"task-execution:{workflow_execution_id}:{task_identity}:{attempt}"
-        return self._store.create(record, deterministic_key=key)
+        created = self._store.create(record, deterministic_key=key)
+        self._emit("TaskExecutionQueued", created, timestamp)
+        return created
 
     def start(self, execution_id: str, *, timestamp: str) -> RuntimeObject:
         return self._transition(
@@ -175,12 +197,17 @@ class TaskExecutionLifecycle:
             )
         provenance = deepcopy(dict(previous["provenance"]))
         provenance["parentId"] = execution_id
+        previous_context = CorrelationContext.from_runtime_object(previous)
         return self.create(
             execution_id=new_execution_id,
             workflow_execution_id=previous["workflowExecutionId"],
             task_ref=previous["taskRef"],
             attempt=previous["attempt"] + 1,
-            trace_id=previous["traceId"],
+            correlation=CorrelationContext(
+                previous_context.trace_id,
+                previous_context.workflow_execution_id,
+                new_execution_id,
+            ),
             timestamp=timestamp,
             provenance=provenance,
             dependency_task_execution_ids=tuple(
@@ -202,13 +229,33 @@ class TaskExecutionLifecycle:
             raise InvalidTaskTransitionError(
                 f"TaskExecution cannot transition from {current.value} to {target.value}"
             )
-        return self._store.update_status(
+        updated = self._store.update_status(
             execution_id,
             target.value,
             expected_status=current.value,
             updated_at=timestamp,
             changes=changes,
         )
+        event_name = {
+            TaskStatus.RUNNING: "TaskExecutionStarted",
+            TaskStatus.SUCCEEDED: "TaskExecutionSucceeded",
+            TaskStatus.FAILED: "TaskExecutionFailed",
+            TaskStatus.CANCELLED: "TaskExecutionCancelled",
+            TaskStatus.AWAITING_APPROVAL: "TaskExecutionAwaitingApproval",
+        }[target]
+        self._emit(event_name, updated, timestamp)
+        return updated
+
+    def _emit(
+        self, event_name: str, runtime_object: RuntimeObject, timestamp: str
+    ) -> None:
+        if self._lifecycle_logger is not None:
+            self._lifecycle_logger.emit(
+                event_name=event_name,
+                service="workflow-runtime",
+                runtime_object=runtime_object,
+                emitted_at=timestamp,
+            )
 
     def _require(self, execution_id: str) -> RuntimeObject:
         record = self._store.get(execution_id)

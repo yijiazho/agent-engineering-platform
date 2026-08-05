@@ -50,10 +50,21 @@ def request(
     return ToolRequest(
         tool_ref={"kind": "Tool", "name": "filesystem", "version": "1.0.0"},
         input={"operation": operation, "path": path, **values},
-        caller=ToolCaller(kind=caller_kind, id="agentinvocation-123456789abc"),
+        caller=ToolCaller(
+            kind=caller_kind,
+            id=(
+                "taskexecution-123456789abc"
+                if caller_kind == "TaskExecution"
+                else "agentinvocation-123456789abc"
+            ),
+        ),
         capabilities=(f"filesystem.{operation}",),
         timeout_ms=1000,
-        trace_id="trace-filesystem-123",
+        correlation={
+            "traceId": "trace-filesystem-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
     )
 
 
@@ -407,7 +418,11 @@ def test_write_capability_cannot_be_omitted_even_with_permissive_hook(
         ),
         capabilities=("filesystem.read",),
         timeout_ms=1000,
-        trace_id="trace-filesystem-123",
+        correlation={
+            "traceId": "trace-filesystem-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
     )
 
     result, _ = invoke(tool, store, tool_request)
