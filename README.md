@@ -115,6 +115,8 @@ Implemented foundations currently include:
   durations, logs addresses, and timeout or missing-output evidence.
 * A policy-gated GitHub Tool adapter for issue reads and pull-request creation.
 * Deterministic JSON Schema evaluation.
+* Deterministic patch applicability and allowed-path evaluation with immutable
+  changed-file and Git diagnostic evidence.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
