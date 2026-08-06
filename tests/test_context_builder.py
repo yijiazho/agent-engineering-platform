@@ -11,6 +11,7 @@ from aep.context_builder import (
     RequiredContextError,
 )
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
+from aep.observability import StructuredLifecycleLogger
 from aep.repository_knowledge import (
     DependencyManifest,
     InMemoryRepositoryKnowledgeProvider,
@@ -275,6 +276,7 @@ def builder(
     *,
     provider: InMemoryRepositoryKnowledgeProvider | None = None,
     runtime_store: InMemoryRuntimeObjectStore | None = None,
+    lifecycle_logger: StructuredLifecycleLogger | None = None,
 ) -> ContextBuilder:
     resolved_runtime_store = runtime_store or InMemoryRuntimeObjectStore()
     if resolved_runtime_store.get(PRIOR_TASK_EXECUTION_ID) is None:
@@ -283,6 +285,7 @@ def builder(
         repository_knowledge=provider or knowledge_provider(),
         artifact_store=artifact_store(),
         runtime_store=resolved_runtime_store,
+        lifecycle_logger=lifecycle_logger,
     )
 
 
@@ -365,6 +368,27 @@ def test_persists_idempotently_when_runtime_store_is_supplied() -> None:
 
     assert first == second
     assert runtime_store.get(first["id"])["kind"] == "ContextPackage"
+
+
+def test_emits_context_created_with_boundary_correlation() -> None:
+    captured: list[dict[str, object]] = []
+    logger = StructuredLifecycleLogger(lambda value: captured.append(dict(value)))
+    task_resource = task("analyze-issue", ["issue"])
+
+    context = builder(lifecycle_logger=logger).build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=event(),
+        created_at=CREATED_AT,
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["eventName"] == "ContextPackageCreated"
+    assert captured[0]["traceId"] == context["traceId"]
+    assert captured[0]["executionId"] == WORKFLOW_ID
+    assert captured[0]["taskId"] == TASK_EXECUTION_ID
+    assert captured[0]["repositoryRevision"] == REVISION
 
 
 def test_rejects_replacing_the_package_for_one_task_execution() -> None:

@@ -54,6 +54,15 @@ def test_publish_separates_metadata_from_content_and_verifies_digest() -> None:
     assert store.get_content(artifact["id"]) == content
 
 
+def test_publish_rejects_conflicting_task_correlation() -> None:
+    store = InMemoryGeneratedArtifactStore()
+    metadata = artifact_metadata("generatedartifact-123456789abc")
+    metadata["provenance"]["taskExecutionId"] = "taskexecution-abcdef123456"
+
+    with pytest.raises(GeneratedArtifactValidationError, match="conflicting"):
+        store.publish(metadata, b"content")
+
+
 def test_duplicate_structured_content_has_one_content_object() -> None:
     content_store = InMemoryContentAddressedStore()
     store = InMemoryGeneratedArtifactStore(content_store=content_store)

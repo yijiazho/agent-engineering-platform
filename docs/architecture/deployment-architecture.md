@@ -554,12 +554,21 @@ Every runtime object emits structured logs.
 Logs always include:
 
 * execution ID
+* task ID when the event is within a TaskExecution
+* trace ID
 * workflow version
 * task version
 * agent version
 * repository revision
+* status, timing, and failure classification
 
 Logs are immutable.
+
+The provider-neutral field contract, lifecycle event names, service-boundary
+propagation rules, and redaction requirements are defined in
+[Structured Observability](observability.md). Secrets and artifact bodies are
+never lifecycle-log fields; logs retain only safe identifiers and content
+addresses for large evidence.
 
 ---
 

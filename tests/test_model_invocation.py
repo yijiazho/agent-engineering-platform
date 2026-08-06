@@ -22,6 +22,11 @@ def request() -> ModelRequest:
             timeout_ms=1000,
         ),
         input={"messages": [{"role": "user", "content": "Return JSON"}]},
+        correlation={
+            "traceId": "trace-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
     )
 
 
@@ -87,7 +92,6 @@ def test_builds_modelinvocation_record_with_model_and_execution_metadata() -> No
     record = model_invocation_record(
         invocation_id="modelinvocation-123456789abc",
         agent_invocation_id="agentinvocation-123456789abc",
-        trace_id="trace-123",
         request=model_request,
         response=response,
         started_at="2026-07-11T00:00:00Z",
@@ -97,6 +101,8 @@ def test_builds_modelinvocation_record_with_model_and_execution_metadata() -> No
         schema_validation="PASSED",
         provenance={
             "actor": "fake-model-adapter",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
             "resourceRefs": [
                 {"kind": "Model", "name": "test-model", "version": "1.0.0"}
             ],
@@ -109,6 +115,10 @@ def test_builds_modelinvocation_record_with_model_and_execution_metadata() -> No
     assert record["tokenUsage"] == {"input": 8, "output": 3}
     assert record["latencyMs"] == 12
     assert record["providerMetadata"] == {"requestId": "fake-1"}
+    assert record["traceId"] == "trace-123"
+    assert record["provenance"]["workflowExecutionId"] == (
+        "workflowexecution-123456789abc"
+    )
 
 
 def test_request_copies_mutable_configuration_and_input() -> None:
@@ -117,7 +127,15 @@ def test_request_copies_mutable_configuration_and_input() -> None:
     configuration = ModelConfiguration(
         model_ref=model_ref, provider="local", model="test", parameters={}
     )
-    model_request = ModelRequest(configuration=configuration, input=assembled_input)
+    model_request = ModelRequest(
+        configuration=configuration,
+        input=assembled_input,
+        correlation={
+            "traceId": "trace-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
+    )
     model_ref["name"] = "changed"
     assembled_input["messages"] = ["changed"]
 

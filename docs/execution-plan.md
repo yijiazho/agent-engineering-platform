@@ -60,7 +60,10 @@ persists numbered TaskExecution attempts, blocks dependents until prerequisite
 success, and emits append-only lifecycle events through a provider-neutral Task
 executor boundary. The seven MVP control/execution service boundaries
 now run in a credential-free local composition with explicit ports, health
-checks, one repository and Workspace, and externalized local persistence.
+checks, one repository and Workspace, and externalized local persistence. 
+Shared structured observability now propagates one trace
+through runtime and service boundaries and emits redacted lifecycle logs with
+immutable execution, Resource, revision, status, timing, and failure evidence.
 The end-to-end MVP workflow is not yet runnable.
 
 ---
@@ -106,7 +109,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 33 | [AEP-033: Implement EvaluateAcceptance Task Handler](tasks/AEP-033-implement-evaluateacceptance-task-handler.md) | Not Started |
 | 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Not Started |
 | 35 | [AEP-035: Compose MVP Services](tasks/AEP-035-compose-mvp-services.md) | Completed |
-| 36 | [AEP-036: Add Structured Logging And Tracing](tasks/AEP-036-add-structured-logging-and-tracing.md) | Not Started |
+| 36 | [AEP-036: Add Structured Logging And Tracing](tasks/AEP-036-add-structured-logging-and-tracing.md) | Completed |
 | 37 | [AEP-037: Build End-To-End MVP Harness](tasks/AEP-037-build-end-to-end-mvp-harness.md) | Not Started |
 
 ---
@@ -150,7 +153,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-033 | AEP-028, AEP-032 | Not Started |
 | AEP-034 | AEP-024, AEP-028, AEP-033 | Not Started |
 | AEP-035 | AEP-003, AEP-004 | Completed |
-| AEP-036 | AEP-004, AEP-008, AEP-011 | Not Started |
+| AEP-036 | AEP-004, AEP-008, AEP-011 | Completed |
 | AEP-037 | AEP-034, AEP-035, AEP-036 | Not Started |
 
 ---

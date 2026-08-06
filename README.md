@@ -104,6 +104,7 @@ that recoverable local state, run the same command with `--volumes`.
 * [Architecture Overview](docs/architecture/overview.md)
 * [Runtime Object Model](docs/adr/ADR-002-runtime-object-model.md)
 * [MVP Vertical Slice](docs/adr/ADR-003-mvp-vertical-slice.md)
+* [Structured Observability](docs/architecture/observability.md)
 * [Execution Plan](docs/execution-plan.md)
 * [Implementation Tasks](docs/implementation-tasks.md)
 
@@ -126,6 +127,9 @@ Implemented foundations currently include:
 * Deterministic Task DAG resolution with dependency metadata and parallel-ready groups.
 * Retry-safe Workflow scheduling with dependency blocking, numbered attempts,
   provider-neutral Task executors, and append-only lifecycle events.
+* Provider-neutral structured lifecycle logging with shared trace correlation,
+  service-boundary propagation, Resource/revision fields, and recursive secret
+  and artifact-body redaction.
 * Stateless Agent resolution into immutable, execution-scoped ResolvedAgent
   inputs with explicit Prompt, Model, non-model Tool, and Policy versions.
 * Idempotent WorkflowExecution trace-root creation with provenance events.

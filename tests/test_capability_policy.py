@@ -67,7 +67,11 @@ def evaluate(
         },
         execution_context=execution_context or {"repository": "acme/widgets"},
         applicable_policies=policies,
-        trace_id="trace-policy-123",
+        correlation={
+            "traceId": "trace-policy-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": TASK_EXECUTION_ID,
+        },
         timestamp="2026-07-30T12:00:00Z",
     )
 
@@ -240,7 +244,11 @@ def test_tool_authorization_boundary_persists_each_decision_and_blocks_approval(
         ),
         capabilities=("filesystem.write", "git.push"),
         timeout_ms=1000,
-        trace_id="trace-policy-123",
+        correlation={
+            "traceId": "trace-policy-123",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": TASK_EXECUTION_ID,
+        },
     )
 
     assert boundary(request) is False

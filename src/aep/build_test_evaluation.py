@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
+from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import SEMVER_PATTERN
 
@@ -56,7 +57,7 @@ def evaluate_build_and_test(
     docker_tool_ref: Mapping[str, Any],
     build_expectation: ValidationExpectation,
     test_expectation: ValidationExpectation,
-    trace_id: str,
+    correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
     provenance: Mapping[str, Any],
 ) -> tuple[RuntimeObject, RuntimeObject]:
@@ -75,9 +76,14 @@ def evaluate_build_and_test(
             "build and test expectations must select different commands"
         )
 
+    context = bind_correlation(
+        correlation,
+        task_execution_id=task_execution_id,
+        provenance=provenance,
+    )
     invocation = deepcopy(dict(tool_invocation))
     _validate_invocation_identity(
-        invocation, docker_tool_ref, task_execution_id, trace_id
+        invocation, docker_tool_ref, task_execution_id, context.trace_id
     )
     requested_commands, request_error = _requested_commands(invocation)
     command_records, output_error, sequence_error = _command_records(
@@ -99,7 +105,7 @@ def evaluate_build_and_test(
         command_records=command_records,
         shared_configuration_error=shared_configuration_error,
         output_error=output_error,
-        trace_id=trace_id,
+        trace_id=context.trace_id,
         timestamp=timestamp,
         provenance=provenance,
     )
@@ -113,7 +119,7 @@ def evaluate_build_and_test(
         command_records=command_records,
         shared_configuration_error=shared_configuration_error,
         output_error=output_error,
-        trace_id=trace_id,
+        trace_id=context.trace_id,
         timestamp=timestamp,
         provenance=provenance,
     )

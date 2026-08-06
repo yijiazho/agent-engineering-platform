@@ -18,6 +18,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
+from aep.observability import CorrelationContext, bind_correlation
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef, format_ref
 
 
@@ -98,16 +99,17 @@ def resolve_agent(
     agent_ref: ResourceRef,
     resources: ResourceCollection,
     *,
-    task_execution_id: str,
-    trace_id: str,
+    correlation: CorrelationContext | Mapping[str, Any],
     resolved_at: str,
 ) -> ResolvedAgent:
     """Bind one Task's Agent to explicit invocation-time Resource versions."""
 
     if not isinstance(resources, ResourceCollection):
         raise TypeError("resources must be a ResourceCollection")
-    _require_text("task_execution_id", task_execution_id)
-    _require_text("trace_id", trace_id)
+    context = bind_correlation(correlation)
+    if context.task_execution_id is None:
+        raise InvalidAgentReferenceError("correlation requires taskExecutionId")
+    task_execution_id = context.task_execution_id
     _require_text("resolved_at", resolved_at)
 
     task_ref = _validate_ref(task_ref, expected_kind="Task", field="task_ref")
@@ -184,11 +186,12 @@ def resolve_agent(
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "ResolvedAgent",
         "id": resolved_agent_id,
-        "traceId": trace_id,
+        "traceId": context.trace_id,
         "createdAt": resolved_at,
         "updatedAt": resolved_at,
         "provenance": {
             "actor": "agent-resolver",
+            "workflowExecutionId": context.workflow_execution_id,
             "taskExecutionId": task_execution_id,
             "resourceRefs": [_ref_record(ref) for ref in resource_refs],
         },

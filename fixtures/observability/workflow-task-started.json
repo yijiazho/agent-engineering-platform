@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "aep.dev/observability/v1alpha1",
+  "eventName": "TaskExecutionStarted",
+  "emittedAt": "2026-08-04T18:00:01Z",
+  "service": "workflow-runtime",
+  "level": "INFO",
+  "traceId": "trace-fake-workflow-0001",
+  "executionId": "workflowexecution-000000000001",
+  "taskId": "taskexecution-000000000001",
+  "runtimeKind": "TaskExecution",
+  "runtimeObjectId": "taskexecution-000000000001",
+  "resourceVersions": [
+    { "kind": "Task", "name": "analyze-issue", "version": "1.0.0" },
+    { "kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0" }
+  ],
+  "repositoryRevision": "abc1234",
+  "status": "RUNNING",
+  "failureClass": null,
+  "durationMs": 1,
+  "attributes": { "queue": "default" }
+}

@@ -60,7 +60,11 @@ def request(
         caller=ToolCaller(**value["caller"]),
         capabilities=capabilities,
         timeout_ms=value["timeoutMs"],
-        trace_id=value["traceId"],
+        correlation={
+            "traceId": value["traceId"],
+            "workflowExecutionId": "workflowexecution-000000000001",
+            "taskExecutionId": value["caller"]["id"],
+        },
     )
 
 
@@ -525,7 +529,11 @@ def test_invalid_configuration_is_rejected_before_policy_and_execution(
         caller=ToolCaller(**raw["caller"]),
         capabilities=raw["capabilities"],
         timeout_ms=raw["timeoutMs"],
-        trace_id=raw["traceId"],
+        correlation={
+            "traceId": raw["traceId"],
+            "workflowExecutionId": "workflowexecution-000000000001",
+            "taskExecutionId": raw["caller"]["id"],
+        },
     )
     executor = FakeDockerExecutor(outcome())
     authorization_called = False

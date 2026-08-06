@@ -27,7 +27,12 @@ def request(data: dict | None = None) -> ToolRequest:
     return ToolRequest(
         tool_ref=value["toolRef"], input=value["input"],
         caller=ToolCaller(**value["caller"]), capabilities=value["capabilities"],
-        timeout_ms=value["timeoutMs"], trace_id=value["traceId"],
+        timeout_ms=value["timeoutMs"],
+        correlation={
+            "traceId": value["traceId"],
+            "workflowExecutionId": "workflowexecution-000000000001",
+            "taskExecutionId": "taskexecution-000000000001",
+        },
     )
 
 
@@ -67,7 +72,28 @@ def test_success_contract_contains_request_and_result_evidence() -> None:
     assert actual.metrics.duration_ms == 8
     assert tool_request.capabilities == ("filesystem.read",)
     assert tool_request.trace_id == "trace-tool-0001"
+    assert tool_request.correlation.workflow_execution_id == (
+        "workflowexecution-000000000001"
+    )
     assert adapter.executions[0].cleaned_up is True
+
+
+def test_task_caller_must_match_correlation_context() -> None:
+    value = load_fixture("success")["request"]
+
+    with pytest.raises(ValueError, match="caller TaskExecution conflicts"):
+        ToolRequest(
+            tool_ref=value["toolRef"],
+            input=value["input"],
+            caller=ToolCaller(**value["caller"]),
+            capabilities=value["capabilities"],
+            timeout_ms=value["timeoutMs"],
+            correlation={
+                "traceId": value["traceId"],
+                "workflowExecutionId": "workflowexecution-000000000001",
+                "taskExecutionId": "taskexecution-999999999999",
+            },
+        )
 
 
 def test_invalid_input_is_normalized_before_adapter_execution() -> None:

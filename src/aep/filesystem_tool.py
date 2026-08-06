@@ -14,6 +14,7 @@ from typing import Any, BinaryIO, Callable
 from uuid import uuid4
 
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
+from aep.observability import bind_correlation
 from aep.tool_runtime import (
     AuthorizationHook,
     JsonSchemaToolValidator,
@@ -401,6 +402,7 @@ class FilesystemTool:
         authorize: AuthorizationHook,
         policy_decision_id: str | None = None,
     ) -> tuple[ToolResult, RuntimeObject]:
+        bind_correlation(request.correlation, task_execution_id=task_execution_id)
         fingerprint = _request_fingerprint(
             task_execution_id, request, policy_decision_id
         )
@@ -483,6 +485,7 @@ def _pending_invocation_record(
         "provenance": {
             "actor": "tool-runtime",
             "caller": f"{request.caller.kind}:{request.caller.id}",
+            "workflowExecutionId": request.correlation.workflow_execution_id,
             "taskExecutionId": task_execution_id,
             "resourceRefs": [dict(request.tool_ref)],
         },

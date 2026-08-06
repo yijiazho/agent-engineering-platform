@@ -28,8 +28,7 @@ def test_resolves_exact_resources_to_immutable_schema_valid_runtime_object() -> 
         TASK_REF,
         AGENT_REF,
         resources,
-        task_execution_id="taskexecution-123456789abc",
-        trace_id="trace-agent-resolver-123",
+        correlation=correlation(),
         resolved_at="2026-08-04T12:00:00Z",
     )
 
@@ -55,6 +54,9 @@ def test_resolves_exact_resources_to_immutable_schema_valid_runtime_object() -> 
         "name": "analyze-issue",
         "version": "1.0.0",
     }
+    assert resolved["provenance"]["workflowExecutionId"] == (
+        "workflowexecution-123456789abc"
+    )
     assert list(runtime_validator().iter_errors(resolved.as_dict())) == []
 
     with pytest.raises(TypeError):
@@ -100,8 +102,7 @@ def test_rejects_floating_or_wrong_kind_input_references(
             task_ref,
             agent_ref,
             collection(),
-            task_execution_id="taskexecution-123456789abc",
-            trace_id="trace-agent-resolver-123",
+            correlation=correlation(),
             resolved_at="2026-08-04T12:00:00Z",
         )
 
@@ -217,29 +218,26 @@ def test_task_must_assign_the_supplied_agent() -> None:
             TASK_REF,
             other_ref,
             resources,
-            task_execution_id="taskexecution-123456789abc",
-            trace_id="trace-agent-resolver-123",
+            correlation=correlation(),
             resolved_at="2026-08-04T12:00:00Z",
         )
 
 
 @pytest.mark.parametrize(
-    "overrides, expected_field",
+    "correlation_value, resolved_at, expected_field",
     [
-        ({"task_execution_id": "x"}, "$.provenance.taskExecutionId"),
-        ({"trace_id": "x"}, "$.traceId"),
-        ({"resolved_at": "not-a-time"}, "$.createdAt"),
-        ({"resolved_at": "2026-02-30T12:00:00Z"}, "$.createdAt"),
+        ({"traceId": "trace-agent-resolver-123", "workflowExecutionId": "workflowexecution-123456789abc", "taskExecutionId": "x"}, "2026-08-04T12:00:00Z", "$.provenance.taskExecutionId"),
+        ({"traceId": "x", "workflowExecutionId": "workflowexecution-123456789abc", "taskExecutionId": "taskexecution-123456789abc"}, "2026-08-04T12:00:00Z", "$.traceId"),
+        (None, "not-a-time", "$.createdAt"),
+        (None, "2026-02-30T12:00:00Z", "$.createdAt"),
     ],
 )
 def test_rejects_runtime_metadata_outside_resolvedagent_contract(
-    overrides: dict[str, str], expected_field: str
+    correlation_value, resolved_at: str, expected_field: str
 ) -> None:
     arguments = {
-        "task_execution_id": "taskexecution-123456789abc",
-        "trace_id": "trace-agent-resolver-123",
-        "resolved_at": "2026-08-04T12:00:00Z",
-        **overrides,
+        "correlation": correlation_value or correlation(),
+        "resolved_at": resolved_at,
     }
 
     with pytest.raises(InvalidAgentReferenceError) as raised:
@@ -254,10 +252,17 @@ def resolve(resources: ResourceCollection):
         TASK_REF,
         AGENT_REF,
         resources,
-        task_execution_id="taskexecution-123456789abc",
-        trace_id="trace-agent-resolver-123",
+        correlation=correlation(),
         resolved_at="2026-08-04T12:00:00Z",
     )
+
+
+def correlation() -> dict[str, str]:
+    return {
+        "traceId": "trace-agent-resolver-123",
+        "workflowExecutionId": "workflowexecution-123456789abc",
+        "taskExecutionId": "taskexecution-123456789abc",
+    }
 
 
 def collection(*, exclude: set[ResourceRef] | None = None, mutate=None) -> ResourceCollection:
