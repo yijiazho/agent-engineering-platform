@@ -106,7 +106,12 @@ class WorkflowScheduler:
     ) -> SchedulerReconciliation:
         """Create and execute the next ready wave from persisted runtime state."""
         timestamp = self._timestamp()
-        workflow_id, trace_id = _validate_inputs(
+        (
+            workflow_id,
+            trace_id,
+            repository_revision,
+            knowledge_graph_version,
+        ) = _validate_inputs(
             plan, workflow_execution, self._store
         )
         self._repair_attempt_evidence(workflow_id, timestamp)
@@ -135,6 +140,8 @@ class WorkflowScheduler:
                     node,
                     workflow_id=workflow_id,
                     trace_id=trace_id,
+                    repository_revision=repository_revision,
+                    knowledge_graph_version=knowledge_graph_version,
                     attempt=1,
                     dependency_ids=dependency_ids,
                     timestamp=timestamp,
@@ -226,6 +233,8 @@ class WorkflowScheduler:
         *,
         workflow_id: str,
         trace_id: str,
+        repository_revision: str,
+        knowledge_graph_version: object,
         attempt: int,
         dependency_ids: tuple[str, ...],
         timestamp: str,
@@ -234,6 +243,14 @@ class WorkflowScheduler:
         task_execution_id = _task_execution_id(
             workflow_id, node.task_ref, attempt
         )
+        provenance = {
+            "actor": "workflow-scheduler",
+            "workflowExecutionId": workflow_id,
+            "repositoryRevision": repository_revision,
+            "resourceRefs": [_ref_record(node.task_ref)],
+        }
+        if isinstance(knowledge_graph_version, str) and knowledge_graph_version:
+            provenance["knowledgeGraphVersion"] = knowledge_graph_version
         return self._lifecycle.create(
             execution_id=task_execution_id,
             workflow_execution_id=workflow_id,
@@ -245,11 +262,7 @@ class WorkflowScheduler:
                 "taskExecutionId": task_execution_id,
             },
             timestamp=timestamp,
-            provenance={
-                "actor": "workflow-scheduler",
-                "workflowExecutionId": workflow_id,
-                "resourceRefs": [_ref_record(node.task_ref)],
-            },
+            provenance=provenance,
             dependency_task_execution_ids=dependency_ids,
         )
 
@@ -374,7 +387,7 @@ def _validate_inputs(
     plan: TaskDagPlan,
     workflow_execution: Mapping[str, Any],
     store: RuntimeObjectStore,
-) -> tuple[str, str]:
+) -> tuple[str, str, str, object]:
     if not isinstance(plan, TaskDagPlan):
         raise TypeError("plan must be a TaskDagPlan")
     if not isinstance(workflow_execution, Mapping):
@@ -399,6 +412,7 @@ def _validate_inputs(
         "workflowRef",
         "eventRef",
         "repositoryRevision",
+        "knowledgeGraphVersion",
         "provenance",
     ):
         if workflow_execution.get(field) != persisted.get(field):
@@ -414,7 +428,17 @@ def _validate_inputs(
     trace_id = persisted.get("traceId")
     if not isinstance(trace_id, str) or not trace_id:
         raise InvalidSchedulerInputError("WorkflowExecution traceId is required")
-    return workflow_id, trace_id
+    repository_revision = persisted.get("repositoryRevision")
+    if not isinstance(repository_revision, str) or not repository_revision:
+        raise InvalidSchedulerInputError(
+            "WorkflowExecution repositoryRevision is required"
+        )
+    return (
+        workflow_id,
+        trace_id,
+        repository_revision,
+        persisted.get("knowledgeGraphVersion"),
+    )
 
 
 def _validate_runtime_record(record: Mapping[str, Any], schema_name: str) -> None:

@@ -111,7 +111,7 @@ that recoverable local state, run the same command with `--volumes`.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 27 of the 37 implementation tasks are complete.
+contracts are established, and 31 of the 37 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -155,6 +155,9 @@ Implemented foundations currently include:
   changed-file and Git diagnostic evidence.
 * Deterministic Publication Policy with fail-closed evidence checks,
   restrictive versioned-rule composition, and immutable explainable decisions.
+* AnalyzeIssue Task handling that composes ContextPackage construction,
+  versioned Agent resolution, bounded model invocation, schema Evaluation, and
+  immutable `ISSUE_ANALYSIS` GeneratedArtifact publication.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
@@ -164,7 +167,8 @@ Implemented foundations currently include:
   local persistence.
 
 
-Task handlers, and the end-to-end issue-to-pull-request harness remain to be implemented.
+The remaining task handlers and end-to-end issue-to-pull-request harness remain
+to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 

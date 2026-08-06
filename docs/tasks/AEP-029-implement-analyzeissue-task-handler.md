@@ -1,6 +1,6 @@
 # AEP-029: Implement AnalyzeIssue Task Handler
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
