@@ -42,10 +42,11 @@ Agent resolution, ModelRequest and ModelInvocation construction, ToolRequest
 and Filesystem ToolInvocation construction, schema/build-test evaluation,
 pre-execution policy evaluation, and GeneratedArtifact publication consume or
 validate the shared correlation contract. These implemented producer
-boundaries no longer accept a free trace scalar. AgentInvocation creation is
-owned by AEP-013 and is not yet implemented; its authoritative runtime schema
-already requires `traceId`, and AEP-013 must consume this same context rather
-than introducing another propagation shape.
+boundaries no longer accept a free trace scalar. AgentInvocation creation now
+consumes this same correlation context and carries it into nested
+ModelInvocations rather than introducing another propagation shape. Its
+lifecycle records retain the Resource versions and repository revision from
+the immutable invocation inputs.
 
 The same `traceId` is required on WorkflowExecution, TaskExecution,
 ContextPackage, ResolvedAgent, AgentInvocation, ModelInvocation,

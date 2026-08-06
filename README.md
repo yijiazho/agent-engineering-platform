@@ -132,6 +132,8 @@ Implemented foundations currently include:
   and artifact-body redaction.
 * Stateless Agent resolution into immutable, execution-scoped ResolvedAgent
   inputs with explicit Prompt, Model, non-model Tool, and Policy versions.
+* Bounded AgentInvocation coordination with deterministic Prompt and
+  ContextPackage assembly, provider evidence, and structured-output validation.
 * Idempotent WorkflowExecution trace-root creation with provenance events.
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
@@ -161,8 +163,8 @@ Implemented foundations currently include:
   explicit ports, health checks, one repository and Workspace, and externalized
   local persistence.
 
-Agent invocation, task handlers, and the
-end-to-end issue-to-pull-request harness remain to be implemented.
+
+Task handlers, and the end-to-end issue-to-pull-request harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 

@@ -67,6 +67,9 @@ checks, one repository and Workspace, and externalized local persistence.
 Shared structured observability now propagates one trace
 through runtime and service boundaries and emits redacted lifecycle logs with
 immutable execution, Resource, revision, status, timing, and failure evidence.
+AgentInvocation coordination now binds immutable ResolvedAgent and
+ContextPackage inputs, assembles bounded model requests, persists provider
+evidence, and validates structured output without exposing repository retrieval.
 The end-to-end MVP workflow is not yet runnable.
 
 ---
@@ -103,7 +106,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Completed |
 | 25 | [AEP-027: Implement Build And Test Evaluation](tasks/AEP-027-implement-build-and-test-evaluation.md) | Completed |
 | 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Completed |
-| 27 | [AEP-013: Implement AgentInvocation Contract](tasks/AEP-013-implement-agentinvocation-contract.md) | Not Started |
+| 27 | [AEP-013: Implement AgentInvocation Contract](tasks/AEP-013-implement-agentinvocation-contract.md) | Completed |
 | 28 | [AEP-028: Implement Publication Policy](tasks/AEP-028-implement-publication-policy.md) | Completed |
 | 29 | [AEP-029: Implement AnalyzeIssue Task Handler](tasks/AEP-029-implement-analyzeissue-task-handler.md) | Not Started |
 | 30 | [AEP-030: Implement BuildImplementationPlan Task Handler](tasks/AEP-030-implement-buildimplementationplan-task-handler.md) | Not Started |
@@ -133,7 +136,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-010 | AEP-004, AEP-008, AEP-009, AEP-011 | Completed |
 | AEP-011 | AEP-002, AEP-004 | Completed |
 | AEP-012 | AEP-003, AEP-011 | Completed |
-| AEP-013 | AEP-012, AEP-014, AEP-017 | Not Started |
+| AEP-013 | AEP-012, AEP-014, AEP-017 | Completed |
 | AEP-014 | AEP-001, AEP-002 | Completed |
 | AEP-015 | None | Completed |
 | AEP-016 | AEP-015 | Completed |
@@ -167,7 +170,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | ----- | ----- | ------ |
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Completed |
-| Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | In Progress |
+| Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Completed |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Completed |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Completed |
