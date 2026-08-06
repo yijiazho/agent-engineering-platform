@@ -411,6 +411,31 @@ and versioned Policy inputs. An idempotent retry returns the prior decision only
 when those inputs are identical; reusing an ID for different authorization
 inputs is rejected.
 
+For Publication Policy, the candidate action supplies its complete publication
+target, including the immutable repository revision. The evaluator requires an
+explicit set of artifact and evaluation identifiers. At least one required
+artifact must be a revision-bound PATCH, validation must have produced at least
+one required `EvaluationResult`, and every required result must be terminal and
+passing. Artifacts and results must share the candidate trace, WorkflowExecution,
+and repository revision. Missing or mismatched evidence, a failed result, or an
+earlier `DENY` fails closed before an allow rule can take effect. An earlier
+unresolved `REQUIRE_APPROVAL` remains approval-required.
+
+The caller's evidence mappings are not trusted by themselves. Every required
+runtime object is validated against its kind-specific schema and must exactly
+match the immutable object resolved from the runtime store. Malformed,
+unpersisted, or substituted evidence therefore cannot manufacture an allow
+decision.
+
+Publication rules use the same deterministic scope, Resource name, and version
+ordering and the same restrictive effect precedence as capability rules, but do
+not declare capabilities. Their optional JSON Schema conditions evaluate the
+candidate action, evidence summary, prior policy state, and Resource scope. The
+persisted decision records the exact artifact, evaluation, and prior-decision
+identifiers, publication target, evidence summary, matched and winning rules,
+and explanation. The evaluator does not push Git state or invoke a publication
+provider.
+
 ---
 
 # 14. Capability Evaluation
