@@ -153,6 +153,8 @@ Implemented foundations currently include:
 * Deterministic JSON Schema evaluation.
 * Deterministic patch applicability and allowed-path evaluation with immutable
   changed-file and Git diagnostic evidence.
+* Deterministic Publication Policy with fail-closed evidence checks,
+  restrictive versioned-rule composition, and immutable explainable decisions.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
@@ -161,8 +163,8 @@ Implemented foundations currently include:
   explicit ports, health checks, one repository and Workspace, and externalized
   local persistence.
 
-Publication policy, task handlers, and the end-to-end issue-to-pull-request
-harness remain to be implemented.
+
+Task handlers, and the end-to-end issue-to-pull-request harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 
