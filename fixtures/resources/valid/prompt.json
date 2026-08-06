@@ -14,7 +14,10 @@
           "title": "Add tests"
         },
         "output": {
-          "summary": "Tests requested"
+          "requestedChange": "Add tests.",
+          "acceptanceCriteria": ["The requested tests pass."],
+          "risks": ["Existing behavior may be underspecified."],
+          "likelyRepositoryAreas": ["tests"]
         }
       }
     ]

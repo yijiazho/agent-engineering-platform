@@ -19,10 +19,10 @@
     ]
   },
   "taskExecutionId": "taskexecution-000000000001",
-  "artifactType": "IMPLEMENTATION_PLAN",
+  "artifactType": "ISSUE_ANALYSIS",
   "contentAddress": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
   "repositoryRevision": "abc1234",
-  "mediaType": "text/markdown",
+  "mediaType": "application/json",
   "evaluationResultIds": [
     "evaluationresult-000000000001"
   ],

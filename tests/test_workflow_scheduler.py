@@ -64,6 +64,12 @@ def test_parallel_ready_tasks_are_created_before_fake_execution() -> None:
         "SUCCEEDED",
     ]
     assert executor.calls == [("analyze", 1), ("inventory", 1)]
+    assert all(
+        task["provenance"]["repositoryRevision"] == execution["repositoryRevision"]
+        and task["provenance"]["knowledgeGraphVersion"]
+        == execution["knowledgeGraphVersion"]
+        for task in result.task_executions
+    )
 
 
 def test_dependent_waits_for_success_and_records_dependency_attempts() -> None:
@@ -352,11 +358,19 @@ def test_orphan_and_mismatched_workflow_evidence_are_rejected_without_mutation()
     orphan["id"] = "workflowexecution-010000000099"
     mismatched = dict(execution)
     mismatched["repositoryRevision"] = "fedcba0"
+    mismatched_graph = dict(execution)
+    mismatched_graph["knowledgeGraphVersion"] = "kg-forged-v1"
+    missing_graph = dict(execution)
+    del missing_graph["knowledgeGraphVersion"]
 
     with pytest.raises(InvalidSchedulerInputError, match="must exist"):
         scheduler(store, FakeExecutor()).reconcile(plan, orphan)
     with pytest.raises(InvalidSchedulerInputError, match="repositoryRevision"):
         scheduler(store, FakeExecutor()).reconcile(plan, mismatched)
+    with pytest.raises(InvalidSchedulerInputError, match="knowledgeGraphVersion"):
+        scheduler(store, FakeExecutor()).reconcile(plan, mismatched_graph)
+    with pytest.raises(InvalidSchedulerInputError, match="knowledgeGraphVersion"):
+        scheduler(store, FakeExecutor()).reconcile(plan, missing_graph)
 
     assert task_executions(store) == []
 
@@ -440,6 +454,7 @@ def scheduler_inputs(nodes, *, store_factory=InMemoryRuntimeObjectStore):
         },
         "eventId": "event-scheduler-test",
         "repositoryRevision": "abcdef0",
+        "knowledgeGraphVersion": "kg-scheduler-test-v1",
         "status": "RUNNING",
         "taskExecutionIds": [],
     }

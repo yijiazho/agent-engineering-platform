@@ -126,7 +126,10 @@ dependents blocked.
 The scheduler loads the authoritative WorkflowExecution from runtime storage,
 verifies immutable caller evidence against it, and validates all
 WorkflowExecution, TaskExecution, and ExecutionEvent records against their
-runtime schemas before scheduler persistence.
+runtime schemas before scheduler persistence. Newly created TaskExecutions
+carry the WorkflowExecution's repository revision and, when present, knowledge
+graph version in provenance so downstream Context Builder validation remains
+revision-bound.
 
 ---
 
@@ -384,6 +387,14 @@ Produce Artifacts
 The runtime only validates that a ContextPackage satisfies the Task's contract.
 
 It never determines how the package was constructed.
+
+The MVP `AnalyzeIssue` handler implements this composition through the existing
+provider-neutral boundaries. For one already-running TaskExecution it builds
+and records the ContextPackage, persists the ResolvedAgent and AgentInvocation,
+runs the declared schema Evaluation, and publishes an immutable
+`ISSUE_ANALYSIS` GeneratedArtifact only after Evaluation passes. It attaches
+all produced identifiers to the TaskExecution; the deterministic scheduler
+remains responsible for the terminal success or classified failure transition.
 
 The AgentInvocation coordinator then combines that immutable package with the
 resolved Prompt, Model configuration, and output schema. It persists the

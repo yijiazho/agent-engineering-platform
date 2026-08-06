@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 27 |
+| Completed | 31 |
 | In Progress | 0 |
-| Not Started | 10 |
+| Not Started | 6 |
 | Blocked | 0 |
 | Total | 37 |
 
@@ -70,6 +70,10 @@ immutable execution, Resource, revision, status, timing, and failure evidence.
 AgentInvocation coordination now binds immutable ResolvedAgent and
 ContextPackage inputs, assembles bounded model requests, persists provider
 evidence, and validates structured output without exposing repository retrieval.
+The AnalyzeIssue Task handler now composes those boundaries to create issue
+context, invoke the versioned Issue Analyzer, run deterministic schema
+Evaluation, publish an `ISSUE_ANALYSIS` GeneratedArtifact, and attach the
+resulting evidence to its TaskExecution.
 The end-to-end MVP workflow is not yet runnable.
 
 ---
@@ -108,7 +112,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Completed |
 | 27 | [AEP-013: Implement AgentInvocation Contract](tasks/AEP-013-implement-agentinvocation-contract.md) | Completed |
 | 28 | [AEP-028: Implement Publication Policy](tasks/AEP-028-implement-publication-policy.md) | Completed |
-| 29 | [AEP-029: Implement AnalyzeIssue Task Handler](tasks/AEP-029-implement-analyzeissue-task-handler.md) | Not Started |
+| 29 | [AEP-029: Implement AnalyzeIssue Task Handler](tasks/AEP-029-implement-analyzeissue-task-handler.md) | Completed |
 | 30 | [AEP-030: Implement BuildImplementationPlan Task Handler](tasks/AEP-030-implement-buildimplementationplan-task-handler.md) | Not Started |
 | 31 | [AEP-031: Implement GeneratePatch Task Handler](tasks/AEP-031-implement-generatepatch-task-handler.md) | Not Started |
 | 32 | [AEP-032: Implement RunValidation Task Handler](tasks/AEP-032-implement-runvalidation-task-handler.md) | Not Started |
@@ -152,7 +156,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-026 | AEP-002, AEP-022 | Completed |
 | AEP-027 | AEP-002, AEP-023 | Completed |
 | AEP-028 | AEP-004, AEP-020, AEP-025, AEP-026, AEP-027 | Completed |
-| AEP-029 | AEP-010, AEP-013, AEP-017, AEP-018, AEP-025 | Not Started |
+| AEP-029 | AEP-010, AEP-013, AEP-017, AEP-018, AEP-025 | Completed |
 | AEP-030 | AEP-029 | Not Started |
 | AEP-031 | AEP-021, AEP-022, AEP-026, AEP-030 | Not Started |
 | AEP-032 | AEP-023, AEP-027, AEP-031 | Not Started |
@@ -172,10 +176,10 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Completed |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Completed |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Completed |
-| Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | In Progress |
+| Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | Completed |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Completed |
-| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Not Started |
-| Deployment And Observability | AEP-035, AEP-036, AEP-037 | Not Started |
+| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | In Progress |
+| Deployment And Observability | AEP-035, AEP-036, AEP-037 | In Progress |
 
 ---
 

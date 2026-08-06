@@ -526,7 +526,7 @@
             "taskExecutionId": { "$ref": "#/$defs/runtimeId" },
             "artifactType": {
               "type": "string",
-              "enum": ["IMPLEMENTATION_PLAN", "DESIGN_DOCUMENT", "PATCH", "PULL_REQUEST_DESCRIPTION", "REVIEW_REPORT", "EVALUATION_REPORT"]
+              "enum": ["ISSUE_ANALYSIS", "IMPLEMENTATION_PLAN", "DESIGN_DOCUMENT", "PATCH", "PULL_REQUEST_DESCRIPTION", "REVIEW_REPORT", "EVALUATION_REPORT"]
             },
             "contentAddress": { "$ref": "#/$defs/contentAddress" },
             "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
