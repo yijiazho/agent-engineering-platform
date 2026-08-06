@@ -1,6 +1,6 @@
 # AEP-035: Compose MVP Services
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -30,3 +30,20 @@ Create local MVP service composition that:
 * Services can use in-memory or local storage adapters.
 * Configuration identifies one repository and workspace.
 * Smoke test starts services and resolves basic configuration.
+
+## Implementation Notes
+
+The local Docker Compose topology preserves the seven ADR-003 service
+boundaries while using a shared, provider-neutral Python HTTP adapter for MVP
+startup and health. Each container receives explicit repository, Workspace,
+execution-environment, port, and local-state configuration. Repository
+Resources are mounted read-only from Git, and mutable local state is
+externalized to a named volume. The container schema directory is passed
+explicitly rather than inferred from the installed Python package location.
+
+Every service validates the configured identity against the immutable
+repository-local Workspace before becoming ready. The Resource Controller also
+exposes read-only resolved Resource references. The smoke test starts all seven
+adapters on ephemeral ports, verifies every health endpoint, resolves the
+Workspace and Event Resource, and requires no external credentials or Docker
+daemon.

@@ -540,6 +540,17 @@ Publish Status
 
 Individual Tool implementations remain interchangeable.
 
+## Git Adapter
+
+The repository-bound Git adapter exposes branch creation, status, diff,
+read-only patch checking, and push operations. `check_patch` requires a clean
+execution branch at the configured immutable revision. Patch bytes enter the
+isolated sandbox over standard input and are inspected with `git apply
+--numstat` and `git apply --check --cached`; the operation returns changed paths
+and deterministic diagnostics without changing the index or worktree. Patch
+Evaluation owns allowed-path and correctness decisions, while push remains a
+separate capability-authorized operation.
+
 ## GitHub Adapter
 
 The MVP GitHub adapter exposes two structured operations:

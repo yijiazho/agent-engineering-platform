@@ -602,7 +602,37 @@ Git remains the ultimate source of truth.
 
 ---
 
-# 20. Future Evolution
+# 20. Local MVP Composition
+
+Before Kubernetes deployment, `deploy/local/compose.yaml` runs the ADR-003 MVP
+topology as seven independently configured containers:
+
+* Event Controller
+* Resource Controller
+* Workflow Runtime
+* Agent Resolver
+* Context Builder
+* Tool Runtime
+* Evaluation Engine
+
+The composition binds exactly one Git repository, one immutable Workspace
+version, and one execution-environment name. Git Resources are mounted
+read-only. The image's Resource schema directory is configured explicitly and
+does not depend on the Python installation path. Mutable local adapter state is externalized to a named volume, so
+service processes retain no hidden global state. Every service exposes an
+independent health endpoint and validates the configured repository and
+Workspace identity before reporting ready.
+
+The shared local HTTP adapter is a composition seam, not a transfer of
+architectural ownership: Docker supplies independent process and network
+boundaries, and each logical service remains separately addressable. The local
+Resource Controller additionally provides read-only Resource discovery for
+credential-free smoke verification. Production storage services and
+Kubernetes manifests remain future deployment work.
+
+---
+
+# 21. Future Evolution
 
 The deployment architecture intentionally supports:
 
@@ -618,7 +648,7 @@ No architectural changes should be required.
 
 ---
 
-# 21. Design Principles
+# 22. Design Principles
 
 ## Kubernetes Native
 
@@ -660,7 +690,7 @@ Everything except Git repositories and workflow history should be reproducible.
 
 ---
 
-# 22. Summary
+# 23. Summary
 
 The AEP deployment architecture separates resource management, workflow execution, and persistence into independent Control, Execution, and Storage planes.
 

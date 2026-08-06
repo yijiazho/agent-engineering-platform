@@ -68,6 +68,36 @@ python -m pytest
 
 Installed development package versions are captured in [requirements-dev.lock](requirements-dev.lock). Refresh it after dependency changes with `.\.venv\Scripts\python.exe -m pip list --format=freeze`.
 
+## Local MVP Composition
+
+The credential-free local composition starts the seven MVP control/execution
+service adapters as separate containers. Git-backed Resources are mounted
+read-only from this repository, while service readiness and future local
+runtime state are externalized to the `aep-state` volume.
+
+```powershell
+Copy-Item deploy/local/.env.example deploy/local/.env
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml up --build -d
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml ps
+Invoke-RestMethod http://localhost:8081/healthz
+Invoke-RestMethod http://localhost:8082/v1/resources
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml down
+```
+
+The ports are event controller `8081`, resource controller `8082`, workflow
+runtime `8083`, Agent Resolver `8084`, Context Builder `8085`, Tool Runtime
+`8086`, and Evaluation Engine `8087`. Every service exposes `/healthz`; only
+the Resource Controller exposes the read-only `/v1/resources` discovery
+endpoint. Override the repository, Workspace, and execution-environment values
+in `deploy/local/.env`. They must match the single repository-local
+`.ai/workspace.yaml`, or every service fails fast. No external credentials are
+used for startup or Resource discovery. The image explicitly binds Resource
+validation to `/opt/aep/schemas/resources/v1`, independently of the read-only
+repository mount and the installed Python package location.
+
+`docker compose ... down` keeps the local state volume. To intentionally reset
+that recoverable local state, run the same command with `--volumes`.
+
 ## Key Documents
 
 * [Product Requirements](docs/prd.md)
@@ -119,13 +149,18 @@ Implemented foundations currently include:
   durations, logs addresses, and timeout or missing-output evidence.
 * A policy-gated GitHub Tool adapter for issue reads and pull-request creation.
 * Deterministic JSON Schema evaluation.
+* Deterministic patch applicability and allowed-path evaluation with immutable
+  changed-file and Git diagnostic evidence.
 * Revision-bound repository scanning and repository-knowledge queries.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
   repository knowledge, Resources, events, policies, and prior artifacts.
+* Credential-free local composition of the seven MVP service boundaries with
+  explicit ports, health checks, one repository and Workspace, and externalized
+  local persistence.
 
-Patch evaluation, publication policy, task handlers, service composition, and
-the end-to-end issue-to-pull-request harness remain to be implemented.
+Patch evaluation, publication policy, task handlers, observability, and the
+end-to-end issue-to-pull-request harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 

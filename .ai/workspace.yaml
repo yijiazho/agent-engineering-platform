@@ -1,0 +1,20 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Workspace",
+  "metadata": {
+    "name": "agent-engineering-platform",
+    "version": "1.0.0",
+    "description": "Single repository Workspace for the local AEP MVP composition"
+  },
+  "spec": {
+    "repository": {
+      "provider": "github",
+      "owner": "yijiazho",
+      "name": "agent-engineering-platform",
+      "defaultBranch": "main"
+    },
+    "resourceDiscovery": {
+      "root": ".ai"
+    }
+  }
+}

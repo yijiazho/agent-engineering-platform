@@ -50,6 +50,12 @@ outside the repository mount. The adapter disables repository hooks for every
 command. A `GitCredentialProvider` leases scoped environment entries only for
 the configured push attempt and revokes them in a `finally` block.
 
+The read-only `check_patch` operation supports Patch Evaluation by streaming
+patch content to isolated `git apply --numstat` and `git apply --check --cached`
+commands. It requires a clean branch whose HEAD exactly matches the configured
+revision, reports changed paths and applicability diagnostics, and does not
+modify the index or worktree.
+
 Successful results include repository, branch, base and current revisions,
 porcelain-derived changed-file records, diff content and digest metadata when
 requested, and per-command exit and byte-count metadata. Full stdout and stderr

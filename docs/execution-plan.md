@@ -43,7 +43,9 @@ scopes and persists explainable decisions before Tool execution. The
 workspace-confined Filesystem Tool now supports policy-authorized reads and
 writes with persisted invocation evidence. The repository-bound Git Tool now
 provides branch, status, diff, and authorized push operations with redacted
-command evidence. Docker validation now captures deterministic per-command
+command evidence and read-only patch applicability checks. Deterministic patch
+evaluation binds generated patches to an immutable revision and allowed paths.
+Docker validation now captures deterministic per-command
 execution evidence behind that policy boundary, and build/test evaluation
 converts terminal Docker evidence into separate immutable technical outcomes.
 The GitHub Tool now performs
@@ -56,7 +58,10 @@ policies, and prior artifacts within an explicit token budget. The Workflow
 scheduler now reconciles deterministic parallel-ready waves,
 persists numbered TaskExecution attempts, blocks dependents until prerequisite
 success, and emits append-only lifecycle events through a provider-neutral Task
-executor boundary. Shared structured observability now propagates one trace
+executor boundary. The seven MVP control/execution service boundaries
+now run in a credential-free local composition with explicit ports, health
+checks, one repository and Workspace, and externalized local persistence. 
+Shared structured observability now propagates one trace
 through runtime and service boundaries and emits redacted lifecycle logs with
 immutable execution, Resource, revision, status, timing, and failure evidence.
 The end-to-end MVP workflow is not yet runnable.
@@ -92,7 +97,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 21 | [AEP-023: Implement Docker Validation Tool](tasks/AEP-023-implement-docker-validation-tool.md) | Completed |
 | 22 | [AEP-024: Implement GitHub Tool](tasks/AEP-024-implement-github-tool.md) | Completed |
 | 23 | [AEP-017: Implement Context Builder](tasks/AEP-017-implement-context-builder.md) | Completed |
-| 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Not Started |
+| 24 | [AEP-026: Implement Patch Evaluation](tasks/AEP-026-implement-patch-evaluation.md) | Completed |
 | 25 | [AEP-027: Implement Build And Test Evaluation](tasks/AEP-027-implement-build-and-test-evaluation.md) | Completed |
 | 26 | [AEP-010: Implement Workflow Scheduler](tasks/AEP-010-implement-workflow-scheduler.md) | Completed |
 | 27 | [AEP-013: Implement AgentInvocation Contract](tasks/AEP-013-implement-agentinvocation-contract.md) | Not Started |
@@ -103,7 +108,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 32 | [AEP-032: Implement RunValidation Task Handler](tasks/AEP-032-implement-runvalidation-task-handler.md) | Not Started |
 | 33 | [AEP-033: Implement EvaluateAcceptance Task Handler](tasks/AEP-033-implement-evaluateacceptance-task-handler.md) | Not Started |
 | 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Not Started |
-| 35 | [AEP-035: Compose MVP Services](tasks/AEP-035-compose-mvp-services.md) | Not Started |
+| 35 | [AEP-035: Compose MVP Services](tasks/AEP-035-compose-mvp-services.md) | Completed |
 | 36 | [AEP-036: Add Structured Logging And Tracing](tasks/AEP-036-add-structured-logging-and-tracing.md) | Completed |
 | 37 | [AEP-037: Build End-To-End MVP Harness](tasks/AEP-037-build-end-to-end-mvp-harness.md) | Not Started |
 
@@ -138,7 +143,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-023 | AEP-019, AEP-020 | Completed |
 | AEP-024 | AEP-019, AEP-020 | Completed |
 | AEP-025 | AEP-002 | Completed |
-| AEP-026 | AEP-002, AEP-022 | Not Started |
+| AEP-026 | AEP-002, AEP-022 | Completed |
 | AEP-027 | AEP-002, AEP-023 | Completed |
 | AEP-028 | AEP-004, AEP-020, AEP-025, AEP-026, AEP-027 | Not Started |
 | AEP-029 | AEP-010, AEP-013, AEP-017, AEP-018, AEP-025 | Not Started |
@@ -147,7 +152,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-032 | AEP-023, AEP-027, AEP-031 | Not Started |
 | AEP-033 | AEP-028, AEP-032 | Not Started |
 | AEP-034 | AEP-024, AEP-028, AEP-033 | Not Started |
-| AEP-035 | AEP-003, AEP-004 | Not Started |
+| AEP-035 | AEP-003, AEP-004 | Completed |
 | AEP-036 | AEP-004, AEP-008, AEP-011 | Completed |
 | AEP-037 | AEP-034, AEP-035, AEP-036 | Not Started |
 
