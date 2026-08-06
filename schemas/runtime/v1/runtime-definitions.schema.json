@@ -349,6 +349,7 @@
             "tokenUsage": { "$ref": "#/$defs/jsonObject" },
             "latencyMs": { "type": "integer", "minimum": 0 },
             "cost": { "type": "number", "minimum": 0 },
+            "providerMetadata": { "$ref": "#/$defs/jsonObject" },
             "schemaValidation": { "type": "string", "enum": ["NOT_RUN", "PASSED", "FAILED"] },
             "startedAt": { "$ref": "#/$defs/timestamp" },
             "completedAt": { "$ref": "#/$defs/timestamp" },

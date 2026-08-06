@@ -385,6 +385,18 @@ The runtime only validates that a ContextPackage satisfies the Task's contract.
 
 It never determines how the package was constructed.
 
+The AgentInvocation coordinator then combines that immutable package with the
+resolved Prompt, Model configuration, and output schema. It persists the
+AgentInvocation and each ModelInvocation, including token, latency, cost, and
+provider metadata when supplied. A provider call may succeed while structured
+output validation fails; in that case the ModelInvocation remains successful
+with `schemaValidation: FAILED`, while the AgentInvocation terminates with an
+`EVALUATION` failure. No repository-knowledge query interface is exposed at
+this boundary. An atomic paired-identity claim binds the AgentInvocation to its
+ModelInvocation before runtime records are created, preventing concurrent
+reconciliation from repeating the external model call or substituting a child
+invocation identity.
+
 ---
 
 # 9. Context Validation

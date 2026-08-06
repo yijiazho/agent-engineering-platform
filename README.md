@@ -111,7 +111,7 @@ that recoverable local state, run the same command with `--volumes`.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 26 of the 37 implementation tasks are complete.
+contracts are established, and 27 of the 37 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -132,6 +132,8 @@ Implemented foundations currently include:
   and artifact-body redaction.
 * Stateless Agent resolution into immutable, execution-scoped ResolvedAgent
   inputs with explicit Prompt, Model, non-model Tool, and Policy versions.
+* Bounded AgentInvocation coordination with deterministic Prompt and
+  ContextPackage assembly, provider evidence, and structured-output validation.
 * Idempotent WorkflowExecution trace-root creation with provenance events.
 * TaskExecution lifecycle and retry semantics.
 * Provider-neutral ModelInvocation and Tool Runtime contracts.
@@ -159,8 +161,8 @@ Implemented foundations currently include:
   explicit ports, health checks, one repository and Workspace, and externalized
   local persistence.
 
-Patch evaluation, publication policy, task handlers, observability, and the
-end-to-end issue-to-pull-request harness remain to be implemented.
+Publication policy, task handlers, and the end-to-end issue-to-pull-request
+harness remain to be implemented.
 
 Repository-specific agent workflows live under [skills/](skills/):
 

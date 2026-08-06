@@ -1,6 +1,6 @@
 # AEP-013: Implement AgentInvocation Contract
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -32,3 +32,22 @@ Implement the AgentInvocation coordinator and contract that:
 * AgentInvocation records token and cost metadata when provided.
 * AgentInvocation cannot retrieve repository knowledge directly.
 * Tests use a deterministic fake model provider.
+
+## Implementation Notes
+
+`src/aep/agent_invocation.py` implements the provider-neutral coordinator. It
+validates that the immutable `ResolvedAgent`, `ContextPackage`, Prompt, and
+Model configuration share the expected identities before persisting a running
+`AgentInvocation` and `ModelInvocation`. Model input is assembled solely from
+the resolved Prompt, output schema, and supplied ContextPackage; the boundary
+has no repository-knowledge query dependency.
+
+Successful provider evidence includes content addresses, token usage, latency,
+cost, and provider metadata. Structured-output validation is deterministic:
+invalid output leaves the successful provider call recorded while failing the
+owning AgentInvocation with an `EVALUATION` failure. Normalized provider errors
+fail both runtime records with their retry classification. Focused tests cover
+success, provider failure, schema-invalid and non-JSON output, immutable context
+and correlation continuity, concurrency-safe paired identity claims and
+collision handling, and lifecycle telemetry with the deterministic fake
+adapter from AEP-014.

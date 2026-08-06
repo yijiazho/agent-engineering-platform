@@ -32,6 +32,10 @@
   },
   "latencyMs": 40000,
   "cost": 0.03,
+  "providerMetadata": {
+    "requestId": "request-000000000001",
+    "finishReason": "stop"
+  },
   "schemaValidation": "PASSED",
   "startedAt": "2026-07-09T10:00:20Z",
   "completedAt": "2026-07-09T10:01:00Z"
