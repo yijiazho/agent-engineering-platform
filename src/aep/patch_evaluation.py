@@ -16,6 +16,7 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.git_tool import GitToolAdapter, git_tool_validator
+from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import ToolCaller, ToolRequest, ToolResultStatus, invoke_tool
 
@@ -40,7 +41,7 @@ def evaluate_patch(
     expected_revision: str,
     allowed_paths: Sequence[str],
     working_branch: str,
-    trace_id: str,
+    correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
     provenance: Mapping[str, Any],
     git_tool_ref: Mapping[str, Any] | None = None,
@@ -48,6 +49,11 @@ def evaluate_patch(
 ) -> RuntimeObject:
     """Evaluate a patch without applying it and persist immutable evidence."""
 
+    context = bind_correlation(
+        correlation,
+        task_execution_id=task_execution_id,
+        provenance=provenance,
+    )
     artifact = deepcopy(dict(patch_artifact))
     normalized_rules = _normalize_rules(allowed_paths)
     errors: list[dict[str, str]] = []
@@ -120,7 +126,7 @@ def evaluate_patch(
                 caller=ToolCaller(kind="TaskExecution", id=task_execution_id),
                 capabilities=("git.read",),
                 timeout_ms=timeout_ms,
-                trace_id=trace_id,
+                correlation=context,
             )
             git_result = invoke_tool(
                 request,
@@ -211,7 +217,7 @@ def evaluate_patch(
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "EvaluationResult",
         "id": result_id,
-        "traceId": trace_id,
+        "traceId": context.trace_id,
         "createdAt": timestamp,
         "updatedAt": timestamp,
         "provenance": deepcopy(dict(provenance)),

@@ -110,7 +110,11 @@ def repository(tmp_path: Path) -> tuple[Path, str, GitToolAdapter]:
             caller=ToolCaller(kind="TaskExecution", id="taskexecution-123456789abc"),
             capabilities=("git.read",),
             timeout_ms=5_000,
-            trace_id="trace-patch-evaluation",
+            correlation={
+                "traceId": "trace-patch-evaluation",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-123456789abc",
+            },
         ),
         validator=git_tool_validator(),
         authorize=lambda _request: True,
@@ -158,7 +162,11 @@ def evaluate(
         expected_revision=revision,
         allowed_paths=allowed_paths,
         working_branch="agent/work",
-        trace_id="trace-patch-evaluation",
+        correlation={
+            "traceId": "trace-patch-evaluation",
+            "workflowExecutionId": "workflowexecution-123456789abc",
+            "taskExecutionId": "taskexecution-123456789abc",
+        },
         timestamp="2026-08-04T00:00:00Z",
         provenance={
             "actor": "patch-evaluator",
