@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 33 |
+| Completed | 34 |
 | In Progress | 0 |
-| Not Started | 10 |
+| Not Started | 9 |
 | Blocked | 0 |
 | Total | 43 |
 
@@ -78,6 +78,10 @@ The BuildImplementationPlan Task handler now requires that successful upstream
 evidence, supplies it with revision-bound repository knowledge through a
 deterministic ContextPackage, invokes the versioned Planner, evaluates required
 plan sections, and publishes an immutable `IMPLEMENTATION_PLAN` artifact.
+The RunValidation Task handler now consumes the evaluated patch, resolves a
+versioned digest-pinned Docker validation contract, persists retry-safe Tool
+evidence, creates separate build and test EvaluationResults, and publishes an
+immutable validation report for both successful and failed validation runs.
 The end-to-end MVP workflow is not yet runnable. ADR-004 adds the work required
 to register this repository as the first live, repository-bound integration:
 authenticated webhook ingress, isolated execution checkout provisioning, a
@@ -124,7 +128,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 29 | [AEP-029: Implement AnalyzeIssue Task Handler](tasks/AEP-029-implement-analyzeissue-task-handler.md) | Completed |
 | 30 | [AEP-030: Implement BuildImplementationPlan Task Handler](tasks/AEP-030-implement-buildimplementationplan-task-handler.md) | Completed |
 | 31 | [AEP-031: Implement GeneratePatch Task Handler](tasks/AEP-031-implement-generatepatch-task-handler.md) | Completed |
-| 32 | [AEP-032: Implement RunValidation Task Handler](tasks/AEP-032-implement-runvalidation-task-handler.md) | Not Started |
+| 32 | [AEP-032: Implement RunValidation Task Handler](tasks/AEP-032-implement-runvalidation-task-handler.md) | Completed |
 | 33 | [AEP-033: Implement EvaluateAcceptance Task Handler](tasks/AEP-033-implement-evaluateacceptance-task-handler.md) | Not Started |
 | 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Not Started |
 | 35 | [AEP-035: Compose MVP Services](tasks/AEP-035-compose-mvp-services.md) | Completed |
@@ -174,7 +178,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-029 | AEP-010, AEP-013, AEP-017, AEP-018, AEP-025 | Completed |
 | AEP-030 | AEP-029 | Completed |
 | AEP-031 | AEP-021, AEP-022, AEP-026, AEP-030 | Completed |
-| AEP-032 | AEP-023, AEP-027, AEP-031 | Not Started |
+| AEP-032 | AEP-023, AEP-027, AEP-031 | Completed |
 | AEP-033 | AEP-028, AEP-032 | Not Started |
 | AEP-034 | AEP-024, AEP-028, AEP-033 | Not Started |
 | AEP-035 | AEP-003, AEP-004 | Completed |
