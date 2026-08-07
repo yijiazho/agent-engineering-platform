@@ -86,12 +86,17 @@ The EvaluateAcceptance Task handler now walks the successful predecessor chain,
 loads versioned Evaluation requirements and attached artifacts, rejects missing
 or inconsistent execution and revision evidence, and persists a deterministic
 acceptance-summary EvaluationResult without model or policy invocation.
-The end-to-end MVP workflow is not yet runnable. ADR-004 adds the work required
+The CreatePullRequest Task handler now applies the final Publication Policy and
+separate Git/GitHub capability gates, persists retry-safe external operation
+evidence, materializes and binds the accepted patch commit and published head,
+and publishes the resulting pull-request description and URL. The
+end-to-end MVP workflow is not yet runnable. ADR-004 adds the work required
 to register this repository as the first live, repository-bound integration:
 authenticated webhook ingress, isolated execution checkout provisioning, a
 complete self-hosting Resource bundle, live GitHub and Model providers, and a
 pinned dogfood deployment. These registration tasks extend rather than replace
-the unfinished CreatePullRequest Task handler and deterministic end-to-end harness.
+the completed CreatePullRequest Task handler and unfinished deterministic
+end-to-end harness.
 
 ---
 
@@ -134,7 +139,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 31 | [AEP-031: Implement GeneratePatch Task Handler](tasks/AEP-031-implement-generatepatch-task-handler.md) | Completed |
 | 32 | [AEP-032: Implement RunValidation Task Handler](tasks/AEP-032-implement-runvalidation-task-handler.md) | Completed |
 | 33 | [AEP-033: Implement EvaluateAcceptance Task Handler](tasks/AEP-033-implement-evaluateacceptance-task-handler.md) | Completed |
-| 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Not Started |
+| 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Completed |
 | 35 | [AEP-035: Compose MVP Services](tasks/AEP-035-compose-mvp-services.md) | Completed |
 | 36 | [AEP-036: Add Structured Logging And Tracing](tasks/AEP-036-add-structured-logging-and-tracing.md) | Completed |
 | 37 | [AEP-037: Build End-To-End MVP Harness](tasks/AEP-037-build-end-to-end-mvp-harness.md) | Not Started |
@@ -184,7 +189,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-031 | AEP-021, AEP-022, AEP-026, AEP-030 | Completed |
 | AEP-032 | AEP-023, AEP-027, AEP-031 | Completed |
 | AEP-033 | AEP-028, AEP-032 | Completed |
-| AEP-034 | AEP-024, AEP-028, AEP-033 | Not Started |
+| AEP-034 | AEP-024, AEP-028, AEP-033 | Completed |
 | AEP-035 | AEP-003, AEP-004 | Completed |
 | AEP-036 | AEP-004, AEP-008, AEP-011 | Completed |
 | AEP-037 | AEP-034, AEP-035, AEP-036 | Not Started |
@@ -207,7 +212,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Completed |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | Completed |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Completed |
-| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | In Progress |
+| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
 | Deployment And Observability | AEP-035, AEP-036, AEP-037 | In Progress |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043 | Not Started |
 

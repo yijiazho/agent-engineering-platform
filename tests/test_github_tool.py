@@ -43,8 +43,10 @@ EVALUATION_ID = "evaluationresult-dddddddddddd"
 ACCEPTANCE_EVALUATION_ID = "evaluationresult-444444444444"
 POLICY_ID = "policydecision-eeeeeeeeeeee"
 PUSH_ID = "toolinvocation-ffffffffffff"
+COMMIT_ID = "toolinvocation-666666666666"
 PUSH_POLICY_ID = "policydecision-555555555555"
 REVISION = "abc1234"
+HEAD_REVISION = "def5678"
 TRACE_ID = "trace-github-001"
 
 
@@ -210,8 +212,10 @@ def create_input() -> dict[str, Any]:
             "taskExecutionId": TASK_ID,
             "workflowExecutionId": WORKFLOW_ID,
             "repositoryRevision": REVISION,
+            "headRevision": HEAD_REVISION,
             "evaluationResultIds": [EVALUATION_ID, ACCEPTANCE_EVALUATION_ID],
             "generatedArtifactIds": [ARTIFACT_ID],
+            "commitToolInvocationId": COMMIT_ID,
             "pushToolInvocationId": PUSH_ID,
         },
     }
@@ -280,21 +284,42 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         "target": {"type": "GeneratedArtifact", "id": ARTIFACT_ID},
     }
     git_tool_ref = {"kind": "Tool", "name": "git", "version": "1.0.0"}
+    commit = base("ToolInvocation", COMMIT_ID, TASK_ID, "tool-runtime") | {
+        "taskExecutionId": TASK_ID,
+        "toolRef": git_tool_ref,
+        "status": "SUCCEEDED",
+        "input": {
+            "operation": "commit_changes",
+            "expectedRevision": REVISION,
+            "branch": "aep/issue-42",
+            "commitMessage": "Implement issue #42",
+            "expectedPatchSha256": "4" * 64,
+        },
+        "output": {
+            "operation": "commit_changes",
+            "repository": "acme/widgets",
+            "branch": "aep/issue-42",
+            "baseRevision": REVISION,
+            "revision": HEAD_REVISION,
+            "remoteMutationState": "NOT_ATTEMPTED",
+        },
+        "policyDecisionId": PUSH_POLICY_ID,
+    }
     push = base("ToolInvocation", PUSH_ID, TASK_ID, "tool-runtime") | {
         "taskExecutionId": TASK_ID,
         "toolRef": {"kind": "Tool", "name": "git", "version": "1.0.0"},
         "status": "SUCCEEDED",
         "input": {
-            "operation": "push",
-            "repository": "acme/widgets",
+            "operation": "push_branch",
+            "expectedRevision": REVISION,
             "branch": "aep/issue-42",
-            "revision": REVISION,
         },
         "output": {
-            "operation": "push",
+            "operation": "push_branch",
             "repository": "acme/widgets",
             "branch": "aep/issue-42",
-            "revision": REVISION,
+            "revision": HEAD_REVISION,
+            "remoteMutationState": "CONFIRMED",
         },
         "policyDecisionId": PUSH_POLICY_ID,
     }
@@ -370,6 +395,8 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
             "head": "aep/issue-42",
             "base": "main",
             "repositoryRevision": REVISION,
+            "headRevision": HEAD_REVISION,
+            "commitToolInvocationId": COMMIT_ID,
             "pushToolInvocationId": PUSH_ID,
         },
     }
@@ -377,6 +404,7 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         ARTIFACT_ID: artifact,
         EVALUATION_ID: evaluation,
         ACCEPTANCE_EVALUATION_ID: acceptance_evaluation,
+        COMMIT_ID: commit,
         PUSH_ID: push,
         PUSH_POLICY_ID: push_policy,
         POLICY_ID: policy,
@@ -570,6 +598,7 @@ def test_schema_valid_cross_task_publication_graph_is_allowed() -> None:
             ARTIFACT_ID: "generatedartifact",
             EVALUATION_ID: "evaluationresult",
             ACCEPTANCE_EVALUATION_ID: "evaluationresult",
+            COMMIT_ID: "toolinvocation",
             PUSH_ID: "toolinvocation",
             PUSH_POLICY_ID: "policydecision",
             POLICY_ID: "policydecision",
@@ -603,7 +632,7 @@ def test_schema_valid_cross_task_publication_graph_is_allowed() -> None:
 @pytest.mark.parametrize(
     "field,value,message",
     [
-        ("head", "changed-head", "Git push input mismatch"),
+        ("head", "changed-head", "Git commit evidence mismatch"),
         ("base", "release", "Publication target mismatch"),
     ],
 )
@@ -648,6 +677,15 @@ def test_push_proof_must_resolve_approved_head_to_revision() -> None:
 @pytest.mark.parametrize(
     "mutation",
     [
+        lambda records: records[COMMIT_ID]["output"].update(
+            revision=REVISION
+        ),
+        lambda records: records[COMMIT_ID]["input"].update(
+            branch="other-head"
+        ),
+        lambda records: records[COMMIT_ID].update(
+            policyDecisionId="policydecision-666666666666"
+        ),
         lambda records: records[PUSH_ID].update(
             toolRef={"kind": "Tool", "name": "github", "version": "1.0.0"}
         ),

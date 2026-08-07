@@ -543,13 +543,24 @@ Individual Tool implementations remain interchangeable.
 ## Git Adapter
 
 The repository-bound Git adapter exposes branch creation, status, diff,
-read-only patch checking, and push operations. `check_patch` requires a clean
+read-only patch checking, publication commit, and push operations. `check_patch` requires a clean
 execution branch at the configured immutable revision. Patch bytes enter the
 isolated sandbox over standard input and are inspected with `git apply
 --numstat` and `git apply --check --cached`; the operation returns changed paths
 and deterministic diagnostics without changing the index or worktree. Patch
 Evaluation owns allowed-path and correctness decisions, while push remains a
 separate capability-authorized operation.
+
+`commit_changes` materializes an accepted dirty working tree as a commit on the
+configured execution branch. It shares the `git.push` publication capability,
+stages through the repository-bound sandbox, uses a fixed AEP author, disables
+hooks and signing, verifies the current diff against the accepted patch digest,
+records that digest in a controlled commit trailer for retry reconciliation,
+and returns distinct base and head revisions. Clean-head reconciliation
+reconstructs the committed binary patch and compares its SHA-256 with the
+accepted artifact; the trailer alone is never trusted. Push then
+publishes that committed head; dirty worktree bytes are never mistaken for
+remotely reachable content.
 
 The persisted Git Tool boundary atomically creates pending ToolInvocation
 evidence before starting an adapter operation. Its deterministic request
@@ -571,11 +582,12 @@ Pull-request publication resolves immutable artifact, evaluation, and
 Publication Policy records through a trusted verifier. The verifier binds the
 CreatePullRequest task and PolicyDecision while allowing artifacts and
 evaluations to preserve their distinct owning tasks. All evidence shares one
-WorkflowExecution, repository revision, and trace. A successful Git push
-ToolInvocation owned by the CreatePullRequest task must use an
+WorkflowExecution, repository revision, and trace. A successful Git commit and
+Git push ToolInvocation pair owned by the CreatePullRequest task must use an
 immutable-version Git Tool and prove through matching input and output that the
-exact approved head resolves to that revision. The verifier resolves the push's
-persisted pre-execution PolicyDecision and requires `git.push`, `ALLOW`, and the
+accepted base produced the policy-bound head and the push resolves to that
+head. The verifier resolves the pair's shared persisted pre-execution
+PolicyDecision and requires `git.push`, `ALLOW`, and the
 same task, workflow, revision, trace, and target. The publication decision
 separately binds repository, head, base, `PUBLICATION` gate, and action before
 `github.create_pr` authorization. Caller assertions or a changed target cannot
@@ -589,6 +601,26 @@ failure. Timeout handling returns frozen GitHub-specific evidence with the
 provider request ID, trace, TIMEOUT attempt, and ambiguity flag, then terminates,
 kills when needed, and cleans up the same provider operation without starting a
 second publication.
+
+The CreatePullRequest Task handler composes these boundaries only after a
+successful acceptance-summary EvaluationResult. It evaluates Publication
+Policy after a local policy-authorized commit establishes the exact head and
+before push, then persists distinct capability decisions for `git.push`
+and `github.create_pr`. Deterministic ToolInvocation identities let retries
+reuse confirmed terminal operations. The final `PULL_REQUEST_DESCRIPTION`
+artifact binds the accepted artifacts and evaluations to the publication and
+capability decisions, commit, push, and provider invocations, provider request ID,
+pull-request number, and URL. The handler creates but never merges a pull
+request.
+
+Scheduler attempts receive distinct TaskExecution identities. Before a new
+GitHub provider call, the handler therefore also reconciles prior workflow
+invocations by immutable repository, issue, base/head revision, description,
+artifact, and evaluation identity. A matching terminal or in-progress
+publication is reused rather than repeated. A later attempt persists its own
+reconciliation ToolInvocation pointing to the original provider invocation and
+its own description artifact, preserving TaskExecution ownership without
+duplicating the external pull request.
 
 ---
 

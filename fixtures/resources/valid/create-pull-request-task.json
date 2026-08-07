@@ -1,0 +1,27 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Task",
+  "metadata": {
+    "name": "create-pull-request",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "objective": "Publish an accepted implementation as a pull request.",
+    "outputs": {
+      "type": "object",
+      "required": ["pullRequestUrl"],
+      "properties": {
+        "pullRequestUrl": { "type": "string", "minLength": 1 }
+      }
+    },
+    "policies": [
+      { "kind": "Policy", "name": "publication", "version": "1.0.0" },
+      { "kind": "Policy", "name": "publication-capabilities", "version": "1.0.0" }
+    ],
+    "publication": {
+      "gitToolRef": { "kind": "Tool", "name": "git", "version": "1.0.0" },
+      "githubToolRef": { "kind": "Tool", "name": "github", "version": "1.0.0" },
+      "timeoutMs": 30000
+    }
+  }
+}

@@ -112,9 +112,9 @@ and the repository's versioned `.ai/` Resources.
 > implements the underlying event, workflow, context, Agent, Tool, evaluation,
 > policy, artifact, and observability components, plus the `AnalyzeIssue`,
 > `BuildImplementationPlan`, `GeneratePatch`, `RunValidation`, and
-> `EvaluateAcceptance` Task handlers. The local Event Controller does not yet
-> expose a webhook POST endpoint, while `CreatePullRequest` and the end-to-end
-> harness remain unimplemented. The current Compose stack is therefore a credential-free
+> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The local Event
+> Controller does not yet expose a webhook POST endpoint, while the end-to-end
+> harness remains unimplemented. The current Compose stack is therefore a credential-free
 > service-topology smoke test, not yet a deployable issue-to-PR integration.
 
 ### 1. Add Repository-Local Resources
@@ -333,7 +333,7 @@ validation—not for a live repository integration.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 35 of the 43 implementation tasks are complete.
+contracts are established, and 36 of the 43 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -363,8 +363,8 @@ Implemented foundations currently include:
 * Workspace-confined Filesystem Tool reads and policy-authorized writes with
   trusted control-plane reads, race-safe handle confinement, and idempotent
   persisted invocation evidence.
-* Repository-bound Git Tool operations for branch creation, status, diff, and
-  capability-authorized push through an injected isolated sandbox with
+* Repository-bound Git Tool operations for branch creation, status, diff,
+  policy-authorized publication commit, and push through an injected isolated sandbox with
   short-lived credentials, explicit remote-mutation state, and redacted command
   evidence.
 * Policy-gated, workspace-scoped Docker validation with digest-pinned images,
@@ -391,6 +391,11 @@ Implemented foundations currently include:
 * Non-cognitive EvaluateAcceptance Task handling that walks prior execution
   evidence, verifies artifact and evaluation completeness, identity,
   provenance, revision, and outcomes, and persists an immutable final summary.
+* Policy-gated CreatePullRequest Task handling that consumes accepted evidence,
+  commits the accepted working-tree patch, binds and pushes the resulting head,
+  authorizes Git push and GitHub PR creation separately, prevents duplicate
+  provider mutations, and persists the PR description, URL, provider identity,
+  and trace evidence.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
   repository knowledge, Resources, events, policies, and prior artifacts.
@@ -399,8 +404,8 @@ Implemented foundations currently include:
   local persistence.
 
 
-The remaining work includes the downstream CreatePullRequest Task handler and
-deterministic end-to-end issue-to-pull-request harness, plus the authenticated ingress,
+The remaining work includes the deterministic end-to-end issue-to-pull-request
+harness, plus the authenticated ingress,
 execution-checkout provisioning, complete self-hosting Resource bundle, live
 GitHub and Model provider integrations, and dogfood deployment required to
 register this repository with a running AEP control plane. See
