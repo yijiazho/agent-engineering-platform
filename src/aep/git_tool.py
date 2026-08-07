@@ -36,11 +36,23 @@ GIT_INPUT_SCHEMA: Mapping[str, Any] = {
     "properties": {
         "operation": {
             "type": "string",
-            "enum": ["create_branch", "status", "diff", "check_patch", "push_branch"],
+            "enum": [
+                "create_branch",
+                "status",
+                "diff",
+                "check_patch",
+                "commit_changes",
+                "push_branch",
+            ],
         },
         "expectedRevision": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
         "branch": {"type": "string", "minLength": 1},
         "patch": {"type": "string"},
+        "commitMessage": {"type": "string", "minLength": 1, "maxLength": 256},
+        "expectedPatchSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+        },
     },
     "allOf": [
         {
@@ -50,7 +62,22 @@ GIT_INPUT_SCHEMA: Mapping[str, Any] = {
             },
             "then": {"required": ["patch"]},
             "else": {"not": {"required": ["patch"]}},
-        }
+        },
+        {
+            "if": {
+                "properties": {"operation": {"const": "commit_changes"}},
+                "required": ["operation"],
+            },
+            "then": {"required": ["commitMessage", "expectedPatchSha256"]},
+            "else": {
+                "not": {
+                    "anyOf": [
+                        {"required": ["commitMessage"]},
+                        {"required": ["expectedPatchSha256"]},
+                    ]
+                }
+            },
+        },
     ],
     "additionalProperties": False,
 }
@@ -359,8 +386,10 @@ class GitToolAdapter(ToolAdapter):
                 "request branch does not match the configured working branch"
             )
         operation = value.get("operation")
-        if operation == "push_branch" and "git.push" not in request.capabilities:
-            raise GitToolContractError("push_branch requires the git.push capability")
+        if operation in {"commit_changes", "push_branch"} and "git.push" not in request.capabilities:
+            raise GitToolContractError(
+                f"{operation} requires the git.push capability"
+            )
         return _GitToolExecution(
             repository=self._repository,
             repository_id=self._repository_id,
@@ -371,6 +400,16 @@ class GitToolAdapter(ToolAdapter):
             patch=(
                 str(value.get("patch", "")).encode("utf-8")
                 if operation == "check_patch"
+                else None
+            ),
+            commit_message=(
+                str(value["commitMessage"])
+                if operation == "commit_changes"
+                else None
+            ),
+            expected_patch_sha256=(
+                str(value["expectedPatchSha256"])
+                if operation == "commit_changes"
                 else None
             ),
             trace_id=request.trace_id,
@@ -391,6 +430,8 @@ class _GitToolExecution(ToolExecution):
         remote: str,
         operation: str,
         patch: bytes | None,
+        commit_message: str | None,
+        expected_patch_sha256: str | None,
         trace_id: str,
         log_store: GitCommandLogStore,
         sandbox: GitSandbox,
@@ -403,6 +444,8 @@ class _GitToolExecution(ToolExecution):
         self._remote = remote
         self._operation = operation
         self._patch = patch
+        self._commit_message = commit_message
+        self._expected_patch_sha256 = expected_patch_sha256
         self._trace_id = trace_id
         self._log_store = log_store
         self._sandbox = sandbox
@@ -457,6 +500,7 @@ class _GitToolExecution(ToolExecution):
         return None
 
     def _execute(self, deadline: float) -> dict[str, Any]:
+        committed_changes: list[dict[str, str]] | None = None
         resolved_base = self._run(
             ("rev-parse", "--verify", f"{self._expected_revision}^{{commit}}"),
             deadline,
@@ -525,6 +569,119 @@ class _GitToolExecution(ToolExecution):
                     self._remote_mutation_state = RemoteMutationState.CONFIRMED
                 finally:
                     credentials.close()
+            elif self._operation == "commit_changes":
+                status = self._run(
+                    ("status", "--porcelain=v1", "-z", "--untracked-files=all"),
+                    deadline,
+                ).stdout
+                current_head = self._run(("rev-parse", "HEAD"), deadline).stdout.decode(
+                    "ascii"
+                ).strip().lower()
+                if not status and current_head == self._expected_revision:
+                    raise GitToolContractError(
+                        "commit_changes requires modified or untracked files"
+                    )
+                assert self._expected_patch_sha256 is not None
+                if not status:
+                    reconciled_patch = self._committed_patch(deadline)
+                    if (
+                        sha256(reconciled_patch).hexdigest()
+                        != self._expected_patch_sha256
+                    ):
+                        raise GitToolContractError(
+                            "commit_changes clean head does not match the accepted patch"
+                        )
+                    commit_message = self._run(
+                        ("log", "-1", "--format=%B", "HEAD"), deadline
+                    ).stdout.decode("utf-8", errors="replace")
+                    trailer = (
+                        f"AEP-Patch-SHA256: {self._expected_patch_sha256}"
+                    )
+                    if trailer not in commit_message.splitlines():
+                        raise GitToolContractError(
+                            "commit_changes clean head is not the accepted patch commit"
+                        )
+                    committed_changes = _parse_numstat(
+                        self._run(
+                            (
+                                "diff",
+                                "--numstat",
+                                "-z",
+                                self._expected_revision,
+                                "--",
+                            ),
+                            deadline,
+                        ).stdout
+                    )
+                else:
+                    dirty_changes = _parse_status(status)
+                    patch_parts = [
+                        self._run(
+                            (
+                                "diff",
+                                "--no-ext-diff",
+                                "--no-color",
+                                "--binary",
+                                "--no-renames",
+                                self._expected_revision,
+                                "--",
+                            ),
+                            deadline,
+                        ).stdout
+                    ]
+                    for changed_file in dirty_changes:
+                        if changed_file["status"] != "??":
+                            continue
+                        patch_parts.append(
+                            self._run(
+                                (
+                                    "diff",
+                                    "--no-index",
+                                    "--no-ext-diff",
+                                    "--no-color",
+                                    "--binary",
+                                    "--",
+                                    self._sandbox.null_device_path,
+                                    changed_file["path"],
+                                ),
+                                deadline,
+                                accepted_exit_codes=(0, 1),
+                            ).stdout
+                        )
+                    actual_patch_sha256 = sha256(b"".join(patch_parts)).hexdigest()
+                    if actual_patch_sha256 != self._expected_patch_sha256:
+                        raise GitToolContractError(
+                            "commit_changes working tree does not match the accepted patch"
+                        )
+                    committed_changes = dirty_changes
+                    self._run(("add", "--all", "--"), deadline)
+                    staged = self._run(
+                        ("diff", "--cached", "--quiet", "--"),
+                        deadline,
+                        accepted_exit_codes=(0, 1),
+                    )
+                    if staged.exit_code == 0:
+                        raise GitToolContractError(
+                            "commit_changes did not produce staged changes"
+                        )
+                    assert self._commit_message is not None
+                    self._run(
+                        (
+                            "-c",
+                            "user.name=AEP",
+                            "-c",
+                            "user.email=aep@localhost",
+                            "commit",
+                            "--no-gpg-sign",
+                            "--no-verify",
+                            "-m",
+                            (
+                                f"{self._commit_message}\n\n"
+                                f"AEP-Patch-SHA256: {self._expected_patch_sha256}"
+                            ),
+                        ),
+                        deadline,
+                    )
             elif self._operation not in {"status", "diff", "check_patch"}:
                 raise GitToolContractError(
                     f"unsupported Git operation {self._operation!r}"
@@ -537,7 +694,7 @@ class _GitToolExecution(ToolExecution):
         status = self._run(
             ("status", "--porcelain=v1", "-z", "--untracked-files=all"), deadline
         ).stdout
-        changed_files = _parse_status(status)
+        changed_files = committed_changes or _parse_status(status)
         diff_value: dict[str, Any] | None = None
         applicable: bool | None = None
         diagnostics: list[str] = []
@@ -580,6 +737,7 @@ class _GitToolExecution(ToolExecution):
                         "--no-ext-diff",
                         "--no-color",
                         "--binary",
+                        "--no-renames",
                         self._expected_revision,
                         "--",
                     ),
@@ -624,6 +782,58 @@ class _GitToolExecution(ToolExecution):
             "applicable": applicable,
             "diagnostics": diagnostics,
         }
+
+    def _committed_patch(self, deadline: float) -> bytes:
+        parts = [
+            self._run(
+                (
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-color",
+                    "--binary",
+                    "--no-renames",
+                    "--diff-filter=a",
+                    self._expected_revision,
+                    "HEAD",
+                    "--",
+                ),
+                deadline,
+            ).stdout
+        ]
+        added = self._run(
+            (
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--diff-filter=A",
+                self._expected_revision,
+                "HEAD",
+                "--",
+            ),
+            deadline,
+        ).stdout
+        for raw_path in added.split(b"\0"):
+            if not raw_path:
+                continue
+            path = raw_path.decode("utf-8", errors="surrogateescape")
+            parts.append(
+                self._run(
+                    (
+                        "diff",
+                        "--no-index",
+                        "--no-ext-diff",
+                        "--no-color",
+                        "--binary",
+                        "--",
+                        self._sandbox.null_device_path,
+                        path,
+                    ),
+                    deadline,
+                    accepted_exit_codes=(0, 1),
+                ).stdout
+            )
+        return b"".join(parts)
 
     def _failure_output(self) -> dict[str, Any]:
         return {
@@ -855,6 +1065,7 @@ def _git_pending_record(
             "workflowExecutionId": request.correlation.workflow_execution_id,
             "taskExecutionId": task_execution_id,
             "resourceRefs": [dict(request.tool_ref)],
+            "repositoryRevision": request.input["expectedRevision"],
         },
         "taskExecutionId": task_execution_id,
         "toolRef": dict(request.tool_ref),

@@ -12,7 +12,7 @@ Local read operations and externally mutating push operations have different ris
 
 Implement a Git Tool adapter that:
 
-* defines structured operations for create branch, status, diff, and push branch;
+* defines structured operations for create branch, status, diff, publication commit, and push branch;
 * runs only against the configured repository and expected revision/working branch;
 * requires `git.push` authorization before remote mutation;
 * returns changed-file, diff, branch, revision, and command-result metadata with redacted logs; and
@@ -25,7 +25,7 @@ Implement a Git Tool adapter that:
 
 ## Acceptance Criteria
 
-* Supports create branch, diff, status, and push branch operations.
+* Supports create branch, diff, status, publication commit, and push branch operations.
 * Push requires Pre-Execution Capability Policy.
 * Outputs structured changed file and diff metadata.
 * ToolInvocation records command logs without leaking secrets.
@@ -56,6 +56,18 @@ commands. It requires a clean branch whose HEAD exactly matches the configured
 revision, reports changed paths and applicability diagnostics, and does not
 modify the index or worktree.
 
+The `commit_changes` operation materializes the already accepted working-tree
+patch as a new immutable head before publication. It requires the same
+`git.push` publication capability, stages repository-confined changes, uses a
+controlled AEP author identity with hooks and signing disabled, rejects an
+empty worktree, verifies the current diff against the accepted patch SHA-256,
+and records both the immutable base and new head revisions. The controlled
+commit includes that digest as an AEP trailer, allowing a later scheduler
+attempt to reconcile the same clean head without creating another commit. The
+retry reconstructs and hashes the actual binary `base..HEAD` patch as the
+authority; the trailer is supplemental provenance and cannot substitute a
+different committed tree.
+
 Successful results include repository, branch, base and current revisions,
 porcelain-derived changed-file records, diff content and digest metadata when
 requested, and per-command exit and byte-count metadata. Full stdout and stderr
@@ -83,8 +95,9 @@ the remote state. Once `CONFIRMED`, later local evidence-collection failures do
 not erase the observed external effect.
 
 `tests/test_git_tool.py` creates temporary local working and bare fixture
-repositories. It covers branch creation, status, diff, denied and authorized
-push, repository-state mismatches, omitted push capability, command failure,
+repositories. It covers branch creation, status, diff, publication commit with
+remote content verification, denied and authorized push, repository-state
+mismatches, omitted push capability, command failure,
 dirty and unrelated histories, hook and ambient-environment isolation, scoped
 credential cleanup, read and push timeouts, structured evidence, and
 command-log secret redaction without network access. Push tests distinguish an

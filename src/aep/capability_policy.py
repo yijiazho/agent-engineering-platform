@@ -183,6 +183,9 @@ class PreExecutionCapabilityPolicy:
             "taskExecutionId": task_execution_id,
             "resourceRefs": policy_refs,
         }
+        repository_revision = resource_scope.get("repositoryRevision")
+        if isinstance(repository_revision, str) and repository_revision:
+            provenance["repositoryRevision"] = repository_revision
         record = {
             "apiVersion": "aep.dev/v1alpha1",
             "kind": "PolicyDecision",

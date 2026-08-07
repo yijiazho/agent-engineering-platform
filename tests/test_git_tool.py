@@ -188,14 +188,21 @@ def request(
     *,
     branch: str = "agent/work",
     capabilities: tuple[str, ...] = ("git.read",),
+    commit_message: str | None = None,
+    expected_patch_sha256: str | None = None,
 ) -> ToolRequest:
+    input_value = {
+        "operation": operation,
+        "expectedRevision": revision,
+        "branch": branch,
+    }
+    if commit_message is not None:
+        input_value["commitMessage"] = commit_message
+    if expected_patch_sha256 is not None:
+        input_value["expectedPatchSha256"] = expected_patch_sha256
     return ToolRequest(
         tool_ref={"kind": "Tool", "name": "git", "version": "1.0.0"},
-        input={
-            "operation": operation,
-            "expectedRevision": revision,
-            "branch": branch,
-        },
+        input=input_value,
         caller=ToolCaller(kind="TaskExecution", id="taskexecution-git00000001"),
         capabilities=capabilities,
         timeout_ms=5_000,
@@ -540,6 +547,158 @@ def test_authorized_push_updates_only_configured_remote_branch(
     assert result.status is ToolResultStatus.SUCCEEDED
     assert result.output["remoteMutationState"] == "CONFIRMED"
     assert git(remote, "rev-parse", "refs/heads/agent/work") == revision
+
+
+def test_commit_then_push_publishes_worktree_changes_to_remote_head(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    tool_adapter = create_branch(repository, revision, logs)
+    (repository / "tracked.txt").write_text("accepted change\n", encoding="utf-8")
+    (repository / "added.txt").write_text("accepted addition\n", encoding="utf-8")
+    accepted_diff = invoke(request(revision, "diff"), tool_adapter)
+    assert accepted_diff.status is ToolResultStatus.SUCCEEDED
+
+    commit = invoke(
+        request(
+            revision,
+            "commit_changes",
+            capabilities=("git.push",),
+            commit_message="Implement accepted patch",
+            expected_patch_sha256=accepted_diff.output["diff"]["sha256"],
+        ),
+        tool_adapter,
+    )
+    reconciled_commit = invoke(
+        request(
+            revision,
+            "commit_changes",
+            capabilities=("git.push",),
+            commit_message="Implement accepted patch",
+            expected_patch_sha256=accepted_diff.output["diff"]["sha256"],
+        ),
+        tool_adapter,
+    )
+    push = invoke(
+        request(revision, "push_branch", capabilities=("git.push",)),
+        tool_adapter,
+    )
+
+    assert commit.status is ToolResultStatus.SUCCEEDED
+    assert commit.output["revision"] != revision
+    assert reconciled_commit.status is ToolResultStatus.SUCCEEDED
+    assert reconciled_commit.output["revision"] == commit.output["revision"]
+    assert {item["path"] for item in commit.output["changedFiles"]} == {
+        "added.txt",
+        "tracked.txt",
+    }
+    assert push.status is ToolResultStatus.SUCCEEDED
+    assert push.output["revision"] == commit.output["revision"]
+    assert git(remote, "rev-parse", "refs/heads/agent/work") == commit.output["revision"]
+    assert git(remote, "show", "refs/heads/agent/work:tracked.txt") == "accepted change"
+    assert git(remote, "show", "refs/heads/agent/work:added.txt") == "accepted addition"
+
+
+def test_commit_changes_requires_publication_capability_and_dirty_worktree(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    tool_adapter = create_branch(repository, revision, logs)
+
+    without_capability = invoke(
+        request(
+            revision,
+            "commit_changes",
+            commit_message="Unauthorized commit",
+            expected_patch_sha256="0" * 64,
+        ),
+        tool_adapter,
+    )
+    clean = invoke(
+        request(
+            revision,
+            "commit_changes",
+            capabilities=("git.push",),
+            commit_message="Empty commit",
+            expected_patch_sha256="0" * 64,
+        ),
+        tool_adapter,
+    )
+
+    assert without_capability.status is ToolResultStatus.FAILED
+    assert without_capability.failure_message == (
+        "commit_changes requires the git.push capability"
+    )
+    assert clean.status is ToolResultStatus.FAILED
+    assert clean.failure_message == (
+        "commit_changes requires modified or untracked files"
+    )
+    assert git(repository, "rev-parse", "HEAD") == revision
+
+
+def test_commit_changes_rejects_worktree_that_differs_from_accepted_patch(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    tool_adapter = create_branch(repository, revision, logs)
+    (repository / "tracked.txt").write_text("accepted\n", encoding="utf-8")
+    accepted = invoke(request(revision, "diff"), tool_adapter)
+    (repository / "tracked.txt").write_text("tampered\n", encoding="utf-8")
+
+    result = invoke(
+        request(
+            revision,
+            "commit_changes",
+            capabilities=("git.push",),
+            commit_message="Commit accepted patch",
+            expected_patch_sha256=accepted.output["diff"]["sha256"],
+        ),
+        tool_adapter,
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_message == (
+        "commit_changes working tree does not match the accepted patch"
+    )
+    assert git(repository, "rev-parse", "HEAD") == revision
+
+
+def test_commit_reconciliation_rejects_substituted_clean_head_with_copied_trailer(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    tool_adapter = create_branch(repository, revision, logs)
+    (repository / "tracked.txt").write_text("accepted\n", encoding="utf-8")
+    accepted = invoke(request(revision, "diff"), tool_adapter)
+    accepted_digest = accepted.output["diff"]["sha256"]
+    (repository / "tracked.txt").write_text("substituted\n", encoding="utf-8")
+    git(repository, "add", "--all")
+    git(
+        repository,
+        "commit",
+        "-m",
+        f"Forged publication\n\nAEP-Patch-SHA256: {accepted_digest}",
+    )
+
+    result = invoke(
+        request(
+            revision,
+            "commit_changes",
+            capabilities=("git.push",),
+            commit_message="Implement accepted patch",
+            expected_patch_sha256=accepted_digest,
+        ),
+        tool_adapter,
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_message == (
+        "commit_changes clean head does not match the accepted patch"
+    )
 
 
 def test_push_credentials_are_scoped_to_push_and_lease_is_closed(

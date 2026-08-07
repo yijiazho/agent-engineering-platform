@@ -76,8 +76,10 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
                         "taskExecutionId",
                         "workflowExecutionId",
                         "repositoryRevision",
+                        "headRevision",
                         "evaluationResultIds",
                         "generatedArtifactIds",
+                        "commitToolInvocationId",
                         "pushToolInvocationId",
                     ],
                     "properties": {
@@ -85,9 +87,14 @@ GITHUB_INPUT_SCHEMA: dict[str, Any] = {
                         "taskExecutionId": {"type": "string", "minLength": 1},
                         "workflowExecutionId": {"type": "string", "minLength": 1},
                         "repositoryRevision": {"type": "string", "minLength": 7},
+                        "headRevision": {"type": "string", "minLength": 7},
                         "evaluationResultIds": deepcopy(_ID_LIST),
                         "generatedArtifactIds": deepcopy(_ID_LIST),
                         "pushToolInvocationId": {
+                            "type": "string",
+                            "minLength": 1,
+                        },
+                        "commitToolInvocationId": {
                             "type": "string",
                             "minLength": 1,
                         },
@@ -282,14 +289,20 @@ class PersistedPublicationPolicyVerifier:
         artifacts = self._resolve_many(evidence["generatedArtifactIds"])
         evaluations = self._resolve_many(evidence["evaluationResultIds"])
         policy = self._resolve(evidence["policyDecisionId"])
+        commit = self._resolve(evidence["commitToolInvocationId"])
         push = self._resolve(evidence["pushToolInvocationId"])
         if policy is None:
             return PublicationVerification(False, "Publication Policy decision not found")
+        if commit is None:
+            return PublicationVerification(False, "Git commit evidence not found")
         if push is None:
             return PublicationVerification(False, "Git push evidence not found")
 
         workflow_id = evidence["workflowExecutionId"]
         revision = evidence["repositoryRevision"]
+        head_revision = evidence["headRevision"]
+        if head_revision == revision:
+            return PublicationVerification(False, "Published head did not advance")
         artifact_ids = tuple(evidence["generatedArtifactIds"])
         evaluation_ids = tuple(evidence["evaluationResultIds"])
 
@@ -308,10 +321,28 @@ class PersistedPublicationPolicyVerifier:
                 return PublicationVerification(False, "GeneratedArtifact workflow mismatch")
             if provenance.get("repositoryRevision") != revision:
                 return PublicationVerification(False, "GeneratedArtifact provenance mismatch")
-            if set(artifact.get("evaluationResultIds", ())) != set(evaluation_ids):
+            artifact_evaluations = set(artifact.get("evaluationResultIds", ()))
+            if not artifact_evaluations or not artifact_evaluations.issubset(
+                set(evaluation_ids)
+            ):
                 return PublicationVerification(
                     False, "GeneratedArtifact evaluation binding mismatch"
                 )
+        patch_artifacts = [
+            artifact
+            for artifact in artifacts
+            if artifact.get("artifactType") == "PATCH"
+        ]
+        if len(patch_artifacts) != 1:
+            return PublicationVerification(False, "Published PATCH evidence mismatch")
+        patch_address = str(patch_artifacts[0].get("contentAddress", ""))
+        patch_algorithm, patch_separator, patch_digest = patch_address.partition(":")
+        if not (
+            patch_algorithm == "sha256"
+            and patch_separator == ":"
+            and len(patch_digest) == 64
+        ):
+            return PublicationVerification(False, "Published PATCH digest mismatch")
 
         for evaluation_id, evaluation in zip(
             evaluation_ids, evaluations, strict=True
@@ -343,6 +374,53 @@ class PersistedPublicationPolicyVerifier:
                 return PublicationVerification(False, "EvaluationResult target mismatch")
 
         if not _matches(
+            commit,
+            kind="ToolInvocation",
+            id=evidence["commitToolInvocationId"],
+            traceId=request.trace_id,
+            taskExecutionId=evidence["taskExecutionId"],
+            status="SUCCEEDED",
+        ):
+            return PublicationVerification(False, "Git commit identity mismatch")
+        commit_tool_ref = commit.get("toolRef", {})
+        commit_tool_version = commit_tool_ref.get("version")
+        if (
+            commit_tool_ref.get("kind") != "Tool"
+            or commit_tool_ref.get("name") != "git"
+            or not isinstance(commit_tool_version, str)
+            or not SEMVER_PATTERN.fullmatch(commit_tool_version)
+        ):
+            return PublicationVerification(False, "Git commit Tool reference mismatch")
+        commit_input = commit.get("input", {})
+        commit_output = commit.get("output", {})
+        if not (
+            commit_input.get("operation") == "commit_changes"
+            and commit_input.get("expectedRevision") == revision
+            and commit_input.get("branch") == request.input["head"]
+            and isinstance(commit_input.get("commitMessage"), str)
+            and commit_input.get("commitMessage")
+            and commit_input.get("expectedPatchSha256") == patch_digest
+            and commit_output.get("operation") == "commit_changes"
+            and commit_output.get("repository") == request.input["repository"]
+            and commit_output.get("branch") == request.input["head"]
+            and commit_output.get("baseRevision") == revision
+            and commit_output.get("revision") == head_revision
+            and commit_output.get("remoteMutationState") == "NOT_ATTEMPTED"
+        ):
+            return PublicationVerification(False, "Git commit evidence mismatch")
+        commit_provenance = commit.get("provenance", {})
+        expected_git_provenance = {
+            "workflowExecutionId": workflow_id,
+            "taskExecutionId": evidence["taskExecutionId"],
+            "repositoryRevision": revision,
+        }
+        if any(
+            commit_provenance.get(key) != value
+            for key, value in expected_git_provenance.items()
+        ):
+            return PublicationVerification(False, "Git commit provenance mismatch")
+
+        if not _matches(
             push,
             kind="ToolInvocation",
             id=evidence["pushToolInvocationId"],
@@ -352,14 +430,9 @@ class PersistedPublicationPolicyVerifier:
         ):
             return PublicationVerification(False, "Git push identity mismatch")
         push_provenance = push.get("provenance", {})
-        expected_push_provenance = {
-            "workflowExecutionId": workflow_id,
-            "taskExecutionId": evidence["taskExecutionId"],
-            "repositoryRevision": revision,
-        }
         if any(
             push_provenance.get(key) != value
-            for key, value in expected_push_provenance.items()
+            for key, value in expected_git_provenance.items()
         ):
             return PublicationVerification(False, "Git push provenance mismatch")
         tool_ref = push.get("toolRef", {})
@@ -371,20 +444,25 @@ class PersistedPublicationPolicyVerifier:
             or not SEMVER_PATTERN.fullmatch(version)
         ):
             return PublicationVerification(False, "Git push Tool reference mismatch")
-        expected_push_target = {
-            "operation": "push",
+        if dict(tool_ref) != dict(commit_tool_ref):
+            return PublicationVerification(False, "Git Tool version mismatch")
+        expected_push_input = {
+            "operation": "push_branch",
+            "expectedRevision": revision,
+            "branch": request.input["head"],
+        }
+        if dict(push.get("input", {})) != expected_push_input:
+            return PublicationVerification(False, "Git push input mismatch")
+        expected_push_output = {
+            "operation": "push_branch",
             "repository": request.input["repository"],
             "branch": request.input["head"],
-            "revision": revision,
+            "revision": head_revision,
+            "remoteMutationState": "CONFIRMED",
         }
         if any(
-            push.get("input", {}).get(key) != value
-            for key, value in expected_push_target.items()
-        ):
-            return PublicationVerification(False, "Git push input mismatch")
-        if any(
             push.get("output", {}).get(key) != value
-            for key, value in expected_push_target.items()
+            for key, value in expected_push_output.items()
         ):
             return PublicationVerification(False, "Git push target mismatch")
         push_policy_id = push.get("policyDecisionId")
@@ -393,6 +471,8 @@ class PersistedPublicationPolicyVerifier:
         push_policy = self._resolve(push_policy_id)
         if push_policy is None:
             return PublicationVerification(False, "Git push PolicyDecision not found")
+        if commit.get("policyDecisionId") != push_policy_id:
+            return PublicationVerification(False, "Git commit policy mismatch")
         expected_push_policy = {
             "kind": "PolicyDecision",
             "id": push_policy_id,
@@ -410,7 +490,7 @@ class PersistedPublicationPolicyVerifier:
         policy_provenance = push_policy.get("provenance", {})
         if any(
             policy_provenance.get(key) != value
-            for key, value in expected_push_provenance.items()
+            for key, value in expected_git_provenance.items()
         ):
             return PublicationVerification(False, "Git push policy provenance mismatch")
         expected_push_scope = {
@@ -454,6 +534,8 @@ class PersistedPublicationPolicyVerifier:
             "head": request.input["head"],
             "base": request.input["base"],
             "repositoryRevision": revision,
+            "headRevision": head_revision,
+            "commitToolInvocationId": evidence["commitToolInvocationId"],
             "pushToolInvocationId": evidence["pushToolInvocationId"],
         }
         if any(target.get(key) != value for key, value in expected_target.items()):

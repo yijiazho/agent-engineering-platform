@@ -26,6 +26,16 @@
         "knowledgeBases": { "$ref": "./resource-definitions.schema.json#/$defs/knowledgeBaseRefList" },
         "evaluations": { "$ref": "./resource-definitions.schema.json#/$defs/evaluationRefList" },
         "policies": { "$ref": "./resource-definitions.schema.json#/$defs/policyRefList" },
+        "publication": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["gitToolRef", "githubToolRef", "timeoutMs"],
+          "properties": {
+            "gitToolRef": { "$ref": "./resource-definitions.schema.json#/$defs/toolRef" },
+            "githubToolRef": { "$ref": "./resource-definitions.schema.json#/$defs/toolRef" },
+            "timeoutMs": { "$ref": "./resource-definitions.schema.json#/$defs/durationMs" }
+          }
+        },
         "validation": {
           "type": "object",
           "additionalProperties": false,
