@@ -632,7 +632,39 @@ Kubernetes manifests remain future deployment work.
 
 ---
 
-# 21. Future Evolution
+# 21. Repository Registration And Self-Hosting
+
+Repository registration is an explicit deployment operation, not a consequence
+of receiving an event. For the MVP, one deployment binds exactly one GitHub
+repository and one immutable Workspace version. The webhook payload must match
+that identity; it cannot select an arbitrary repository or cause dynamic
+onboarding.
+
+The first registered repository is
+`github:yijiazho/agent-engineering-platform`. Its self-hosting deployment follows
+ADR-004 and separates three repository views:
+
+* a pinned, read-only control-plane release and Resource checkout;
+* a trusted repository source/cache used to resolve immutable revisions; and
+* one clean, writable, revision-bound worktree per WorkflowExecution.
+
+Authenticated GitHub ingress verifies the raw delivery signature, delivery ID,
+event type, action, and repository before normalization and deduplication. A
+trusted checkout manager provisions execution worktrees; Agents cannot clone,
+fetch, choose revisions, or retrieve repository knowledge directly. GitHub App
+and Model provider credentials enter only through runtime secret and injected
+provider boundaries.
+
+The deployed version may generate an unmerged pull request proposing its
+successor, but it cannot modify its running image or read-only Resource
+checkout, merge the pull request, or deploy the result. A human-reviewed release
+creates the next pinned control-plane version. AEP-038 through AEP-043 track the
+ingress, checkout, Resource, provider, and pilot work needed to make this
+deployment operational.
+
+---
+
+# 22. Future Evolution
 
 The deployment architecture intentionally supports:
 
@@ -648,7 +680,7 @@ No architectural changes should be required.
 
 ---
 
-# 22. Design Principles
+# 23. Design Principles
 
 ## Kubernetes Native
 
@@ -690,7 +722,7 @@ Everything except Git repositories and workflow history should be reproducible.
 
 ---
 
-# 23. Summary
+# 24. Summary
 
 The AEP deployment architecture separates resource management, workflow execution, and persistence into independent Control, Execution, and Storage planes.
 

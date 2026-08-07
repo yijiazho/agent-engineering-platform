@@ -512,6 +512,23 @@ The initial MVP should demonstrate the complete engineering loop:
 8. Open a pull request.
 9. Persist execution history and generated artifacts.
 
+## Self-Hosting Dogfood Milestone
+
+After the generic credential-free MVP harness succeeds, the first live
+repository integration is this project itself. A pinned AEP deployment observes
+authenticated issue-created events for
+`github:yijiazho/agent-engineering-platform`, executes the versioned
+`issue-to-pr` Workflow in an isolated revision-bound checkout, and opens an
+unmerged pull request back to this repository.
+
+This milestone requires authenticated repository-bound ingress, a complete
+repository-local `.ai/` Resource bundle, execution-checkout provisioning, live
+GitHub and Model provider integrations, durable runtime evidence, and an
+operator-controlled deployment. The running version may propose its successor
+but must not modify itself, merge generated pull requests, or deploy generated
+changes. ADR-004 records the decision and AEP-038 through AEP-043 track the
+implementation.
+
 ---
 
 # Long-Term Vision
