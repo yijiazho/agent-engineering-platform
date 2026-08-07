@@ -112,7 +112,8 @@ and the repository's versioned `.ai/` Resources.
 > implements the underlying event, workflow, context, Agent, Tool, evaluation,
 > policy, artifact, and observability components, plus the `AnalyzeIssue`,
 > `BuildImplementationPlan`, `GeneratePatch`, `RunValidation`, and
-> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The local Event
+> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers and this
+> repository's complete self-hosting Resource bundle. The local Event
 > Controller does not yet expose a webhook POST endpoint, while the end-to-end
 > harness remains unimplemented. The current Compose stack is therefore a credential-free
 > service-topology smoke test, not yet a deployable issue-to-PR integration.
@@ -123,7 +124,7 @@ Commit AEP configuration to the target repository under `.ai/`. Git is the
 source of truth for desired AI behavior, so every reference must name an
 explicit version; floating references such as `latest` are rejected.
 
-The complete `issue-to-pr` configuration is expected to include:
+This repository's complete `issue-to-pr` configuration includes:
 
 ```text
 .ai/
@@ -189,7 +190,46 @@ Repository knowledge must be requested through the Context Builder and must
 not be retrieved directly by an Agent. See `fixtures/resources/valid/` for
 minimal Resource shapes and `schemas/resources/v1/` for the authoritative
 contracts. Those fixtures demonstrate individual schemas; they are not a
-complete ready-to-copy `issue-to-pr` Resource set.
+complete ready-to-copy `issue-to-pr` Resource set. The repository-specific
+bundle under `.ai/` is the reviewed source of truth for this Workspace, and
+`fixtures/self-hosting/` records its deterministic expected inventory and
+normalized event input.
+
+### Version And Review The Self-Hosting Bundle
+
+Treat a `.ai/` change like a public API change. Increment the changed
+Resource's semantic version, update every reference to that exact version in
+the same pull request, and never use `latest`. Review the complete reference
+graph, Agent Tool allowlists, task context requirements, Policy gates,
+KnowledgeBase paths, output schemas, and validation bounds before merging.
+Provider credentials, webhook secrets, runtime identifiers, and generated
+content remain outside Resources.
+
+Run the bundle contract tests and the locked repository test command before
+review:
+
+```powershell
+python -m pytest tests/test_self_hosting_resource_bundle.py
+python -m pytest
+```
+
+Validation starts from the immutable Python image and runs the repository's
+`deploy/validation/offline_bootstrap.py`. The bootstrap installs the exact
+hash-locked wheels under `deploy/validation/wheelhouse/` with `--no-index`,
+installs the mounted project without dependency resolution or build isolation,
+and compiles `src/` and `tests/`. The second configured command runs
+`python -m pytest /workspace/tests`. Networking is disabled by the Docker Tool
+boundary throughout, the writable mount is confined to the execution checkout,
+and CPU, memory, timeout, and retry limits are explicit.
+
+The wheelhouse includes CPython 3.12 artifacts for the Linux validation
+container and Windows local contract proof. Refresh it only from
+`requirements-dev.lock` plus the explicitly pinned `setuptools` and `wheel`
+build dependencies, update every hash in
+`deploy/validation/offline-requirements.txt`, and run
+`tests/test_self_hosting_resource_bundle.py`. That test verifies the complete
+artifact/hash set and executes both configured commands in a fresh environment
+with package indexes disabled.
 
 ### 2. Bind AEP To The Repository
 
@@ -315,9 +355,9 @@ Before enabling a real webhook, verify the deployment in this order:
    request is created.
 
 Step 5 becomes available when AEP-037 is implemented. Until the webhook ingress,
-remaining Task handlers, provider wiring, and that harness are complete, use
-the component tests and local composition only for contract and readiness
-validation—not for a live repository integration.
+provider wiring, and that harness are complete, use the component tests and
+local composition only for contract and readiness validation, not for a live
+repository integration.
 
 ## Key Documents
 
@@ -333,7 +373,7 @@ validation—not for a live repository integration.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 36 of the 43 implementation tasks are complete.
+contracts are established, and 37 of the 43 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -343,6 +383,9 @@ Implemented foundations currently include:
 
 * Resource and runtime-object JSON Schemas, fixtures, and validation.
 * Repository-local Resource loading with immutable version enforcement.
+* A complete self-hosting `.ai/` bundle for the six-Task `issue-to-pr`
+  Workflow, with deterministic inventory, resolution, DAG, knowledge,
+  validation, and policy-gate tests.
 * In-memory runtime persistence, idempotent claims, and immutable terminal evidence.
 * GitHub issue-created event normalization and deduplication.
 * Deterministic Event-to-Workflow resolution with explicit versioned references.
@@ -406,7 +449,7 @@ Implemented foundations currently include:
 
 The remaining work includes the deterministic end-to-end issue-to-pull-request
 harness, plus the authenticated ingress,
-execution-checkout provisioning, complete self-hosting Resource bundle, live
+execution-checkout provisioning, live
 GitHub and Model provider integrations, and dogfood deployment required to
 register this repository with a running AEP control plane. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the

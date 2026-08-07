@@ -1,0 +1,21 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
+  "metadata": {"name": "analyze-issue", "version": "1.0.0"},
+  "spec": {
+    "objective": "Analyze the normalized issue and identify a bounded, testable repository change.",
+    "agentRef": {"kind": "Agent", "name": "issue-analyzer", "version": "1.0.0"},
+    "outputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requestedChange", "acceptanceCriteria", "risks", "likelyRepositoryAreas"],
+      "properties": {
+        "requestedChange": {"type": "string", "minLength": 1},
+        "acceptanceCriteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "risks": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "likelyRepositoryAreas": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "requiredContext": ["event", "issue", "repository-inventory", "documentation", "candidate-files", "knowledge"],
+    "knowledgeBases": [{"kind": "KnowledgeBase", "name": "aep-repository", "version": "1.0.0"}],
+    "evaluations": [{"kind": "Evaluation", "name": "issue-analysis-schema", "version": "1.0.0"}]
+  }
+}

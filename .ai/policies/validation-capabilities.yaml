@@ -1,0 +1,7 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Policy",
+  "metadata": {"name": "validation-capabilities", "version": "1.0.0"},
+  "spec": {"type": "pre-execution-capability", "rules": [
+    {"effect": "allow", "capabilities": ["docker.run"], "reason": "RunValidation may execute the configured network-disabled validation container."}
+  ]}
+}

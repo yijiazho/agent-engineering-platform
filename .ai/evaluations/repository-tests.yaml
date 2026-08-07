@@ -1,0 +1,5 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Evaluation",
+  "metadata": {"name": "repository-tests", "version": "1.0.0"},
+  "spec": {"type": "test", "toolRef": {"kind": "Tool", "name": "docker-validation", "version": "1.0.0"}, "successCriteria": ["python -m pytest exits with code zero at the WorkflowExecution revision."]}
+}

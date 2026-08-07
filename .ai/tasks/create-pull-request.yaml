@@ -1,0 +1,19 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
+  "metadata": {"name": "create-pull-request", "version": "1.0.0"},
+  "spec": {
+    "objective": "Publish accepted changes as an unmerged pull request against main.",
+    "agentRef": {"kind": "Agent", "name": "pr-writer", "version": "1.0.0"},
+    "outputs": {"type": "object", "additionalProperties": false, "required": ["pullRequestUrl"], "properties": {"pullRequestUrl": {"type": "string", "minLength": 1}}},
+    "requiredContext": ["issue", "prior-artifacts", "policies"],
+    "policies": [
+      {"kind": "Policy", "name": "publication-evidence", "version": "1.0.0"},
+      {"kind": "Policy", "name": "publication-capabilities", "version": "1.0.0"}
+    ],
+    "publication": {
+      "gitToolRef": {"kind": "Tool", "name": "git", "version": "2.0.0"},
+      "githubToolRef": {"kind": "Tool", "name": "github", "version": "1.0.0"},
+      "timeoutMs": 60000
+    }
+  }
+}

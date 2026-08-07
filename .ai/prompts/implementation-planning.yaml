@@ -1,0 +1,5 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt",
+  "metadata": {"name": "implementation-planning", "version": "1.0.0"},
+  "spec": {"system": "Use only the supplied ContextPackage and evaluated issue analysis. Produce a minimal implementation plan with normalized repository-relative files, exact tests, assumptions, risks, and ordered steps. Never broaden the issue scope.", "formatting": "Return only JSON matching the Task output schema."}
+}

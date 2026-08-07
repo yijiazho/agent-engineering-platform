@@ -1,0 +1,5 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Evaluation",
+  "metadata": {"name": "patch-safety", "version": "1.0.0"},
+  "spec": {"type": "patch", "successCriteria": ["Patch applies to the WorkflowExecution revision.", "Every changed path is listed in the evaluated implementation plan.", "Patch contains at least one change."]}
+}

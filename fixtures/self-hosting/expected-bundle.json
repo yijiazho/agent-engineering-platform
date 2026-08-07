@@ -1,0 +1,31 @@
+{
+  "resourceCounts": {
+    "Workspace": 1,
+    "Event": 1,
+    "Workflow": 1,
+    "Task": 6,
+    "Agent": 4,
+    "Prompt": 4,
+    "Model": 1,
+    "Tool": 5,
+    "KnowledgeBase": 1,
+    "Policy": 5,
+    "Evaluation": 6
+  },
+  "taskOrder": [
+    "analyze-issue",
+    "build-implementation-plan",
+    "generate-patch",
+    "run-validation",
+    "evaluate-acceptance",
+    "create-pull-request"
+  ],
+  "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
+  "publicationCapabilities": ["git.push", "github.create_pr"],
+  "forbiddenCapabilities": ["repository.retrieve", "secret.read", "github.merge_pr", "deployment.create"],
+  "validation": {
+    "offlineArtifactCount": 17,
+    "buildCommand": ["python", "/workspace/deploy/validation/offline_bootstrap.py", "--workspace", "/workspace"],
+    "testCommand": ["python", "-m", "pytest", "/workspace/tests"]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Policy",
+  "metadata": {"name": "publication-evidence", "version": "1.0.0"},
+  "spec": {"type": "publication", "rules": [
+    {"effect": "allow", "conditions": {"type": "object", "required": ["candidateAction", "evidence"], "properties": {"candidateAction": {"type": "object", "required": ["action"], "properties": {"action": {"const": "github.create_pr"}}}, "evidence": {"type": "object", "required": ["allArtifactsValidated", "allEvaluationsPassed", "noPriorPolicyViolation"], "properties": {"allArtifactsValidated": {"const": true}, "allEvaluationsPassed": {"const": true}, "noPriorPolicyViolation": {"const": true}}}}}, "reason": "All revision-bound artifacts and evaluations passed with no prior policy denial."}
+  ]}
+}
