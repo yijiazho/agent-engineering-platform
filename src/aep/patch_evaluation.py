@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
-from aep.git_tool import GitToolAdapter, git_tool_validator
+from aep.git_tool import GitTool, GitToolAdapter, git_tool_validator
 from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import ToolCaller, ToolRequest, ToolResultStatus, invoke_tool
@@ -45,9 +45,18 @@ def evaluate_patch(
     timestamp: str,
     provenance: Mapping[str, Any],
     git_tool_ref: Mapping[str, Any] | None = None,
+    git_tool: GitTool | None = None,
+    tool_invocation_id: str | None = None,
     timeout_ms: int = 5_000,
 ) -> RuntimeObject:
     """Evaluate a patch without applying it and persist immutable evidence."""
+
+    if tool_invocation_id is not None and (
+        not isinstance(tool_invocation_id, str) or not tool_invocation_id
+    ):
+        raise PatchEvaluationContractError(
+            "tool_invocation_id must be a non-empty string"
+        )
 
     context = bind_correlation(
         correlation,
@@ -128,12 +137,24 @@ def evaluate_patch(
                 timeout_ms=timeout_ms,
                 correlation=context,
             )
-            git_result = invoke_tool(
-                request,
-                validator=git_tool_validator(),
-                authorize=authorize_git,
-                adapter=git_adapter,
-            )
+            if tool_invocation_id is not None:
+                if git_tool is None:
+                    raise PatchEvaluationContractError(
+                        "git_tool is required when tool_invocation_id is supplied"
+                    )
+                git_result, _ = git_tool.invoke(
+                    invocation_id=tool_invocation_id,
+                    task_execution_id=task_execution_id,
+                    request=request,
+                    authorize=authorize_git,
+                )
+            else:
+                git_result = invoke_tool(
+                    request,
+                    validator=git_tool_validator(),
+                    authorize=authorize_git,
+                    adapter=git_adapter,
+                )
             git_status = git_result.status.value
             git_logs_ref = git_result.logs_ref
             output = git_result.output_record() if git_result.output is not None else {}
@@ -208,7 +229,11 @@ def evaluate_patch(
         "applicable": applicable,
         "diagnostics": diagnostics,
         "boundaryChecks": boundary_checks,
-        "git": {"status": git_status, "logsRef": git_logs_ref},
+        "git": {
+            "status": git_status,
+            "logsRef": git_logs_ref,
+            "toolInvocationId": tool_invocation_id if git_status != "NOT_RUN" else None,
+        },
         "checks": checks,
         "errors": errors,
     }

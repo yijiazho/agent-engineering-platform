@@ -41,6 +41,12 @@ isolated sandbox with patch content on standard input. It requires HEAD at the
 immutable expected revision and a clean index and worktree, and never applies
 the patch.
 
+When a caller supplies a ToolInvocation identity and the persisted `GitTool`
+boundary, Patch Evaluation atomically claims that identity before executing
+`check_patch`, records terminal Tool evidence, and cites it from the
+EvaluationResult. Matching retries reuse terminal evidence; conflicting
+request fingerprints fail closed.
+
 The evaluator normalizes allowed repository-relative roots, checks both current
 and previous paths for renamed files (including Git C-style octal-quoted UTF-8
 paths), and persists an immutable

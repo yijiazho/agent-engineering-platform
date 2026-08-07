@@ -65,6 +65,16 @@ credentials in structured output.
 Sandbox timeouts retain redacted partial command logs and return a `TIMED_OUT`
 result with `logsRef` after the isolated command has been terminated.
 
+`GitTool` composes the adapter with runtime persistence. It atomically creates
+a pending ToolInvocation before execution and binds the identity to a canonical
+request fingerprint. Matching retries and concurrent duplicates reuse the
+terminal result, while a conflicting reuse is rejected. The fingerprint binds
+the full trace, WorkflowExecution, and TaskExecution correlation, and a caller
+whose supplied task identity conflicts with the request is rejected before the
+claim. Adapter-native log
+references remain available for replay; content-addressed references also use
+the runtime schema's `logsAddress` field.
+
 Every adapter result reports `remoteMutationState`. It is `NOT_ATTEMPTED`
 before a push starts, becomes `UNKNOWN` immediately before the push command,
 and becomes `CONFIRMED` as soon as that command succeeds. A push timeout or
@@ -79,4 +89,5 @@ dirty and unrelated histories, hook and ambient-environment isolation, scoped
 credential cleanup, read and push timeouts, structured evidence, and
 command-log secret redaction without network access. Push tests distinguish an
 ambiguous in-flight timeout from a confirmed push followed by an evidence
-timeout.
+timeout. Persistence tests cover matching replay, conflicting identities, and
+concurrent duplicate execution.

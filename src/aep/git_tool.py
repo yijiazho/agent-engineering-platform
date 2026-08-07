@@ -10,9 +10,12 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any, Protocol
+from uuid import uuid4
 
+from aep.runtime_store import RuntimeObject, RuntimeObjectStore
+from aep.observability import bind_correlation
 from aep.tool_runtime import (
     JsonSchemaToolValidator,
     ToolAdapter,
@@ -22,6 +25,7 @@ from aep.tool_runtime import (
     ToolRequest,
     ToolResult,
     ToolResultStatus,
+    invoke_tool,
 )
 
 
@@ -142,6 +146,14 @@ _CREDENTIAL_URL_PATTERN = re.compile(
 
 class GitToolContractError(ValueError):
     """Raised when adapter configuration cannot enforce repository boundaries."""
+
+
+class GitInvocationIdentityConflictError(ValueError):
+    """Raised when an invocation id is reused for different immutable inputs."""
+
+
+class GitInvocationInProgressError(RuntimeError):
+    """Raised when an identical invocation remains owned by another worker."""
 
 
 class RemoteMutationState(str, Enum):
@@ -728,6 +740,229 @@ def git_tool_validator() -> JsonSchemaToolValidator:
     """Return the public Git Tool input/output contract validator."""
 
     return JsonSchemaToolValidator(GIT_INPUT_SCHEMA, GIT_OUTPUT_SCHEMA)
+
+
+class GitTool:
+    """Run the Git adapter with atomic, retry-safe ToolInvocation evidence."""
+
+    replay_wait_seconds = 1.0
+
+    def __init__(self, adapter: GitToolAdapter, store: RuntimeObjectStore) -> None:
+        if not isinstance(adapter, GitToolAdapter):
+            raise TypeError("adapter must be a GitToolAdapter")
+        self.adapter = adapter
+        self._store = store
+
+    def invoke(
+        self,
+        *,
+        invocation_id: str,
+        task_execution_id: str,
+        request: ToolRequest,
+        authorize: Any,
+        policy_decision_id: str | None = None,
+    ) -> tuple[ToolResult, RuntimeObject]:
+        bind_correlation(request.correlation, task_execution_id=task_execution_id)
+        fingerprint = _git_request_fingerprint(
+            task_execution_id, request, policy_decision_id
+        )
+        owner_token = str(uuid4())
+        started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pending = _git_pending_record(
+            invocation_id,
+            task_execution_id,
+            request,
+            fingerprint,
+            policy_decision_id,
+            started_at,
+            owner_token,
+        )
+        created = self._store.create(
+            pending, deterministic_key=f"git-tool-invocation:{invocation_id}"
+        )
+        if created.get("requestFingerprint") != fingerprint:
+            raise GitInvocationIdentityConflictError(
+                f"invocation id {invocation_id!r} is already bound to different "
+                "immutable request inputs"
+            )
+        if created.get("ownerToken") != owner_token:
+            if created.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _git_result_from_invocation(created), created
+            return self._await_terminal(invocation_id)
+
+        try:
+            result = invoke_tool(
+                request,
+                validator=git_tool_validator(),
+                authorize=authorize,
+                adapter=self.adapter,
+            )
+        except Exception as error:
+            completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            result = ToolResult(
+                status=ToolResultStatus.FAILED,
+                output=None,
+                logs_ref=None,
+                metrics=ToolMetrics(duration_ms=0),
+                started_at=started_at,
+                completed_at=completed_at,
+                failure_class=ToolFailureClass.ADAPTER,
+                failure_message=str(error) or type(error).__name__,
+            )
+        status = "SUCCEEDED" if result.status is ToolResultStatus.SUCCEEDED else "FAILED"
+        persisted = self._store.update_status(
+            invocation_id,
+            status,
+            expected_status="PENDING",
+            updated_at=result.completed_at,
+            changes=_git_terminal_changes(result),
+        )
+        return result, persisted
+
+    def _await_terminal(
+        self, invocation_id: str
+    ) -> tuple[ToolResult, RuntimeObject]:
+        deadline = monotonic() + self.replay_wait_seconds
+        while monotonic() < deadline:
+            prior = self._store.get(invocation_id)
+            if prior is not None and prior.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _git_result_from_invocation(prior), prior
+            sleep(0.001)
+        raise GitInvocationInProgressError(
+            f"identical invocation {invocation_id!r} is still in progress"
+        )
+
+
+def _git_pending_record(
+    invocation_id: str,
+    task_execution_id: str,
+    request: ToolRequest,
+    fingerprint: str,
+    policy_decision_id: str | None,
+    timestamp: str,
+    owner_token: str,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "apiVersion": "aep.dev/v1alpha1",
+        "kind": "ToolInvocation",
+        "id": invocation_id,
+        "traceId": request.trace_id,
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "provenance": {
+            "actor": "tool-runtime",
+            "caller": f"{request.caller.kind}:{request.caller.id}",
+            "workflowExecutionId": request.correlation.workflow_execution_id,
+            "taskExecutionId": task_execution_id,
+            "resourceRefs": [dict(request.tool_ref)],
+        },
+        "taskExecutionId": task_execution_id,
+        "toolRef": dict(request.tool_ref),
+        "status": "PENDING",
+        "input": dict(request.input),
+        "capabilities": list(request.capabilities),
+        "requestFingerprint": fingerprint,
+        "ownerToken": owner_token,
+    }
+    if request.caller.kind == "AgentInvocation":
+        record["agentInvocationId"] = request.caller.id
+    if policy_decision_id is not None:
+        record["policyDecisionId"] = policy_decision_id
+    return record
+
+
+def _git_terminal_changes(result: ToolResult) -> dict[str, Any]:
+    changes: dict[str, Any] = {
+        "resultStatus": result.status.value,
+        "output": result.output_record(),
+        "metrics": result.metrics.as_record(),
+        "startedAt": result.started_at,
+    }
+    if _content_address_ref(result.logs_ref):
+        changes["logsAddress"] = result.logs_ref
+    elif result.logs_ref is not None:
+        changes["adapterLogsRef"] = result.logs_ref
+    if result.failure_class is not None:
+        changes["failureClass"] = result.failure_class.value
+        changes["failure"] = {
+            "class": _git_runtime_failure_class(result.failure_class),
+            "message": result.failure_message or result.failure_class.value,
+            "retryable": result.failure_class
+            in {ToolFailureClass.IO, ToolFailureClass.TIMEOUT},
+        }
+    return changes
+
+
+def _git_request_fingerprint(
+    task_execution_id: str,
+    request: ToolRequest,
+    policy_decision_id: str | None,
+) -> str:
+    value = {
+        "taskExecutionId": task_execution_id,
+        "toolRef": dict(request.tool_ref),
+        "input": dict(request.input),
+        "caller": request.caller.as_record(),
+        "capabilities": list(request.capabilities),
+        "timeoutMs": request.timeout_ms,
+        "correlation": {
+            "traceId": request.trace_id,
+            "workflowExecutionId": request.correlation.workflow_execution_id,
+            "taskExecutionId": request.correlation.task_execution_id,
+        },
+        "policyDecisionId": policy_decision_id,
+    }
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _git_result_from_invocation(invocation: RuntimeObject) -> ToolResult:
+    failure_class = invocation.get("failureClass")
+    failure = invocation.get("failure")
+    metrics = invocation.get("metrics", {})
+    return ToolResult(
+        status=ToolResultStatus(str(invocation["resultStatus"])),
+        output=invocation.get("output"),
+        logs_ref=invocation.get("logsAddress") or invocation.get("adapterLogsRef"),
+        metrics=ToolMetrics(
+            duration_ms=int(metrics.get("durationMs", 0)),
+            cpu_ms=metrics.get("cpuMs"),
+            memory_bytes=metrics.get("memoryBytes"),
+        ),
+        started_at=str(invocation["startedAt"]),
+        completed_at=str(invocation["completedAt"]),
+        failure_class=ToolFailureClass(str(failure_class)) if failure_class else None,
+        failure_message=(
+            failure.get("message") if isinstance(failure, Mapping) else None
+        ),
+    )
+
+
+def _git_runtime_failure_class(value: ToolFailureClass) -> str:
+    return {
+        ToolFailureClass.VALIDATION: "CONFIGURATION",
+        ToolFailureClass.POLICY: "POLICY",
+        ToolFailureClass.TIMEOUT: "RECOVERABLE",
+        ToolFailureClass.IO: "RECOVERABLE",
+        ToolFailureClass.BOUNDARY: "POLICY",
+        ToolFailureClass.NOT_FOUND: "PERMANENT",
+        ToolFailureClass.STARTUP: "RECOVERABLE",
+        ToolFailureClass.NONZERO_EXIT: "PERMANENT",
+        ToolFailureClass.ADAPTER: "PERMANENT",
+    }[value]
+
+
+def _content_address_ref(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    algorithm, separator, digest = value.partition(":")
+    expected_length = {"sha256": 64, "sha512": 128}.get(algorithm)
+    return (
+        separator == ":"
+        and expected_length is not None
+        and len(digest) == expected_length
+        and all(character in "0123456789abcdef" for character in digest)
+    )
 
 
 def _parse_status(value: bytes) -> list[dict[str, str]]:

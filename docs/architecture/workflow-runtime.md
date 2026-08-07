@@ -405,6 +405,15 @@ sections for intended files, tests, assumptions, risks, and ordered steps, and
 publishes an `IMPLEMENTATION_PLAN` GeneratedArtifact only after Evaluation
 passes. The handler invokes no Tool and does not modify the checkout.
 
+The `GeneratePatch` handler consumes that single evaluated plan through the
+Context Builder and resolves the versioned Code Generator with only its declared
+Filesystem and Git Tools. It rejects model-proposed paths outside the plan
+before mutation, persists every scoped write, Git diff, and Patch Evaluation
+applicability check as ToolInvocation evidence, and records the diff's stable
+changed-file list on the immutable `PATCH` GeneratedArtifact. Patch Evaluation
+runs against a separate clean checkout pinned to the same repository revision;
+the patch is published only after applicability and path-boundary checks pass.
+
 The AgentInvocation coordinator then combines that immutable package with the
 resolved Prompt, Model configuration, and output schema. It persists the
 AgentInvocation and each ModelInvocation, including token, latency, cost, and

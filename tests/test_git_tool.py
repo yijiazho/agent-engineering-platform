@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import stat
 import subprocess
+from threading import Event, Lock
 
 import pytest
 
 from aep.git_tool import (
     GitToolAdapter,
     GitToolContractError,
+    GitTool,
+    GitInvocationIdentityConflictError,
     GitSandboxCommandResult,
     GitSandboxTimeout,
     InMemoryGitCommandLogStore,
     git_tool_validator,
 )
+from aep.runtime_store import InMemoryRuntimeObjectStore
 from aep.tool_runtime import (
     ToolCaller,
     ToolRequest,
@@ -106,6 +111,32 @@ class TimeoutGitSandbox(LocalGitSandbox):
             timeout_ms=timeout_ms,
             stdin=stdin,
         )
+
+
+class BlockingGitSandbox(LocalGitSandbox):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = Event()
+        self.release = Event()
+        self._lock = Lock()
+        self._blocked = False
+        self.execution_starts = 0
+
+    def run(self, **kwargs) -> GitSandboxCommandResult:
+        arguments = kwargs["arguments"]
+        with self._lock:
+            is_start = "rev-parse" in arguments and any(
+                str(value).endswith("^{commit}") for value in arguments
+            )
+            if is_start:
+                self.execution_starts += 1
+            should_block = is_start and not self._blocked
+            if should_block:
+                self._blocked = True
+        if should_block:
+            self.entered.set()
+            assert self.release.wait(timeout=5)
+        return super().run(**kwargs)
 
 
 class StubCredentialLease:
@@ -217,6 +248,124 @@ def create_branch(
     result = invoke(request(revision, "create_branch"), tool_adapter)
     assert result.status is ToolResultStatus.SUCCEEDED, logs.get(result.logs_ref)
     return tool_adapter
+
+
+def test_persisted_git_invocation_replays_and_rejects_conflicting_inputs(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    adapter_value = create_branch(repository, revision, logs)
+    store = InMemoryRuntimeObjectStore()
+    tool = GitTool(adapter_value, store)
+    invocation_id = "toolinvocation-gitreplay0001"
+
+    first_result, first = tool.invoke(
+        invocation_id=invocation_id,
+        task_execution_id="taskexecution-git00000001",
+        request=request(revision, "status"),
+        authorize=lambda _request: True,
+    )
+    second_result, second = tool.invoke(
+        invocation_id=invocation_id,
+        task_execution_id="taskexecution-git00000001",
+        request=request(revision, "status"),
+        authorize=lambda _request: True,
+    )
+
+    assert first_result.output == second_result.output
+    assert first == second
+    with pytest.raises(GitInvocationIdentityConflictError, match="different"):
+        tool.invoke(
+            invocation_id=invocation_id,
+            task_execution_id="taskexecution-git00000001",
+            request=request(revision, "diff"),
+            authorize=lambda _request: True,
+        )
+
+
+def test_persisted_git_invocation_rejects_task_correlation_mismatch(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    tool = GitTool(create_branch(repository, revision, logs), InMemoryRuntimeObjectStore())
+
+    with pytest.raises(ValueError, match="taskExecutionId"):
+        tool.invoke(
+            invocation_id="toolinvocation-gitmismatch01",
+            task_execution_id="taskexecution-different0001",
+            request=request(revision, "status"),
+            authorize=lambda _request: True,
+        )
+
+
+def test_persisted_git_invocation_binds_workflow_correlation(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    store = InMemoryRuntimeObjectStore()
+    tool = GitTool(create_branch(repository, revision, logs), store)
+    invocation_id = "toolinvocation-gitworkflow01"
+    original = request(revision, "status")
+    tool.invoke(
+        invocation_id=invocation_id,
+        task_execution_id="taskexecution-git00000001",
+        request=original,
+        authorize=lambda _request: True,
+    )
+    changed_workflow = ToolRequest(
+        tool_ref=original.tool_ref,
+        input=original.input,
+        caller=original.caller,
+        capabilities=original.capabilities,
+        timeout_ms=original.timeout_ms,
+        correlation={
+            "traceId": original.trace_id,
+            "workflowExecutionId": "workflowexecution-different001",
+            "taskExecutionId": "taskexecution-git00000001",
+        },
+    )
+
+    with pytest.raises(GitInvocationIdentityConflictError, match="different"):
+        tool.invoke(
+            invocation_id=invocation_id,
+            task_execution_id="taskexecution-git00000001",
+            request=changed_workflow,
+            authorize=lambda _request: True,
+        )
+
+
+def test_concurrent_duplicate_git_invocation_executes_once(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    create_branch(repository, revision, logs)
+    sandbox = BlockingGitSandbox()
+    store = InMemoryRuntimeObjectStore()
+    tool = GitTool(adapter(repository, revision, logs, sandbox=sandbox), store)
+
+    def run_once():
+        return tool.invoke(
+            invocation_id="toolinvocation-gitconcurrent1",
+            task_execution_id="taskexecution-git00000001",
+            request=request(revision, "status"),
+            authorize=lambda _request: True,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(run_once)
+        assert sandbox.entered.wait(timeout=5)
+        second = executor.submit(run_once)
+        sandbox.release.set()
+        first_value = first.result(timeout=5)
+        second_value = second.result(timeout=5)
+
+    assert first_value[0].output == second_value[0].output
+    assert first_value[1] == second_value[1]
+    assert sandbox.execution_starts == 1
 
 
 def test_create_branch_is_bound_to_configured_revision_and_branch(
