@@ -53,6 +53,9 @@ def test_smoke_starts_all_services_and_resolves_basic_resources(tmp_path: Path) 
     for service_name in MVP_SERVICE_PORTS:
         marker = json.loads((tmp_path / service_name / "ready.json").read_text())
         assert marker["service"] == service_name
+    assert (tmp_path / "checkout-manager/registry.sqlite3").is_file()
+    assert (tmp_path / "repository-cache").is_dir()
+    assert (tmp_path / "execution-worktrees").is_dir()
 
 
 def test_configuration_requires_every_explicit_boundary() -> None:
