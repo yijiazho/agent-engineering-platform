@@ -1,0 +1,53 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Task",
+  "metadata": {
+    "name": "run-validation",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "objective": "Build and test the generated checkout.",
+    "outputs": {
+      "type": "object"
+    },
+    "evaluations": [
+      {
+        "kind": "Evaluation",
+        "name": "build",
+        "version": "1.0.0"
+      },
+      {
+        "kind": "Evaluation",
+        "name": "test",
+        "version": "1.0.0"
+      }
+    ],
+    "validation": {
+      "toolRef": {
+        "kind": "Tool",
+        "name": "docker-validation",
+        "version": "1.0.0"
+      },
+      "image": "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commands": [
+        {
+          "type": "build",
+          "argv": ["python", "-m", "build"]
+        },
+        {
+          "type": "test",
+          "argv": ["python", "-m", "pytest"]
+        }
+      ],
+      "workspaceMount": {
+        "containerPath": "/workspace",
+        "readOnly": false
+      },
+      "resources": {
+        "cpuLimit": 2,
+        "memoryBytes": 536870912
+      },
+      "timeoutMs": 30000
+    }
+  }
+}

@@ -58,6 +58,12 @@ without replacing already captured output, logs, metrics, or timing.
 Startup, timeout, and nonzero-exit failures are classified separately. The
 adapter records execution evidence only; AEP-027 remains responsible for
 interpreting whether that evidence satisfies build and test expectations.
+`DockerValidationTool` supplies the persisted invocation boundary used by
+Task handlers: it atomically binds each invocation id to a canonical request
+fingerprint, records terminal ToolInvocation evidence, and reuses matching
+evidence on retry without starting another container. A duplicate waits through
+the request deadline; an abandoned owner becomes recoverable terminal timeout
+evidence instead of leaving a permanently pending claim.
 
 `tests/test_docker_validation_tool.py` uses an injected fake executor and a
 deterministic request fixture. It covers successful evidence capture, nonzero

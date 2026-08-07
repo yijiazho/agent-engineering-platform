@@ -623,6 +623,15 @@ discarding captured output, logs, metrics, or timing. Startup, timeout, and
 nonzero-exit failures are classified separately. These records are execution
 evidence; build and test acceptance is evaluated separately.
 
+Task-level Docker calls use a persisted wrapper that claims the invocation id
+against a canonical request fingerprint before adapter startup. Matching
+concurrent or replayed calls reuse immutable terminal ToolInvocation evidence;
+an id reused with different Task, Tool, input, capability, timeout, trace, or
+policy-decision data fails closed. Duplicate owners wait through the configured
+request deadline and a bounded cleanup grace. If no owner records terminal
+evidence by then, the pending claim is terminalized as a recoverable timeout so
+a crashed worker cannot strand the invocation indefinitely.
+
 # 22. MVP Filesystem Adapter
 
 The Filesystem adapter exposes schema-declared UTF-8 `read` and `write`

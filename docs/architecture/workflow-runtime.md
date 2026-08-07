@@ -414,6 +414,18 @@ changed-file list on the immutable `PATCH` GeneratedArtifact. Patch Evaluation
 runs against a separate clean checkout pinned to the same repository revision;
 the patch is published only after applicability and path-boundary checks pass.
 
+The `RunValidation` handler requires that successful patch evidence at the same
+repository revision and performs no Agent or model invocation. Its versioned
+Task configuration identifies the immutable Docker Tool, digest-pinned image,
+labeled build and test commands, container mount, resource limits, and timeout;
+the TaskExecution supplies the execution-specific checkout path. The handler
+persists the policy-gated Docker ToolInvocation before interpreting it, then
+creates separate build and test EvaluationResults even for denial, timeout,
+nonzero exit, or malformed output. An immutable `EVALUATION_REPORT` artifact
+summarizes both outcomes and retains the input patch in provenance. Only a
+technically successful Tool result with two passing evaluations allows the Task
+to succeed.
+
 The AgentInvocation coordinator then combines that immutable package with the
 resolved Prompt, Model configuration, and output schema. It persists the
 AgentInvocation and each ModelInvocation, including token, latency, cost, and

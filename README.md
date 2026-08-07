@@ -111,8 +111,8 @@ and the repository's versioned `.ai/` Resources.
 > contract that the completed MVP must satisfy. The repository currently
 > implements the underlying event, workflow, context, Agent, Tool, evaluation,
 > policy, artifact, and observability components, plus the `AnalyzeIssue`,
-> `BuildImplementationPlan`, and `GeneratePatch` Task handlers. The local Event
-> Controller does not yet expose a webhook POST endpoint, and `RunValidation`,
+> `BuildImplementationPlan`, `GeneratePatch`, and `RunValidation` Task handlers.
+> The local Event Controller does not yet expose a webhook POST endpoint, and
 > `EvaluateAcceptance`, `CreatePullRequest`, and the end-to-end harness remain
 > unimplemented. The current Compose stack is therefore a credential-free
 > service-topology smoke test, not yet a deployable issue-to-PR integration.
@@ -333,7 +333,7 @@ validation—not for a live repository integration.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 33 of the 43 implementation tasks are complete.
+contracts are established, and 34 of the 43 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -385,6 +385,9 @@ Implemented foundations currently include:
   the versioned Planner, validates every required plan section, and publishes
   an immutable `IMPLEMENTATION_PLAN` GeneratedArtifact without checkout writes.
 * Revision-bound repository scanning and repository-knowledge queries.
+* Non-cognitive RunValidation Task handling with versioned Docker configuration,
+  retry-safe ToolInvocation evidence, separate build/test outcomes, and an
+  immutable validation report for pass and failure paths.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
   repository knowledge, Resources, events, policies, and prior artifacts.

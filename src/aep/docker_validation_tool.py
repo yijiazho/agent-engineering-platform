@@ -7,13 +7,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
+import json
 from pathlib import Path
 import subprocess
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any
 from uuid import uuid4
 
+from aep.observability import bind_correlation
+from aep.runtime_store import RuntimeObject, RuntimeObjectStore, RuntimeStoreError
 from aep.tool_runtime import (
+    AuthorizationHook,
     JsonSchemaToolValidator,
     ToolAdapter,
     ToolAdapterError,
@@ -23,12 +27,14 @@ from aep.tool_runtime import (
     ToolRequest,
     ToolResult,
     ToolResultStatus,
+    invoke_tool,
 )
 
 
 DOCKER_RUN_CAPABILITY = "docker.run"
 DOCKER_WORKSPACE_DESTINATION = "/workspace"
 IMAGE_DIGEST_PATTERN = r"^[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}$"
+INVOCATION_REPLAY_GRACE_MS = 1_000
 
 DOCKER_VALIDATION_INPUT_SCHEMA: Mapping[str, Any] = {
     "type": "object",
@@ -128,6 +134,274 @@ def docker_validation_validator() -> JsonSchemaToolValidator:
     return JsonSchemaToolValidator(
         DOCKER_VALIDATION_INPUT_SCHEMA, DOCKER_VALIDATION_OUTPUT_SCHEMA
     )
+
+
+class DockerInvocationIdentityConflictError(ValueError):
+    """Raised when an invocation id is rebound to different immutable inputs."""
+
+
+class DockerValidationTool:
+    """Run Docker validation with retry-safe persisted ToolInvocation evidence."""
+
+    def __init__(
+        self,
+        adapter: "DockerValidationAdapter",
+        store: RuntimeObjectStore,
+        *,
+        replay_grace_ms: int = INVOCATION_REPLAY_GRACE_MS,
+    ) -> None:
+        if not isinstance(adapter, DockerValidationAdapter):
+            raise TypeError("adapter must be a DockerValidationAdapter")
+        if (
+            not isinstance(replay_grace_ms, int)
+            or isinstance(replay_grace_ms, bool)
+            or replay_grace_ms < 0
+        ):
+            raise ValueError("replay_grace_ms must be a non-negative integer")
+        self.adapter = adapter
+        self._store = store
+        self._replay_grace_ms = replay_grace_ms
+
+    def invoke(
+        self,
+        *,
+        invocation_id: str,
+        task_execution_id: str,
+        request: ToolRequest,
+        authorize: AuthorizationHook,
+        policy_decision_id: str | None = None,
+    ) -> tuple[ToolResult, RuntimeObject]:
+        bind_correlation(request.correlation, task_execution_id=task_execution_id)
+        fingerprint = _request_fingerprint(
+            task_execution_id, request, policy_decision_id
+        )
+        owner_token = str(uuid4())
+        started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        pending = _pending_invocation_record(
+            invocation_id,
+            task_execution_id,
+            request,
+            fingerprint,
+            policy_decision_id,
+            started_at,
+            owner_token,
+        )
+        created = self._store.create(
+            pending, deterministic_key=f"docker-tool-invocation:{invocation_id}"
+        )
+        if created.get("requestFingerprint") != fingerprint:
+            raise DockerInvocationIdentityConflictError(
+                f"invocation id {invocation_id!r} is already bound to different "
+                "immutable request inputs"
+            )
+        if created.get("ownerToken") != owner_token:
+            if created.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _result_from_invocation(created), created
+            return self._await_terminal(
+                invocation_id,
+                deadline_ms=request.timeout_ms + self._replay_grace_ms,
+            )
+
+        try:
+            result = invoke_tool(
+                request,
+                validator=docker_validation_validator(),
+                authorize=authorize,
+                adapter=self.adapter,
+            )
+        except Exception as error:
+            completed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            result = ToolResult(
+                status=ToolResultStatus.FAILED,
+                output=None,
+                logs_ref=None,
+                metrics=ToolMetrics(duration_ms=0),
+                started_at=started_at,
+                completed_at=completed_at,
+                failure_class=ToolFailureClass.ADAPTER,
+                failure_message=str(error) or type(error).__name__,
+            )
+        status = "SUCCEEDED" if result.status is ToolResultStatus.SUCCEEDED else "FAILED"
+        try:
+            persisted = self._store.update_status(
+                invocation_id,
+                status,
+                expected_status="PENDING",
+                updated_at=result.completed_at,
+                changes=_terminal_invocation_changes(result),
+            )
+            return result, persisted
+        except RuntimeStoreError:
+            prior = self._store.get(invocation_id)
+            if prior is not None and prior.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _result_from_invocation(prior), prior
+            raise
+
+    def _await_terminal(
+        self, invocation_id: str, *, deadline_ms: int
+    ) -> tuple[ToolResult, RuntimeObject]:
+        deadline = monotonic() + (deadline_ms / 1_000)
+        while monotonic() < deadline:
+            prior = self._store.get(invocation_id)
+            if prior is not None and prior.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _result_from_invocation(prior), prior
+            sleep(0.001)
+        prior = self._store.get(invocation_id)
+        timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        started_at = (
+            prior.get("createdAt")
+            if isinstance(prior, Mapping) and isinstance(prior.get("createdAt"), str)
+            else timestamp
+        )
+        abandoned = ToolResult(
+            status=ToolResultStatus.TIMED_OUT,
+            output=None,
+            logs_ref=None,
+            metrics=ToolMetrics(duration_ms=deadline_ms),
+            started_at=started_at,
+            completed_at=timestamp,
+            failure_class=ToolFailureClass.TIMEOUT,
+            failure_message=(
+                "invocation owner did not persist terminal evidence before "
+                "the request deadline"
+            ),
+        )
+        try:
+            persisted = self._store.update_status(
+                invocation_id,
+                "FAILED",
+                expected_status="PENDING",
+                updated_at=timestamp,
+                changes=_terminal_invocation_changes(abandoned),
+            )
+            return abandoned, persisted
+        except RuntimeStoreError:
+            prior = self._store.get(invocation_id)
+            if prior is not None and prior.get("status") in {"SUCCEEDED", "FAILED"}:
+                return _result_from_invocation(prior), prior
+            raise
+
+
+def _pending_invocation_record(
+    invocation_id: str,
+    task_execution_id: str,
+    request: ToolRequest,
+    fingerprint: str,
+    policy_decision_id: str | None,
+    timestamp: str,
+    owner_token: str,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "apiVersion": "aep.dev/v1alpha1",
+        "kind": "ToolInvocation",
+        "id": invocation_id,
+        "traceId": request.trace_id,
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+        "provenance": {
+            "actor": "tool-runtime",
+            "caller": f"{request.caller.kind}:{request.caller.id}",
+            "workflowExecutionId": request.correlation.workflow_execution_id,
+            "taskExecutionId": task_execution_id,
+            "resourceRefs": [dict(request.tool_ref)],
+        },
+        "taskExecutionId": task_execution_id,
+        "toolRef": dict(request.tool_ref),
+        "status": "PENDING",
+        "input": _json_copy(request.input),
+        "capabilities": list(request.capabilities),
+        "requestFingerprint": fingerprint,
+        "ownerToken": owner_token,
+    }
+    if policy_decision_id is not None:
+        record["policyDecisionId"] = policy_decision_id
+    return record
+
+
+def _terminal_invocation_changes(result: ToolResult) -> dict[str, Any]:
+    changes: dict[str, Any] = {
+        "resultStatus": result.status.value,
+        "output": result.output_record(),
+        "metrics": result.metrics.as_record(),
+        "startedAt": result.started_at,
+    }
+    if result.logs_ref is not None:
+        changes["logsAddress"] = result.logs_ref
+    if result.failure_class is not None:
+        changes["failure"] = {
+            "class": _runtime_failure_class(result.failure_class),
+            "message": result.failure_message or result.failure_class.value,
+            "retryable": result.failure_class
+            in {ToolFailureClass.IO, ToolFailureClass.TIMEOUT, ToolFailureClass.STARTUP},
+        }
+        changes["failureClass"] = result.failure_class.value
+    return changes
+
+
+def _result_from_invocation(invocation: RuntimeObject) -> ToolResult:
+    metrics = invocation.get("metrics", {})
+    failure = invocation.get("failure")
+    failure_class = invocation.get("failureClass")
+    return ToolResult(
+        status=ToolResultStatus(invocation["resultStatus"]),
+        output=invocation.get("output"),
+        logs_ref=invocation.get("logsAddress"),
+        metrics=ToolMetrics(
+            duration_ms=metrics.get("durationMs", 0),
+            cpu_ms=metrics.get("cpuMs"),
+            memory_bytes=metrics.get("memoryBytes"),
+        ),
+        started_at=invocation["startedAt"],
+        completed_at=invocation["completedAt"],
+        failure_class=(
+            ToolFailureClass(failure_class) if failure_class is not None else None
+        ),
+        failure_message=(failure.get("message") if isinstance(failure, Mapping) else None),
+    )
+
+
+def _request_fingerprint(
+    task_execution_id: str,
+    request: ToolRequest,
+    policy_decision_id: str | None,
+) -> str:
+    value = {
+        "taskExecutionId": task_execution_id,
+        "toolRef": _json_copy(request.tool_ref),
+        "input": _json_copy(request.input),
+        "caller": request.caller.as_record(),
+        "capabilities": list(request.capabilities),
+        "timeoutMs": request.timeout_ms,
+        "traceId": request.trace_id,
+        "policyDecisionId": policy_decision_id,
+    }
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return f"sha256:{sha256(canonical.encode()).hexdigest()}"
+
+
+def _runtime_failure_class(value: ToolFailureClass) -> str:
+    return {
+        ToolFailureClass.VALIDATION: "CONFIGURATION",
+        ToolFailureClass.POLICY: "POLICY",
+        ToolFailureClass.TIMEOUT: "RECOVERABLE",
+        ToolFailureClass.ADAPTER: "PERMANENT",
+        ToolFailureClass.STARTUP: "RECOVERABLE",
+        ToolFailureClass.NONZERO_EXIT: "EVALUATION",
+        ToolFailureClass.BOUNDARY: "POLICY",
+        ToolFailureClass.NOT_FOUND: "PERMANENT",
+        ToolFailureClass.IO: "RECOVERABLE",
+    }[value]
+
+
+def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
+    def thaw(item: Any) -> Any:
+        if isinstance(item, Mapping):
+            return {key: thaw(child) for key, child in item.items()}
+        if isinstance(item, (list, tuple)):
+            return [thaw(child) for child in item]
+        return item
+
+    return json.loads(json.dumps(thaw(value)))
 
 
 @dataclass(frozen=True)
