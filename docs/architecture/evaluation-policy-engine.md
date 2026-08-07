@@ -279,6 +279,36 @@ execution, bound to the immutable request fingerprint, and cited by the
 EvaluationResult. Matching concurrent or later retries reuse the terminal
 result, while an identity conflict fails closed.
 
+## 9.3 Acceptance Evidence Aggregation
+
+The MVP `EvaluateAcceptance` Task is deterministic and non-cognitive. It
+requires the complete ordered `AnalyzeIssue`, `BuildImplementationPlan`,
+`GeneratePatch`, and `RunValidation` predecessor chain and the corresponding
+`ISSUE_ANALYSIS`, `IMPLEMENTATION_PLAN`, `PATCH`, and `EVALUATION_REPORT`
+artifacts. Each predecessor must retain exactly one expected artifact. Every
+Evaluation declared by those explicit Task versions must resolve to a loaded
+Evaluation Resource of the expected schema, patch, build, or test type and have
+one attached, terminal EvaluationResult. The handler loads persisted records
+rather than trusting caller-supplied summaries.
+
+Every predecessor TaskExecution, EvaluationResult, and targeted AgentInvocation
+or ToolInvocation is schema-validated. All
+evidence must identify the same WorkflowExecution, trace, producer, exact Task
+version, and repository revision. Artifact metadata must match the producer
+attachment and its content-addressed body must still exist. Evaluation targets
+must be correlated producer evidence: AgentInvocations for schema validation,
+the PATCH for patch validation, and ToolInvocations for build and test.
+Invocation contracts do not require a repository-revision field; their revision
+binding is established through the validated owning TaskExecution and
+EvaluationResult. If invocation provenance records a revision, it must match.
+Missing,
+failed, stale, pending, cross-execution, undeclared, substituted, or internally
+inconsistent evidence fails closed.
+The handler persists one immutable acceptance-summary EvaluationResult that
+lists supporting artifact and evaluation identifiers, normalized summaries,
+checks, and stable issue codes. This result evaluates technical correctness
+only; Publication Policy remains the separate governance gate.
+
 ---
 
 # 10. Evaluation Composition

@@ -1,0 +1,26 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "Task",
+  "metadata": {
+    "name": "evaluate-acceptance",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "objective": "Aggregate required workflow evidence deterministically.",
+    "outputs": {
+      "type": "object",
+      "required": ["outcome", "supportingEvidence"],
+      "properties": {
+        "outcome": { "type": "string", "enum": ["PASS", "FAIL"] },
+        "supportingEvidence": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "evaluations": [
+      {
+        "kind": "Evaluation",
+        "name": "acceptance",
+        "version": "1.0.0"
+      }
+    ]
+  }
+}
