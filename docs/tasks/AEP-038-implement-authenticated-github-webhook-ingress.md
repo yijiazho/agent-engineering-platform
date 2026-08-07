@@ -1,6 +1,6 @@
 # AEP-038: Implement Authenticated GitHub Webhook Ingress
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -59,3 +59,22 @@ Implement the GitHub webhook ingress for the Event Controller that:
   failure without requiring network access.
 * README and deployment documentation identify the webhook route, required
   headers, secret injection method, response semantics, and retry behavior.
+
+## Implementation Notes
+
+`aep.github_webhook.GitHubWebhookIngress` authenticates the raw request bytes
+with HMAC-SHA256 and constant-time comparison before decoding JSON. It enforces
+the repository-bound `issues/opened` contract, uses the existing
+normalizer, and submits through the provider-neutral
+`ReconciliationDispatcher`. The deployed SQLite adapter commits the normalized
+Event identity and one reconciliation-outbox row in the same transaction.
+Controller restarts and concurrent instances share that durable state; a
+failed transaction leaves neither half persisted, so a retry can safely submit
+again while a completed submission remains a duplicate.
+
+The local Event Controller exposes `POST /v1/webhooks/github`. Its secret is
+loaded from `AEP_GITHUB_WEBHOOK_SECRET_FILE` (preferred) or
+`AEP_GITHUB_WEBHOOK_SECRET`; configuration fails when neither is usable.
+Responses distinguish accepted, duplicate, rejected, oversized, and transient
+failure outcomes, and ingress evidence includes a stable trace without request
+bodies, signatures, or secret material.

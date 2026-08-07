@@ -1,10 +1,10 @@
-"""Credential-free local service adapters for the AEP MVP topology."""
+"""Local service adapters for the AEP MVP topology."""
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -14,7 +14,13 @@ from types import MappingProxyType
 from typing import Any, Final
 from urllib.request import urlopen
 
+from aep.github_webhook import (
+    DEFAULT_MAX_BODY_BYTES,
+    WEBHOOK_PATH,
+    GitHubWebhookIngress,
+)
 from aep.resource_loader import ResourceCollection, ResourceLoader, format_ref
+from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 
 
 MVP_SERVICE_PORTS: Final = MappingProxyType(
@@ -49,6 +55,8 @@ class LocalServiceConfig:
     workspace_version: str
     execution_environment: str
     state_root: Path
+    github_webhook_secret: bytes | None = field(default=None, repr=False)
+    github_webhook_max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "LocalServiceConfig":
@@ -72,6 +80,46 @@ class LocalServiceConfig:
         if not 0 <= port <= 65535:
             raise LocalServiceConfigurationError("AEP_SERVICE_PORT must be between 0 and 65535")
 
+        webhook_secret: bytes | None = None
+        max_body_bytes = DEFAULT_MAX_BODY_BYTES
+        if service_name == "event-controller":
+            inline_secret = values.get("AEP_GITHUB_WEBHOOK_SECRET", "")
+            secret_file = values.get("AEP_GITHUB_WEBHOOK_SECRET_FILE", "").strip()
+            if inline_secret and secret_file:
+                raise LocalServiceConfigurationError(
+                    "configure only one of AEP_GITHUB_WEBHOOK_SECRET or "
+                    "AEP_GITHUB_WEBHOOK_SECRET_FILE"
+                )
+            if secret_file:
+                try:
+                    webhook_secret = Path(secret_file).read_bytes().rstrip(b"\r\n")
+                except OSError as error:
+                    raise LocalServiceConfigurationError(
+                        "AEP_GITHUB_WEBHOOK_SECRET_FILE could not be read"
+                    ) from error
+            elif inline_secret:
+                webhook_secret = inline_secret.encode("utf-8")
+            if not webhook_secret:
+                raise LocalServiceConfigurationError(
+                    "GitHub webhook secret must be configured through "
+                    "AEP_GITHUB_WEBHOOK_SECRET_FILE or AEP_GITHUB_WEBHOOK_SECRET"
+                )
+            try:
+                max_body_bytes = int(
+                    values.get(
+                        "AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES",
+                        str(DEFAULT_MAX_BODY_BYTES),
+                    )
+                )
+            except ValueError as error:
+                raise LocalServiceConfigurationError(
+                    "AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES must be an integer"
+                ) from error
+            if max_body_bytes <= 0:
+                raise LocalServiceConfigurationError(
+                    "AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES must be positive"
+                )
+
         return cls(
             service_name=service_name,
             port=port,
@@ -84,6 +132,8 @@ class LocalServiceConfig:
             workspace_version=required("AEP_WORKSPACE_VERSION"),
             execution_environment=required("AEP_EXECUTION_ENVIRONMENT"),
             state_root=Path(required("AEP_STATE_ROOT")).resolve(),
+            github_webhook_secret=webhook_secret,
+            github_webhook_max_body_bytes=max_body_bytes,
         )
 
 
@@ -91,9 +141,14 @@ class LocalServiceConfig:
 class LocalServiceRuntime:
     config: LocalServiceConfig
     resources: ResourceCollection
+    github_webhook_ingress: GitHubWebhookIngress | None = None
 
     @classmethod
     def initialize(cls, config: LocalServiceConfig) -> "LocalServiceRuntime":
+        if config.service_name == "event-controller" and not config.github_webhook_secret:
+            raise LocalServiceConfigurationError(
+                "event-controller requires a GitHub webhook secret"
+            )
         resources = ResourceLoader(
             config.repository_root,
             schema_root=config.resource_schema_root,
@@ -135,7 +190,19 @@ class LocalServiceRuntime:
             ),
             encoding="utf-8",
         )
-        return cls(config=config, resources=resources)
+        ingress = None
+        if config.service_name == "event-controller":
+            ingress = GitHubWebhookIngress(
+                secret=config.github_webhook_secret,
+                repository_owner=config.repository_owner,
+                repository_name=config.repository_name,
+                dispatcher=SQLiteReconciliationDispatcher(
+                    config.state_root / "shared" / "github-webhook.sqlite3"
+                ),
+                evidence_sink=_write_ingress_evidence,
+                max_body_bytes=config.github_webhook_max_body_bytes,
+            )
+        return cls(config=config, resources=resources, github_webhook_ingress=ingress)
 
     def health(self) -> dict[str, Any]:
         workspace = self.resources.workspace
@@ -179,6 +246,35 @@ class LocalServiceHandler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"error": "not_found"})
 
+    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        ingress = self.server.runtime.github_webhook_ingress
+        if self.path != WEBHOOK_PATH or ingress is None:
+            self._send_json(404, {"error": "not_found"})
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._send_json(
+                400, {"status": "rejected", "code": "invalid_content_length"}
+            )
+            return
+        if content_length < 0:
+            self._send_json(
+                400, {"status": "rejected", "code": "invalid_content_length"}
+            )
+            return
+        if content_length > ingress.max_body_bytes:
+            response = ingress.handle(
+                headers=dict(self.headers.items()),
+                raw_body=b"\0" * (ingress.max_body_bytes + 1),
+            )
+            self._send_json(response.status_code, response.body)
+            return
+        read_length = min(content_length, ingress.max_body_bytes + 1)
+        raw_body = self.rfile.read(read_length)
+        response = ingress.handle(headers=dict(self.headers.items()), raw_body=raw_body)
+        self._send_json(response.status_code, response.body)
+
     def log_message(self, format: str, *args: object) -> None:
         return
 
@@ -198,8 +294,12 @@ def create_server(config: LocalServiceConfig) -> LocalServiceServer:
     return server
 
 
+def _write_ingress_evidence(evidence: Mapping[str, Any]) -> None:
+    print(json.dumps(evidence, sort_keys=True), flush=True)
+
+
 class LocalMvpComposition:
-    """Credential-free thread-backed composition used by the smoke test."""
+    """Thread-backed composition used by the local smoke test."""
 
     def __init__(self, configs: Sequence[LocalServiceConfig]) -> None:
         names = [config.service_name for config in configs]
