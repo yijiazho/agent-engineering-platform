@@ -113,8 +113,9 @@ and the repository's versioned `.ai/` Resources.
 > policy, artifact, and observability components, plus the `AnalyzeIssue`,
 > `BuildImplementationPlan`, `GeneratePatch`, `RunValidation`, and
 > `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The local Event
-> Controller does not yet expose a webhook POST endpoint, while the end-to-end
-> harness remains unimplemented. The current Compose stack is therefore a credential-free
+> Controller does not yet expose a webhook POST endpoint. The deterministic
+> end-to-end harness is available for local and CI verification. The current
+> Compose stack remains a credential-free
 > service-topology smoke test, not yet a deployable issue-to-PR integration.
 
 ### 1. Add Repository-Local Resources
@@ -314,10 +315,17 @@ Before enabling a real webhook, verify the deployment in this order:
    denied `github.create_pr`, and confirm that no branch is pushed and no pull
    request is created.
 
-Step 5 becomes available when AEP-037 is implemented. Until the webhook ingress,
-remaining Task handlers, provider wiring, and that harness are complete, use
-the component tests and local composition only for contract and readiness
-validation—not for a live repository integration.
+Run step 5 without network access or credentials:
+
+```powershell
+python -m pytest tests/test_mvp_harness.py
+```
+
+The harness loads `fixtures/e2e-mvp/repository/.ai`, replays the issue fixture,
+executes all six Tasks, and verifies both successful pull-request publication
+and a policy-blocked path. Until the webhook ingress and live provider wiring
+are complete, use the harness, component tests, and local composition for
+contract and readiness validation, not for a live repository integration.
 
 ## Key Documents
 
@@ -333,7 +341,7 @@ validation—not for a live repository integration.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 36 of the 43 implementation tasks are complete.
+contracts are established, and 37 of the 43 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -404,9 +412,8 @@ Implemented foundations currently include:
   local persistence.
 
 
-The remaining work includes the deterministic end-to-end issue-to-pull-request
-harness, plus the authenticated ingress,
-execution-checkout provisioning, complete self-hosting Resource bundle, live
+The remaining work includes authenticated ingress, execution-checkout
+provisioning, a complete self-hosting Resource bundle, live
 GitHub and Model provider integrations, and dogfood deployment required to
 register this repository with a running AEP control plane. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the

@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Policy","metadata":{"name":"publication","version":"1.0.0"},"spec":{"type":"publication","rules":[{"effect":"allow","reason":"Allow deterministic fixture publication."}]}}
