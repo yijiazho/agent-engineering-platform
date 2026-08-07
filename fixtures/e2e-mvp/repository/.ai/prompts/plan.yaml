@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Prompt","metadata":{"name":"plan","version":"1.0.0"},"spec":{"system":"Plan only from supplied evidence.","formatting":"Return structured JSON."}}

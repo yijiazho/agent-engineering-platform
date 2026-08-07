@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Workspace","metadata":{"name":"fixture","version":"1.0.0"},"spec":{"repository":{"provider":"github","owner":"octo-org","name":"octo-repo","defaultBranch":"main"},"resourceDiscovery":{"root":".ai"}}}

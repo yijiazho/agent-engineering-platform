@@ -131,6 +131,15 @@ carry the WorkflowExecution's repository revision and, when present, knowledge
 graph version in provenance so downstream Context Builder validation remains
 revision-bound.
 
+The deterministic MVP harness composes event normalization and deduplication,
+Workflow resolution and creation, DAG scheduling, all six production Task
+handlers, isolated Filesystem, Git, and Docker Tool execution, fake model and
+GitHub provider boundaries, and in-memory runtime and artifact persistence.
+It validates every persisted runtime object against its authoritative schema.
+Its fixture-backed allowed and denied publication scenarios provide a
+credential-free CI check of the ADR-003 integration wiring without live
+provider credentials.
+
 ---
 
 # 4. Core Runtime Objects

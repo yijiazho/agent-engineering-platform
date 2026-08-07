@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Task","metadata":{"name":"evaluate-acceptance","version":"1.0.0"},"spec":{"objective":"Evaluate fixture evidence.","outputs":{"type":"object"},"evaluations":[{"kind":"Evaluation","name":"acceptance","version":"1.0.0"}]}}

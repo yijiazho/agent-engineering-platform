@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Tool","metadata":{"name":"github","version":"1.0.0"},"spec":{"category":"external-service","capabilities":["github.create_pr"],"inputSchema":{"type":"object"},"outputSchema":{"type":"object"}}}
