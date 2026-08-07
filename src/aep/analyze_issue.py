@@ -37,6 +37,13 @@ class AnalyzeIssueTaskHandler:
     returns a classified result for the scheduler to apply.
     """
 
+    task_name = "analyze-issue"
+    task_label = "AnalyzeIssue"
+    invocation_label = "Issue Analyzer"
+    artifact_type = "ISSUE_ANALYSIS"
+    artifact_actor = "analyze-issue-task-handler"
+    runtime_id_namespace = "analyze-issue"
+
     def __init__(
         self,
         *,
@@ -79,6 +86,9 @@ class AnalyzeIssueTaskHandler:
             workflow, event = self._validate_inputs(task, task_execution)
             task_spec = _spec(task)
             evaluation = self._schema_evaluation(task_spec)
+            task_output_schema = self._validate_task_evaluation_contract(
+                task_spec, evaluation
+            )
             context_package = self._context_builder.build(
                 task=task,
                 task_execution=task_execution,
@@ -88,6 +98,7 @@ class AnalyzeIssueTaskHandler:
                     task_spec.get("knowledgeBases", ()), "KnowledgeBase"
                 ),
                 policies=self._resolve_declared(task_spec.get("policies", ()), "Policy"),
+                **self._context_arguments(task_execution, workflow),
                 token_budget=self._token_budget,
                 created_at=self._timestamp(),
             )
@@ -112,6 +123,14 @@ class AnalyzeIssueTaskHandler:
                     "TaskExecution already has a different ResolvedAgent"
                 )
             self._attach(task_execution["id"], {"resolvedAgentId": saved_agent["id"]})
+            agent_output_schema = saved_agent.get("outputSchema")
+            if (
+                not isinstance(agent_output_schema, Mapping)
+                or dict(agent_output_schema) != dict(task_output_schema)
+            ):
+                raise AnalyzeIssueContractError(
+                    f"{self.task_label} Agent outputSchema must match Task.spec.outputs"
+                )
 
             prompt = self._require_resource(
                 ResourceRef.from_mapping(dict(saved_agent["promptRef"])), "Prompt"
@@ -120,8 +139,8 @@ class AnalyzeIssueTaskHandler:
                 ResourceRef.from_mapping(dict(saved_agent["modelRef"])), "Model"
             )
             model_configuration = _model_configuration(model)
-            invocation_id = _runtime_id("agentinvocation", str(task_execution["id"]))
-            model_invocation_id = _runtime_id(
+            invocation_id = self._runtime_id("agentinvocation", str(task_execution["id"]))
+            model_invocation_id = self._runtime_id(
                 "modelinvocation", str(task_execution["id"])
             )
             started_at = self._timestamp()
@@ -153,10 +172,10 @@ class AnalyzeIssueTaskHandler:
                     )
                 return TaskExecutionResult.failure(
                     _failure_class(failure.get("class")),
-                    str(failure.get("message") or "Issue Analyzer invocation failed"),
+                    str(failure.get("message") or f"{self.invocation_label} invocation failed"),
                 )
 
-            artifact_id = _runtime_id("generatedartifact", str(task_execution["id"]))
+            artifact_id = self._runtime_id("generatedartifact", str(task_execution["id"]))
             evaluation_result = self._run_schema_evaluation(
                 task_execution=task_execution,
                 workflow=workflow,
@@ -169,7 +188,7 @@ class AnalyzeIssueTaskHandler:
                 details = "; ".join(evaluation_result.get("logs", ()))
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION,
-                    f"Issue analysis failed schema Evaluation: {details}",
+                    f"{self.task_label} output failed schema Evaluation: {details}",
                 )
 
             artifact = self._artifact_store.publish(
@@ -181,7 +200,7 @@ class AnalyzeIssueTaskHandler:
                     "createdAt": self._timestamp(),
                     "updatedAt": self._timestamp(),
                     "provenance": {
-                        "actor": "analyze-issue-task-handler",
+                        "actor": self.artifact_actor,
                         "workflowExecutionId": workflow["id"],
                         "taskExecutionId": task_execution["id"],
                         "repositoryRevision": workflow["repositoryRevision"],
@@ -190,7 +209,7 @@ class AnalyzeIssueTaskHandler:
                         ),
                     },
                     "taskExecutionId": task_execution["id"],
-                    "artifactType": "ISSUE_ANALYSIS",
+                    "artifactType": self.artifact_type,
                     "repositoryRevision": workflow["repositoryRevision"],
                     "mediaType": "application/json",
                     "evaluationResultIds": [evaluation_id],
@@ -221,8 +240,10 @@ class AnalyzeIssueTaskHandler:
     ) -> tuple[RuntimeObject, JsonMapping | None]:
         if not isinstance(task, Resource) or task.kind != "Task":
             raise AnalyzeIssueContractError("task must be a loaded Task Resource")
-        if task.name != "analyze-issue":
-            raise AnalyzeIssueContractError("AnalyzeIssue handler requires Task analyze-issue")
+        if task.name != self.task_name:
+            raise AnalyzeIssueContractError(
+                f"{self.task_label} handler requires Task {self.task_name}"
+            )
         if dict(task_execution.get("taskRef", {})) != _ref_record(task.ref):
             raise AnalyzeIssueContractError("TaskExecution.taskRef does not match Task")
         if (
@@ -239,6 +260,13 @@ class AnalyzeIssueTaskHandler:
         event_id = workflow.get("eventId")
         event = self._event_resolver(str(event_id)) if isinstance(event_id, str) else None
         return workflow, event
+
+    def _context_arguments(
+        self, task_execution: JsonMapping, workflow: JsonMapping
+    ) -> dict[str, object]:
+        """Return handler-specific Context Builder inputs."""
+
+        return {}
 
     def _resolve_declared(
         self, values: Sequence[JsonMapping], expected_kind: str
@@ -274,9 +302,24 @@ class AnalyzeIssueTaskHandler:
         )
         if len(schema_evaluations) != 1:
             raise AnalyzeIssueContractError(
-                "AnalyzeIssue Task must declare exactly one schema Evaluation"
+                f"{self.task_label} Task must declare exactly one schema Evaluation"
             )
         return schema_evaluations[0]
+
+    def _validate_task_evaluation_contract(
+        self, task_spec: JsonMapping, evaluation: Resource
+    ) -> JsonMapping:
+        task_schema = task_spec.get("outputs")
+        if not isinstance(task_schema, Mapping) or not task_schema:
+            raise AnalyzeIssueContractError(
+                f"{self.task_label} Task requires spec.outputs"
+            )
+        evaluation_schema = _evaluation_schema(evaluation)
+        if dict(task_schema) != dict(evaluation_schema):
+            raise AnalyzeIssueContractError(
+                f"{self.task_label} Evaluation inputSchema must match Task.spec.outputs"
+            )
+        return task_schema
 
     def _run_schema_evaluation(
         self,
@@ -288,7 +331,9 @@ class AnalyzeIssueTaskHandler:
         content: Any,
     ) -> RuntimeObject:
         evaluation_ref = _ref_record(evaluation.ref)
-        evaluation_id = _runtime_id("evaluationresult", str(task_execution["id"]))
+        evaluation_id = self._runtime_id(
+            "evaluationresult", str(task_execution["id"])
+        )
         result = evaluate_schema(
             store=self._runtime_store,
             result_id=evaluation_id,
@@ -344,6 +389,12 @@ class AnalyzeIssueTaskHandler:
             raise AnalyzeIssueContractError("clock must return an RFC3339 timestamp")
         return value
 
+    def _runtime_id(self, prefix: str, task_execution_id: str) -> str:
+        digest = sha256(
+            f"{self.runtime_id_namespace}:{task_execution_id}:{prefix}".encode()
+        ).hexdigest()[:24]
+        return f"{prefix}-{digest}"
+
 
 def _required_ref(value: Any, expected_kind: str, field: str) -> ResourceRef:
     if not isinstance(value, Mapping):
@@ -390,11 +441,6 @@ def _failure_class(value: object) -> FailureClass:
         return FailureClass(str(value))
     except ValueError:
         return FailureClass.PERMANENT
-
-
-def _runtime_id(prefix: str, task_execution_id: str) -> str:
-    digest = sha256(f"analyze-issue:{task_execution_id}:{prefix}".encode()).hexdigest()[:24]
-    return f"{prefix}-{digest}"
 
 
 def _correlation(task_execution: JsonMapping) -> dict[str, str]:

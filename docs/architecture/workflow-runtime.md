@@ -396,6 +396,15 @@ runs the declared schema Evaluation, and publishes an immutable
 all produced identifiers to the TaskExecution; the deterministic scheduler
 remains responsible for the terminal success or classified failure transition.
 
+The `BuildImplementationPlan` handler reuses that orchestration contract for
+the next cognitive step. It requires exactly one dependency TaskExecution with
+one `ISSUE_ANALYSIS` GeneratedArtifact, delegates artifact and revision
+validation to the Context Builder, and combines that analysis with declared
+repository context. It resolves the versioned Planner, evaluates the structured
+sections for intended files, tests, assumptions, risks, and ordered steps, and
+publishes an `IMPLEMENTATION_PLAN` GeneratedArtifact only after Evaluation
+passes. The handler invokes no Tool and does not modify the checkout.
+
 The AgentInvocation coordinator then combines that immutable package with the
 resolved Prompt, Model configuration, and output schema. It persists the
 AgentInvocation and each ModelInvocation, including token, latency, cost, and
