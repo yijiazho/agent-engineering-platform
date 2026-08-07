@@ -110,9 +110,9 @@ and the repository's versioned `.ai/` Resources.
 > **Current implementation status:** this section defines the integration
 > contract that the completed MVP must satisfy. The repository currently
 > implements the underlying event, workflow, context, Agent, Tool, evaluation,
-> policy, artifact, and observability components, plus the `AnalyzeIssue` and
-> `BuildImplementationPlan` Task handlers. The local Event Controller does not
-> yet expose a webhook POST endpoint, and `GeneratePatch`, `RunValidation`,
+> policy, artifact, and observability components, plus the `AnalyzeIssue`,
+> `BuildImplementationPlan`, and `GeneratePatch` Task handlers. The local Event
+> Controller does not yet expose a webhook POST endpoint, and `RunValidation`,
 > `EvaluateAcceptance`, `CreatePullRequest`, and the end-to-end harness remain
 > unimplemented. The current Compose stack is therefore a credential-free
 > service-topology smoke test, not yet a deployable issue-to-PR integration.
@@ -333,7 +333,7 @@ validation—not for a live repository integration.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 32 of the 43 implementation tasks are complete.
+contracts are established, and 33 of the 43 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 

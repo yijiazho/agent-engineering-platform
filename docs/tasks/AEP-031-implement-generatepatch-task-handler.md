@@ -1,6 +1,6 @@
 # AEP-031: Implement GeneratePatch Task Handler
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -33,3 +33,18 @@ Implement the `GeneratePatch` Task handler that:
 * Handler records changed files.
 * Handler runs patch Evaluation.
 * Tests cover successful patch and disallowed file change.
+
+## Implementation Notes
+
+`src/aep/generate_patch.py` consumes exactly one evaluated
+`IMPLEMENTATION_PLAN`, supplies it through the immutable `ContextPackage`, and
+invokes the resolved Code Generator. Structured file writes are checked against
+the plan before mutation and then executed through capability-authorized
+Filesystem Tool invocations. Authorized Git diff and applicability-check
+invocations produce immutable patch, changed-file, and evaluation evidence.
+
+Patch Evaluation runs against a separate clean, revision-bound checkout so its
+applicability check cannot be confused by the execution checkout's intended
+uncommitted changes. The handler publishes the `PATCH` GeneratedArtifact only
+after applicability and path-boundary checks pass; scheduling remains
+responsible for the TaskExecution's terminal transition.

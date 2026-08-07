@@ -273,6 +273,12 @@ list, Git diagnostics and log reference, per-path boundary decisions, and
 stable failure codes. A failed check is correctness evidence only; it never
 authorizes a write, push, or publication action.
 
+Task handlers that request persisted applicability evidence use the Git Tool's
+atomic invocation boundary. The ToolInvocation identity is claimed before Git
+execution, bound to the immutable request fingerprint, and cited by the
+EvaluationResult. Matching concurrent or later retries reuse the terminal
+result, while an identity conflict fails closed.
+
 ---
 
 # 10. Evaluation Composition

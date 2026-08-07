@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 32 |
+| Completed | 33 |
 | In Progress | 0 |
-| Not Started | 11 |
+| Not Started | 10 |
 | Blocked | 0 |
 | Total | 43 |
 
@@ -123,7 +123,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 28 | [AEP-028: Implement Publication Policy](tasks/AEP-028-implement-publication-policy.md) | Completed |
 | 29 | [AEP-029: Implement AnalyzeIssue Task Handler](tasks/AEP-029-implement-analyzeissue-task-handler.md) | Completed |
 | 30 | [AEP-030: Implement BuildImplementationPlan Task Handler](tasks/AEP-030-implement-buildimplementationplan-task-handler.md) | Completed |
-| 31 | [AEP-031: Implement GeneratePatch Task Handler](tasks/AEP-031-implement-generatepatch-task-handler.md) | Not Started |
+| 31 | [AEP-031: Implement GeneratePatch Task Handler](tasks/AEP-031-implement-generatepatch-task-handler.md) | Completed |
 | 32 | [AEP-032: Implement RunValidation Task Handler](tasks/AEP-032-implement-runvalidation-task-handler.md) | Not Started |
 | 33 | [AEP-033: Implement EvaluateAcceptance Task Handler](tasks/AEP-033-implement-evaluateacceptance-task-handler.md) | Not Started |
 | 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Not Started |
@@ -173,7 +173,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-028 | AEP-004, AEP-020, AEP-025, AEP-026, AEP-027 | Completed |
 | AEP-029 | AEP-010, AEP-013, AEP-017, AEP-018, AEP-025 | Completed |
 | AEP-030 | AEP-029 | Completed |
-| AEP-031 | AEP-021, AEP-022, AEP-026, AEP-030 | Not Started |
+| AEP-031 | AEP-021, AEP-022, AEP-026, AEP-030 | Completed |
 | AEP-032 | AEP-023, AEP-027, AEP-031 | Not Started |
 | AEP-033 | AEP-028, AEP-032 | Not Started |
 | AEP-034 | AEP-024, AEP-028, AEP-033 | Not Started |

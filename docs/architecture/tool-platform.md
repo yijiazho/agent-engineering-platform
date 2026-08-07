@@ -551,6 +551,12 @@ and deterministic diagnostics without changing the index or worktree. Patch
 Evaluation owns allowed-path and correctness decisions, while push remains a
 separate capability-authorized operation.
 
+The persisted Git Tool boundary atomically creates pending ToolInvocation
+evidence before starting an adapter operation. Its deterministic request
+fingerprint binds the task, caller, Tool version, input, capabilities, timeout,
+trace, and policy decision. Matching retries and concurrent duplicates reuse
+one terminal result; a reused identity with different inputs is rejected.
+
 ## GitHub Adapter
 
 The MVP GitHub adapter exposes two structured operations:

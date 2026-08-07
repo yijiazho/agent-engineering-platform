@@ -1,0 +1,566 @@
+"""GeneratePatch Task handler composed from governed AEP runtime boundaries."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
+from hashlib import sha256
+import json
+from pathlib import PurePosixPath
+from typing import Any
+
+from aep.agent_invocation import AgentInvocationContractError, invoke_agent
+from aep.agent_resolver import AgentResolutionError, AgentToolDeniedError, resolve_agent
+from aep.analyze_issue import (
+    AnalyzeIssueContractError,
+    AnalyzeIssueTaskHandler,
+    _artifact_resource_refs,
+    _correlation,
+    _failure_class,
+    _model_configuration,
+    _ref_record,
+    _required_ref,
+    _spec,
+)
+from aep.context_builder import ContextBuilderError
+from aep.filesystem_tool import FilesystemTool
+from aep.generated_artifact_store import GeneratedArtifactStoreError
+from aep.git_tool import GitTool
+from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
+from aep.resource_loader import Resource, ResourceRef
+from aep.runtime_store import RuntimeObject
+from aep.task_execution import FailureClass
+from aep.tool_runtime import (
+    AuthorizationHook,
+    ToolCaller,
+    ToolFailureClass,
+    ToolRequest,
+    ToolResult,
+    ToolResultStatus,
+)
+from aep.workflow_scheduler import TaskExecutionResult
+
+
+JsonMapping = Mapping[str, Any]
+
+
+class GeneratePatchContractError(AnalyzeIssueContractError):
+    """Raised when GeneratePatch inputs cannot be bound safely."""
+
+
+class DisallowedPatchPathError(GeneratePatchContractError):
+    """Raised before mutation when model output exceeds the plan boundary."""
+
+
+class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
+    """Author scoped workspace changes and publish an evaluated patch."""
+
+    task_name = "generate-patch"
+    task_label = "GeneratePatch"
+    invocation_label = "Code Generator"
+    artifact_type = "PATCH"
+    artifact_actor = "generate-patch-task-handler"
+    runtime_id_namespace = "generate-patch"
+
+    def __init__(
+        self,
+        *,
+        filesystem_tool: FilesystemTool,
+        workspace_git_tool: GitTool,
+        evaluation_git_tool: GitTool,
+        authorize_filesystem: AuthorizationHook,
+        authorize_git: AuthorizationHook,
+        working_branch: str,
+        tool_timeout_ms: int = 5_000,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        if not isinstance(filesystem_tool, FilesystemTool):
+            raise TypeError("filesystem_tool must be a FilesystemTool")
+        if not isinstance(workspace_git_tool, GitTool):
+            raise TypeError("workspace_git_tool must be a GitTool")
+        if not isinstance(evaluation_git_tool, GitTool):
+            raise TypeError("evaluation_git_tool must be a GitTool")
+        if not callable(authorize_filesystem) or not callable(authorize_git):
+            raise TypeError("Tool authorization hooks must be callable")
+        if not isinstance(working_branch, str) or not working_branch:
+            raise ValueError("working_branch must be a non-empty string")
+        if (
+            not isinstance(tool_timeout_ms, int)
+            or isinstance(tool_timeout_ms, bool)
+            or tool_timeout_ms < 1
+        ):
+            raise ValueError("tool_timeout_ms must be a positive integer")
+        self._filesystem_tool = filesystem_tool
+        self._workspace_git_tool = workspace_git_tool
+        self._evaluation_git_tool = evaluation_git_tool
+        self._authorize_filesystem = authorize_filesystem
+        self._authorize_git = authorize_git
+        self._working_branch = working_branch
+        self._tool_timeout_ms = tool_timeout_ms
+
+    def execute(
+        self, task: Resource, task_execution: RuntimeObject
+    ) -> TaskExecutionResult:
+        """Run one already-running GeneratePatch attempt."""
+
+        try:
+            workflow, event = self._validate_inputs(task, task_execution)
+            plan, producer_id = self._implementation_plan(task_execution, workflow)
+            allowed_paths = _allowed_paths(plan)
+            task_spec = _spec(task)
+            patch_evaluation = self._patch_evaluation(task_spec)
+            output_schema = task_spec.get("outputs")
+            if not isinstance(output_schema, Mapping) or not output_schema:
+                raise GeneratePatchContractError("GeneratePatch Task requires spec.outputs")
+
+            context_package = self._context_builder.build(
+                task=task,
+                task_execution=task_execution,
+                workflow_execution=workflow,
+                event=event,
+                knowledge_bases=self._resolve_declared(
+                    task_spec.get("knowledgeBases", ()), "KnowledgeBase"
+                ),
+                policies=self._resolve_declared(task_spec.get("policies", ()), "Policy"),
+                prior_task_execution_ids=(producer_id,),
+                token_budget=self._token_budget,
+                created_at=self._timestamp(),
+            )
+            self._attach(task_execution["id"], {"contextPackageId": context_package["id"]})
+
+            agent_ref = _required_ref(
+                task_spec.get("agentRef"), "Agent", "Task.spec.agentRef"
+            )
+            resolved = resolve_agent(
+                task.ref,
+                agent_ref,
+                self._resources,
+                correlation=_correlation(task_execution),
+                resolved_at=self._timestamp(),
+            ).as_dict()
+            saved_agent = self._runtime_store.create(
+                resolved,
+                deterministic_key=f"resolved-agent:{task_execution['id']}",
+            )
+            if dict(saved_agent) != resolved:
+                raise GeneratePatchContractError(
+                    "TaskExecution already has a different ResolvedAgent"
+                )
+            self._attach(task_execution["id"], {"resolvedAgentId": saved_agent["id"]})
+            if dict(saved_agent.get("outputSchema", {})) != dict(output_schema):
+                raise GeneratePatchContractError(
+                    "GeneratePatch Agent outputSchema must match Task.spec.outputs"
+                )
+            tools = self._authorized_tools(saved_agent)
+
+            prompt = self._require_resource(
+                ResourceRef.from_mapping(dict(saved_agent["promptRef"])), "Prompt"
+            )
+            model = self._require_resource(
+                ResourceRef.from_mapping(dict(saved_agent["modelRef"])), "Model"
+            )
+            invocation_id = self._runtime_id(
+                "agentinvocation", str(task_execution["id"])
+            )
+            invocation = invoke_agent(
+                store=self._runtime_store,
+                invocation_id=invocation_id,
+                model_invocation_id=self._runtime_id(
+                    "modelinvocation", str(task_execution["id"])
+                ),
+                resolved_agent=saved_agent,
+                context_package=context_package,
+                prompt=prompt.data,
+                model_configuration=_model_configuration(model),
+                adapter=self._model_adapter,
+                started_at=self._timestamp(),
+                completed_at=self._timestamp(),
+            )
+            self._attach(task_execution["id"], {"agentInvocationIds": [invocation_id]})
+            if invocation["status"] != "SUCCEEDED":
+                failure = invocation.get("failure", {})
+                return TaskExecutionResult.failure(
+                    _failure_class(failure.get("class")),
+                    str(failure.get("message") or "Code Generator invocation failed"),
+                )
+
+            changes = _validated_changes(invocation.get("output"), allowed_paths)
+            for index, change in enumerate(changes):
+                request = ToolRequest(
+                    tool_ref=tools["filesystem"]["ref"],
+                    input={
+                        "operation": "write",
+                        "path": change["path"],
+                        "content": change["content"],
+                    },
+                    caller=ToolCaller(kind="AgentInvocation", id=invocation_id),
+                    capabilities=("filesystem.write",),
+                    timeout_ms=self._tool_timeout_ms,
+                    correlation=_correlation(task_execution),
+                )
+                tool_id = self._runtime_id(
+                    "toolinvocation", f"{task_execution['id']}:filesystem:{index}"
+                )
+                result, evidence = self._filesystem_tool.invoke(
+                    invocation_id=tool_id,
+                    task_execution_id=str(task_execution["id"]),
+                    request=request,
+                    authorize=self._authorize_filesystem,
+                )
+                self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+                if result.status is not ToolResultStatus.SUCCEEDED:
+                    return _tool_failure(result, f"Filesystem write for {change['path']!r}")
+
+            diff_id = self._runtime_id(
+                "toolinvocation", f"{task_execution['id']}:git:diff"
+            )
+            diff_result, diff_evidence = self._invoke_git_diff(
+                invocation_id=diff_id,
+                task_execution=task_execution,
+                tool_ref=tools["git"]["ref"],
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [diff_evidence["id"]]})
+            if diff_result.status is not ToolResultStatus.SUCCEEDED:
+                return _tool_failure(diff_result, "Git diff")
+            diff_output = diff_result.output_record()
+            patch = diff_output.get("diff") if isinstance(diff_output, Mapping) else None
+            patch_text = patch.get("text") if isinstance(patch, Mapping) else None
+            if not isinstance(patch_text, str) or not patch_text:
+                return TaskExecutionResult.failure(
+                    FailureClass.EVALUATION, "GeneratePatch produced an empty patch"
+                )
+            changed_files = _changed_paths(diff_output.get("changedFiles"))
+
+            artifact_id = self._runtime_id(
+                "generatedartifact", str(task_execution["id"])
+            )
+            evaluation_id = self._runtime_id(
+                "evaluationresult", str(task_execution["id"])
+            )
+            evaluation_ref = _ref_record(patch_evaluation.ref)
+            metadata = {
+                "apiVersion": "aep.dev/v1alpha1",
+                "kind": "GeneratedArtifact",
+                "id": artifact_id,
+                "traceId": task_execution["traceId"],
+                "createdAt": self._timestamp(),
+                "updatedAt": self._timestamp(),
+                "provenance": {
+                    "actor": self.artifact_actor,
+                    "workflowExecutionId": workflow["id"],
+                    "taskExecutionId": task_execution["id"],
+                    "repositoryRevision": workflow["repositoryRevision"],
+                    "resourceRefs": _artifact_resource_refs(
+                        saved_agent, evaluation_ref
+                    ),
+                },
+                "taskExecutionId": task_execution["id"],
+                "artifactType": "PATCH",
+                "repositoryRevision": workflow["repositoryRevision"],
+                "mediaType": "text/x-diff; charset=utf-8",
+                "contentAddress": "sha256:"
+                + sha256(patch_text.encode("utf-8")).hexdigest(),
+                "evaluationResultIds": [evaluation_id],
+                "changedFiles": changed_files,
+            }
+            evaluation_result = evaluate_patch(
+                store=self._runtime_store,
+                git_adapter=self._evaluation_git_tool.adapter,
+                authorize_git=self._authorize_git,
+                result_id=evaluation_id,
+                task_execution_id=str(task_execution["id"]),
+                evaluation_ref=evaluation_ref,
+                patch_artifact=metadata,
+                patch_content=patch_text,
+                expected_revision=str(workflow["repositoryRevision"]),
+                allowed_paths=allowed_paths,
+                working_branch=self._working_branch,
+                correlation=_correlation(task_execution),
+                timestamp=self._timestamp(),
+                provenance={
+                    "actor": "patch-evaluator",
+                    "workflowExecutionId": workflow["id"],
+                    "taskExecutionId": task_execution["id"],
+                    "repositoryRevision": workflow["repositoryRevision"],
+                    "resourceRefs": [evaluation_ref, tools["git"]["ref"]],
+                },
+                git_tool_ref=tools["git"]["ref"],
+                git_tool=self._evaluation_git_tool,
+                tool_invocation_id=self._runtime_id(
+                    "toolinvocation", f"{task_execution['id']}:git:check-patch"
+                ),
+                timeout_ms=self._tool_timeout_ms,
+            )
+            evaluation_tool_id = evaluation_result["evidence"]["git"].get(
+                "toolInvocationId"
+            )
+            if isinstance(evaluation_tool_id, str):
+                self._attach(
+                    task_execution["id"],
+                    {"toolInvocationIds": [evaluation_tool_id]},
+                )
+            self._attach(task_execution["id"], {"evaluationResultIds": [evaluation_id]})
+            if evaluation_result["outcome"] != "PASS":
+                details = "; ".join(evaluation_result.get("logs", ()))
+                return TaskExecutionResult.failure(
+                    FailureClass.EVALUATION,
+                    f"GeneratePatch failed Patch Evaluation: {details}",
+                )
+            if changed_files != evaluation_result["evidence"]["changedFiles"]:
+                raise GeneratePatchContractError(
+                    "Git diff and Patch Evaluation changed-file evidence disagree"
+                )
+
+            artifact = self._artifact_store.publish(metadata, patch_text)
+            self._attach(task_execution["id"], {"generatedArtifactIds": [artifact["id"]]})
+            return TaskExecutionResult.success()
+        except AgentToolDeniedError as error:
+            return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
+        except DisallowedPatchPathError as error:
+            return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
+        except (
+            AgentResolutionError,
+            AgentInvocationContractError,
+            AnalyzeIssueContractError,
+            ContextBuilderError,
+            GeneratedArtifactStoreError,
+            PatchEvaluationContractError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
+            return TaskExecutionResult.failure(FailureClass.CONFIGURATION, str(error))
+
+    def _implementation_plan(
+        self, task_execution: JsonMapping, workflow: JsonMapping
+    ) -> tuple[dict[str, Any], str]:
+        dependencies = task_execution.get("dependencyTaskExecutionIds")
+        if (
+            isinstance(dependencies, (str, bytes))
+            or not isinstance(dependencies, Sequence)
+            or len(dependencies) != 1
+            or not isinstance(dependencies[0], str)
+        ):
+            raise GeneratePatchContractError(
+                "GeneratePatch requires exactly one dependency TaskExecution"
+            )
+        producer_id = dependencies[0]
+        producer = self._runtime_store.get(producer_id)
+        if producer is None or producer.get("status") != "SUCCEEDED":
+            raise GeneratePatchContractError(
+                "GeneratePatch dependency TaskExecution must be SUCCEEDED"
+            )
+        producer_ref = producer.get("taskRef")
+        if (
+            not isinstance(producer_ref, Mapping)
+            or producer_ref.get("kind") != "Task"
+            or producer_ref.get("name") != "build-implementation-plan"
+            or producer_ref.get("version") in {None, "", "latest"}
+        ):
+            raise GeneratePatchContractError(
+                "GeneratePatch dependency must be a versioned build-implementation-plan Task"
+            )
+        artifacts = self._artifact_store.list_by_task_execution(producer_id)
+        plans = [item for item in artifacts if item.get("artifactType") == "IMPLEMENTATION_PLAN"]
+        if len(artifacts) != 1 or len(plans) != 1:
+            raise GeneratePatchContractError(
+                "GeneratePatch requires exactly one prior IMPLEMENTATION_PLAN GeneratedArtifact"
+            )
+        artifact = plans[0]
+        if list(producer.get("generatedArtifactIds", ())) != [artifact.get("id")]:
+            raise GeneratePatchContractError(
+                "prior IMPLEMENTATION_PLAN is not attached to its producer TaskExecution"
+            )
+        if artifact.get("repositoryRevision") != workflow.get("repositoryRevision"):
+            raise GeneratePatchContractError(
+                "prior IMPLEMENTATION_PLAN repository revision does not match WorkflowExecution"
+            )
+        evaluation_ids = artifact.get("evaluationResultIds")
+        if (
+            isinstance(evaluation_ids, (str, bytes))
+            or not isinstance(evaluation_ids, Sequence)
+            or len(evaluation_ids) != 1
+            or evaluation_ids[0] not in producer.get("evaluationResultIds", ())
+        ):
+            raise GeneratePatchContractError(
+                "prior IMPLEMENTATION_PLAN must reference its producer EvaluationResult"
+            )
+        evaluation = self._runtime_store.get(str(evaluation_ids[0]))
+        target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
+        provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
+        if not (
+            isinstance(evaluation, Mapping)
+            and evaluation.get("kind") == "EvaluationResult"
+            and evaluation.get("status") == "SUCCEEDED"
+            and evaluation.get("outcome") == "PASS"
+            and evaluation.get("taskExecutionId") == producer_id
+            and evaluation.get("traceId") == producer.get("traceId")
+            and isinstance(target, Mapping)
+            and target.get("type") == "AgentInvocation"
+            and target.get("id") in producer.get("agentInvocationIds", ())
+            and isinstance(provenance, Mapping)
+            and provenance.get("workflowExecutionId") == workflow.get("id")
+            and provenance.get("taskExecutionId") == producer_id
+            and provenance.get("repositoryRevision") == workflow.get("repositoryRevision")
+        ):
+            raise GeneratePatchContractError(
+                "prior IMPLEMENTATION_PLAN does not have a correlated PASS EvaluationResult"
+            )
+        raw_content = self._artifact_store.get_content(str(artifact["id"]))
+        try:
+            content = json.loads(raw_content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise GeneratePatchContractError(
+                "IMPLEMENTATION_PLAN content must be valid JSON"
+            ) from error
+        if not isinstance(content, Mapping):
+            raise GeneratePatchContractError(
+                "IMPLEMENTATION_PLAN content must be a JSON object"
+            )
+        return deepcopy(dict(content)), producer_id
+
+    def _patch_evaluation(self, task_spec: JsonMapping) -> Resource:
+        evaluations = self._resolve_declared(task_spec.get("evaluations", ()), "Evaluation")
+        patch_evaluations = [item for item in evaluations if _spec(item).get("type") == "patch"]
+        if len(patch_evaluations) != 1:
+            raise GeneratePatchContractError(
+                "GeneratePatch Task must declare exactly one patch Evaluation"
+            )
+        return patch_evaluations[0]
+
+    def _authorized_tools(self, resolved_agent: JsonMapping) -> dict[str, dict[str, Any]]:
+        records: dict[str, dict[str, Any]] = {}
+        for value in resolved_agent.get("toolRefs", ()):
+            if not isinstance(value, Mapping):
+                raise GeneratePatchContractError("ResolvedAgent.toolRefs must contain references")
+            ref = ResourceRef.from_mapping(dict(value))
+            if ref.name not in {"filesystem", "git"}:
+                raise GeneratePatchContractError(
+                    f"GeneratePatch ResolvedAgent may not use Tool {ref.name!r}"
+                )
+            tool = self._require_resource(ref, "Tool")
+            capabilities = _spec(tool).get("capabilities")
+            if isinstance(capabilities, (str, bytes)) or not isinstance(capabilities, Sequence):
+                raise GeneratePatchContractError(
+                    f"Tool {ref.name!r} must declare capabilities"
+                )
+            records[ref.name] = {"ref": _ref_record(ref), "capabilities": tuple(capabilities)}
+        required = {"filesystem": "filesystem.write", "git": "git.read"}
+        for name, capability in required.items():
+            if name not in records or capability not in records[name]["capabilities"]:
+                raise GeneratePatchContractError(
+                    f"GeneratePatch ResolvedAgent must allow {capability}"
+                )
+        return records
+
+    def _invoke_git_diff(
+        self,
+        *,
+        invocation_id: str,
+        task_execution: JsonMapping,
+        tool_ref: JsonMapping,
+    ) -> tuple[ToolResult, RuntimeObject]:
+        request = ToolRequest(
+            tool_ref=tool_ref,
+            input={
+                "operation": "diff",
+                "expectedRevision": task_execution["provenance"]["repositoryRevision"],
+                "branch": self._working_branch,
+            },
+            caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
+            capabilities=("git.read",),
+            timeout_ms=self._tool_timeout_ms,
+            correlation=_correlation(task_execution),
+        )
+        return self._workspace_git_tool.invoke(
+            invocation_id=invocation_id,
+            task_execution_id=str(task_execution["id"]),
+            request=request,
+            authorize=self._authorize_git,
+        )
+
+
+def _allowed_paths(plan: JsonMapping) -> tuple[str, ...]:
+    values = plan.get("intendedFiles")
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or not values:
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.intendedFiles must contain allowed paths"
+        )
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.intendedFiles must contain unique normalized repository-relative paths"
+        )
+    return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _validated_changes(output: object, allowed_paths: Sequence[str]) -> tuple[dict[str, str], ...]:
+    if not isinstance(output, Mapping):
+        raise GeneratePatchContractError("Code Generator output must be an object")
+    values = output.get("changes")
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or not values:
+        raise GeneratePatchContractError("Code Generator output must contain changes")
+    changes: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise GeneratePatchContractError("each Code Generator change must be an object")
+        path, content = value.get("path"), value.get("content")
+        if not isinstance(path, str) or not _safe_path(path):
+            raise GeneratePatchContractError("Code Generator change path is unsafe")
+        if not isinstance(content, str):
+            raise GeneratePatchContractError(f"Code Generator content for {path!r} must be text")
+        if path in seen:
+            raise GeneratePatchContractError(f"Code Generator repeats path {path!r}")
+        if not any(path == rule or path.startswith(f"{rule}/") for rule in allowed_paths):
+            raise DisallowedPatchPathError(
+                f"Code Generator path {path!r} is outside IMPLEMENTATION_PLAN.intendedFiles"
+            )
+        seen.add(path)
+        changes.append({"path": path, "content": content})
+    return tuple(changes)
+
+
+def _changed_paths(values: object) -> list[str]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("Git diff returned malformed changed-file evidence")
+    paths = {
+        path
+        for value in values
+        if isinstance(value, Mapping)
+        for path in (value.get("previousPath"), value.get("path"))
+        if isinstance(path, str)
+    }
+    if not paths:
+        raise GeneratePatchContractError("Git diff returned no changed-file evidence")
+    return sorted(paths, key=lambda path: (path.casefold(), path))
+
+
+def _safe_path(value: str) -> bool:
+    if not value or "\\" in value:
+        return False
+    path = PurePosixPath(value)
+    return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
+
+
+def _tool_failure(result: ToolResult, operation: str) -> TaskExecutionResult:
+    failure = result.failure_class or ToolFailureClass.ADAPTER
+    return TaskExecutionResult.failure(
+        _runtime_tool_failure(failure),
+        f"{operation} failed: {result.failure_message or result.status.value}",
+    )
+
+
+def _runtime_tool_failure(value: ToolFailureClass) -> FailureClass:
+    return {
+        ToolFailureClass.VALIDATION: FailureClass.CONFIGURATION,
+        ToolFailureClass.POLICY: FailureClass.POLICY,
+        ToolFailureClass.TIMEOUT: FailureClass.RECOVERABLE,
+        ToolFailureClass.IO: FailureClass.RECOVERABLE,
+        ToolFailureClass.BOUNDARY: FailureClass.POLICY,
+        ToolFailureClass.NOT_FOUND: FailureClass.PERMANENT,
+        ToolFailureClass.STARTUP: FailureClass.RECOVERABLE,
+        ToolFailureClass.NONZERO_EXIT: FailureClass.PERMANENT,
+        ToolFailureClass.ADAPTER: FailureClass.PERMANENT,
+    }[value]
