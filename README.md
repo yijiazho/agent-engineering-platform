@@ -117,10 +117,10 @@ and the repository's versioned `.ai/` Resources.
 > policy, artifact, observability, and authenticated webhook-ingress components,
 > plus the `AnalyzeIssue`,
 > `BuildImplementationPlan`, `GeneratePatch`, `RunValidation`, and
-> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The end-to-end
-> harness and remaining repository/provider integration are not yet complete.
-> The current Compose stack is therefore a component integration environment,
-> not yet a deployable issue-to-PR integration.
+> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The deterministic
+> end-to-end harness is available for local and CI verification. The current
+> Compose stack remains a credential-free
+> service-topology smoke test, not yet a deployable issue-to-PR integration.
 
 ### 1. Add Repository-Local Resources
 
@@ -343,6 +343,17 @@ Step 5 becomes available when AEP-037 is implemented. Until checkout
 provisioning, the complete Resource bundle, provider wiring, and that harness
 are complete, use the component tests and local composition only for contract
 and readiness validation, not for a live repository integration.
+Run step 5 without network access or credentials:
+
+```powershell
+python -m pytest tests/test_mvp_harness.py
+```
+
+The harness loads `fixtures/e2e-mvp/repository/.ai`, replays the issue fixture,
+executes all six Tasks, and verifies both successful pull-request publication
+and a policy-blocked path. Until the webhook ingress and live provider wiring
+are complete, use the harness, component tests, and local composition for
+contract and readiness validation, not for a live repository integration.
 
 ## Key Documents
 
@@ -432,8 +443,8 @@ Implemented foundations currently include:
   local persistence.
 
 
-The remaining work includes the deterministic end-to-end issue-to-pull-request
-harness, execution-checkout provisioning, complete self-hosting Resource bundle, live
+The remaining work includes execution-checkout
+provisioning, a complete self-hosting Resource bundle, live
 GitHub and Model provider integrations, and dogfood deployment required to
 register this repository with a running AEP control plane. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the

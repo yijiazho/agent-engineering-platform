@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Evaluation","metadata":{"name":"test","version":"1.0.0"},"spec":{"type":"test","toolRef":{"kind":"Tool","name":"docker-validation","version":"1.0.0"}}}

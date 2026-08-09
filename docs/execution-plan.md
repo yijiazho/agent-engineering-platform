@@ -93,14 +93,17 @@ and publishes the resulting pull-request description and URL. Authenticated
 GitHub webhook ingress now verifies HMAC-SHA256 over raw deliveries, enforces
 the bound repository and supported issue action, deduplicates through shared
 durable storage, and atomically commits one provider-neutral reconciliation
-outbox request with redacted trace evidence. The
-end-to-end MVP workflow is not yet runnable. ADR-004 adds the work required
+outbox request with redacted trace evidence.  The
+deterministic end-to-end MVP harness now loads a fixture `.ai/` bundle,
+normalizes and deduplicates an issue event, executes the six-Task DAG through
+the scheduler, and verifies runtime, artifact, evaluation, policy, fake-model,
+and fake-GitHub evidence for allowed and blocked publication paths. ADR-004 adds the work required
 to register this repository as the first live, repository-bound integration:
 authenticated webhook ingress, isolated execution checkout provisioning, a
 complete self-hosting Resource bundle, live GitHub and Model providers, and a
 pinned dogfood deployment. These registration tasks extend rather than replace
-the completed CreatePullRequest Task handler and unfinished deterministic
-end-to-end harness.
+the completed CreatePullRequest Task handler and deterministic end-to-end
+harness.
 
 ---
 
@@ -146,7 +149,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 34 | [AEP-034: Implement CreatePullRequest Task Handler](tasks/AEP-034-implement-createpullrequest-task-handler.md) | Completed |
 | 35 | [AEP-035: Compose MVP Services](tasks/AEP-035-compose-mvp-services.md) | Completed |
 | 36 | [AEP-036: Add Structured Logging And Tracing](tasks/AEP-036-add-structured-logging-and-tracing.md) | Completed |
-| 37 | [AEP-037: Build End-To-End MVP Harness](tasks/AEP-037-build-end-to-end-mvp-harness.md) | Not Started |
+| 37 | [AEP-037: Build End-To-End MVP Harness](tasks/AEP-037-build-end-to-end-mvp-harness.md) | Completed |
 | 38 | [AEP-038: Implement Authenticated GitHub Webhook Ingress](tasks/AEP-038-implement-authenticated-github-webhook-ingress.md) | Completed |
 | 39 | [AEP-039: Provision Revision-Bound Execution Checkouts](tasks/AEP-039-provision-revision-bound-execution-checkouts.md) | Not Started |
 | 40 | [AEP-040: Create Self-Hosting Resource Bundle](tasks/AEP-040-create-self-hosting-resource-bundle.md) | Not Started |
@@ -196,7 +199,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-034 | AEP-024, AEP-028, AEP-033 | Completed |
 | AEP-035 | AEP-003, AEP-004 | Completed |
 | AEP-036 | AEP-004, AEP-008, AEP-011 | Completed |
-| AEP-037 | AEP-034, AEP-035, AEP-036 | Not Started |
+| AEP-037 | AEP-034, AEP-035, AEP-036 | Completed |
 | AEP-038 | AEP-005, AEP-006, AEP-007, AEP-008, AEP-035, AEP-036 | Completed |
 | AEP-039 | AEP-015, AEP-021, AEP-022, AEP-035, AEP-036 | Not Started |
 | AEP-040 | AEP-003, AEP-017, AEP-020, AEP-025, AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Not Started |
@@ -217,7 +220,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | Completed |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Completed |
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
-| Deployment And Observability | AEP-035, AEP-036, AEP-037 | In Progress |
+| Deployment And Observability | AEP-035, AEP-036, AEP-037 | Completed |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043 | In Progress |
 
 ---

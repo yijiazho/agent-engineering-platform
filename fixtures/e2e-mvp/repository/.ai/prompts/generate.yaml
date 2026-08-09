@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Prompt","metadata":{"name":"generate","version":"1.0.0"},"spec":{"system":"Generate scoped changes from the plan.","formatting":"Return structured JSON."}}

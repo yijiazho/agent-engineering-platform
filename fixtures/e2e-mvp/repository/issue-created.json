@@ -1,0 +1,6 @@
+{
+  "action":"opened",
+  "issue":{"id":1621012312,"number":1347,"title":"Add deterministic context packaging","body":"Build context packages deterministically."},
+  "repository":{"id":1296269,"full_name":"octo-org/octo-repo"},
+  "sender":{"login":"octocat","id":1}
+}
