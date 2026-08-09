@@ -77,6 +77,7 @@ obj/
 # Containers and local runtime state
 .docker/
 docker-compose.override.yml
+deploy/local/secrets/
 
 # Kubernetes and local cluster output
 .kube/
