@@ -152,10 +152,21 @@ class StubCredentialProvider:
     def __init__(self) -> None:
         self.lease = StubCredentialLease()
         self.requests: list[tuple[str, str]] = []
+        self.timeout_requests: list[int] = []
 
-    def acquire(self, *, remote: str, branch: str) -> StubCredentialLease:
+    def acquire(self, *, remote: str, branch: str, timeout_ms: int) -> StubCredentialLease:
         self.requests.append((remote, branch))
+        self.timeout_requests.append(timeout_ms)
         return self.lease
+
+
+class TimeoutCredentialProvider:
+    def __init__(self) -> None:
+        self.timeout_requests: list[int] = []
+
+    def acquire(self, *, remote: str, branch: str, timeout_ms: int):
+        self.timeout_requests.append(timeout_ms)
+        raise TimeoutError("credential timeout gho_SECRET")
 
 
 @pytest.fixture
@@ -190,6 +201,7 @@ def request(
     capabilities: tuple[str, ...] = ("git.read",),
     commit_message: str | None = None,
     expected_patch_sha256: str | None = None,
+    timeout_ms: int = 5_000,
 ) -> ToolRequest:
     input_value = {
         "operation": operation,
@@ -205,7 +217,7 @@ def request(
         input=input_value,
         caller=ToolCaller(kind="TaskExecution", id="taskexecution-git00000001"),
         capabilities=capabilities,
-        timeout_ms=5_000,
+        timeout_ms=timeout_ms,
         correlation={
             "traceId": f"trace-{operation}",
             "workflowExecutionId": "workflowexecution-git00000001",
@@ -726,6 +738,8 @@ def test_push_credentials_are_scoped_to_push_and_lease_is_closed(
 
     assert result.status is ToolResultStatus.SUCCEEDED
     assert provider.requests == [("origin", "agent/work")]
+    assert len(provider.timeout_requests) == 1
+    assert 0 < provider.timeout_requests[0] <= 5000
     assert provider.lease.closed
     credential_environments = [
         value
@@ -739,6 +753,32 @@ def test_push_credentials_are_scoped_to_push_and_lease_is_closed(
             "AEP_GIT_CREDENTIAL_FILE": "sandbox:/tmp/credential",
         }
     ]
+
+
+def test_push_credential_acquisition_uses_remaining_deadline_and_times_out(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    create_branch(repository, revision, logs)
+    provider = TimeoutCredentialProvider()
+
+    result = invoke(
+        request(
+            revision,
+            "push_branch",
+            capabilities=("git.push",),
+            timeout_ms=250,
+        ),
+        adapter(repository, revision, logs, credential_provider=provider),
+    )
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.failure_class.value == "TIMEOUT"
+    assert result.output["remoteMutationState"] == "NOT_ATTEMPTED"
+    assert len(provider.timeout_requests) == 1
+    assert 0 < provider.timeout_requests[0] <= 250
+    assert "SECRET" not in (result.failure_message or "")
 
 
 @pytest.mark.parametrize(

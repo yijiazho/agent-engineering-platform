@@ -48,7 +48,9 @@ minimal explicit environment instead of inheriting the host environment,
 terminates commands at their deadline, and supplies hook and null-device paths
 outside the repository mount. The adapter disables repository hooks for every
 command. A `GitCredentialProvider` leases scoped environment entries only for
-the configured push attempt and revokes them in a `finally` block.
+the configured push attempt and revokes them in a `finally` block. Credential
+acquisition receives only the remaining Tool deadline; an acquisition timeout
+returns `TIMED_OUT` with `NOT_ATTEMPTED` mutation state before Git push begins.
 
 The read-only `check_patch` operation supports Patch Evaluation by streaming
 patch content to isolated `git apply --numstat` and `git apply --check --cached`

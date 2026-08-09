@@ -259,8 +259,10 @@ class GitCredentialLease(Protocol):
 class GitCredentialProvider(Protocol):
     """Issue temporary credentials for one configured remote and branch."""
 
-    def acquire(self, *, remote: str, branch: str) -> GitCredentialLease:
-        """Acquire a lease that the adapter closes after the push attempt."""
+    def acquire(
+        self, *, remote: str, branch: str, timeout_ms: int
+    ) -> GitCredentialLease:
+        """Acquire a lease within the remaining Tool deadline."""
 
 
 class _EmptyCredentialLease:
@@ -275,7 +277,9 @@ class _EmptyCredentialLease:
 class NoGitCredentials:
     """Credential provider for local remotes and credential-free sandboxes."""
 
-    def acquire(self, *, remote: str, branch: str) -> GitCredentialLease:
+    def acquire(
+        self, *, remote: str, branch: str, timeout_ms: int
+    ) -> GitCredentialLease:
         return _EmptyCredentialLease()
 
 
@@ -480,6 +484,15 @@ class _GitToolExecution(ToolExecution):
                 failure_message="isolated Git command exceeded its deadline",
                 failure_class=ToolFailureClass.TIMEOUT,
             )
+        except TimeoutError:
+            self._result = self._result_record(
+                status=ToolResultStatus.TIMED_OUT,
+                output=self._failure_output(),
+                started_at=started_at,
+                started_clock=started_clock,
+                failure_message="Git credential acquisition exceeded its deadline",
+                failure_class=ToolFailureClass.TIMEOUT,
+            )
         except Exception as error:
             self._result = self._result_record(
                 status=ToolResultStatus.FAILED,
@@ -551,8 +564,13 @@ class _GitToolExecution(ToolExecution):
                     "configured expected revision is not an ancestor of HEAD"
                 )
             if self._operation == "push_branch":
+                remaining_ms = int((deadline - monotonic()) * 1000)
+                if remaining_ms < 1:
+                    raise TimeoutError("Git credential deadline expired")
                 credentials = self._credential_provider.acquire(
-                    remote=self._remote, branch=self._working_branch
+                    remote=self._remote,
+                    branch=self._working_branch,
+                    timeout_ms=remaining_ms,
                 )
                 try:
                     self._run(

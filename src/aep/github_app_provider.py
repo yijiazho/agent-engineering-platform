@@ -562,7 +562,7 @@ class GitHubAppGitCredentialProvider:
         self._tokens = tokens
         self._root = Path(lease_root).resolve()
 
-    def acquire(self, *, remote: str | None = None, branch: str | None = None, repository: RepositoryIdentity | None = None) -> _GitCredentialLease:
+    def acquire(self, *, remote: str | None = None, branch: str | None = None, repository: RepositoryIdentity | None = None, timeout_ms: int | None = None) -> _GitCredentialLease:
         if repository is not None and repository.canonical.casefold() != f"github:{self.config.repository_id}".casefold():
             raise GitHubAppAuthorizationError("source repository differs from the GitHub App binding")
         if branch is not None and (not branch.startswith(self.config.authorized_branch_prefix) or branch == self.config.authorized_branch_prefix):
@@ -589,7 +589,12 @@ class GitHubAppGitCredentialProvider:
             path.unlink(missing_ok=True)
             raise GitHubProviderError("Git credential lease could not be created", retryable=True) from None
         try:
-            return _GitCredentialLease(self._tokens.token(), path)
+            return _GitCredentialLease(
+                self._tokens.token(
+                    timeout_ms=10_000 if timeout_ms is None else timeout_ms
+                ),
+                path,
+            )
         except Exception:
             path.unlink(missing_ok=True)
             raise
@@ -676,12 +681,19 @@ def _provider_error(response: HttpResponse) -> GitHubProviderError:
     retry_after = _retry_after_ms(response.headers)
     if response.status == 401:
         return GitHubAppAuthenticationError("GitHub App authentication failed", request_id=request_id)
-    if response.status == 403 and retry_after is None and not _rate_limited(response.headers):
+    if (
+        response.status == 429
+        or _rate_limited(response.headers)
+        or (response.status == 403 and retry_after is not None)
+    ):
+        return GitHubRateLimitError(
+            request_id=request_id,
+            retry_after_ms=(1000 if retry_after is None else retry_after),
+        )
+    if response.status == 403:
         return GitHubAppAuthorizationError("GitHub App permission denied", request_id=request_id)
     if response.status in {400, 404, 409, 422}:
         return GitHubAppValidationError("GitHub rejected the bound request", request_id=request_id)
-    if response.status == 429 or _rate_limited(response.headers):
-        return GitHubRateLimitError(request_id=request_id, retry_after_ms=retry_after or 1000)
     if response.status >= 500:
         return GitHubProviderError("GitHub service is temporarily unavailable", retryable=True, request_id=request_id, retry_after_ms=retry_after)
     return GitHubProviderError("GitHub provider request failed", request_id=request_id)

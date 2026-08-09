@@ -94,6 +94,11 @@ This includes transport failure, oversized or malformed successful responses,
 and any other condition that prevents confirmation after the POST starts.
 Installation lookup and installation-token transport timeouts preserve timeout
 classification through the Tool boundary rather than becoming provider errors.
+Git push credential acquisition receives the Git Tool's remaining deadline, so
+an empty or expiring token cache cannot extend the invocation beyond its
+configured timeout. GitHub secondary-limit `403` responses carrying
+`Retry-After` are treated as bounded, retryable rate limits even when
+`X-RateLimit-Remaining` is absent.
 
 ## Rotate Or Revoke Credentials
 

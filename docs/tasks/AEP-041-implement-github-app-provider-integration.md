@@ -78,6 +78,9 @@ Pull-request timeout evidence distinguishes pre-mutation `NOT_ATTEMPTED` from
 post-POST `UNKNOWN` state. All unconfirmed post-POST failures, including
 malformed successful responses, retain that unknown state, while installation
 lookup and token-request transport timeouts remain Tool `TIMED_OUT` results.
+Git push credential acquisition consumes only the Git Tool's remaining
+deadline. Secondary-limit `403` responses with `Retry-After` remain retryable
+rate-limit evidence without requiring `X-RateLimit-Remaining: 0`.
 
 The existing GitHub Tool remains responsible for immutable publication
 evidence and Publication Policy plus `github.create_pr` authorization; the Git

@@ -28,7 +28,7 @@ from aep.github_app_provider import (
     HttpTransportTimeout,
     github_app_provider_from_environment,
 )
-from aep.github_tool import GitHubToolAdapter
+from aep.github_tool import GitHubRateLimitError, GitHubToolAdapter
 from aep.tool_runtime import ToolCaller, ToolRequest, ToolResultStatus, invoke_tool
 
 
@@ -296,6 +296,25 @@ def test_rate_limit_is_safe_retryable_and_bounded() -> None:
     assert getattr(error, "retryable") is True
     assert getattr(error, "retry_after_ms") == 2000
     assert "ghs_hidden" not in str(error)
+
+
+def test_secondary_rate_limit_uses_retry_after_without_remaining_header() -> None:
+    transport = ScriptedTransport([
+        response(200, {"id": 137}), token_response(),
+        response(
+            403,
+            {"message": "secondary rate limit"},
+            request_id="secondary-limit",
+            headers={"Retry-After": "3"},
+        ),
+    ])
+    client = GitHubAppClient(config(), tokens=tokens(transport), transport=transport)
+    error = client.start_read_issue("acme/widgets", 1).wait(1000)
+
+    assert isinstance(error, GitHubRateLimitError)
+    assert error.retryable is True
+    assert error.retry_after_ms == 3000
+    assert error.request_id == "secondary-limit"
 
 
 def test_permission_denial_maps_to_non_retryable_tool_evidence() -> None:
