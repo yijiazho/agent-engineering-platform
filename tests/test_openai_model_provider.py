@@ -97,13 +97,14 @@ def model_request(
     retry_policy=None,
     timeout_ms=5_000,
     token_limit=321,
+    parameters=None,
 ):
     return ModelRequest(
         configuration=ModelConfiguration(
             model_ref={"kind": "Model", "name": "default-reasoning", "version": "1.0.0"},
             provider=provider,
             model="gpt-5",
-            parameters={"temperature": 0.1},
+            parameters={"temperature": 0.1} if parameters is None else parameters,
             token_limit=token_limit,
             timeout_ms=timeout_ms,
             retry_policy=retry_policy or {"maxAttempts": 1},
@@ -222,7 +223,8 @@ def test_structured_success_preserves_exact_model_bounds_and_usage_evidence():
     assert result.usage.as_record() == {"input": 17, "output": 5}
     assert result.provider_metadata == {
         "provider": "openai",
-        "model": "gpt-5",
+        "requestedModel": "gpt-5",
+        "providerModel": "gpt-5",
         "requestId": normalized_id("resp_123"),
         "finishReason": "completed",
         "attemptCount": 1,
@@ -316,16 +318,52 @@ def test_safety_refusal_is_permanent_and_contains_no_output_body():
     [
         ProviderHttpResponse(200, {}, b"not-json secret output"),
         success(output="not-json secret output"),
-        success(model="different-model"),
+        success(model="secret model identity"),
     ],
 )
-def test_malformed_or_mismatched_success_is_permanent(provider_response):
+def test_malformed_success_is_permanent(provider_response):
     with pytest.raises(ModelInvocationError) as raised:
         adapter(ScriptedTransport([provider_response])).invoke(model_request())
 
     assert raised.value.recoverable is False
-    assert raised.value.code in {"malformed_response", "model_identity_mismatch"}
+    assert raised.value.code == "malformed_response"
     assert "secret output" not in str(raised.value)
+
+
+def test_provider_snapshot_identity_is_recorded_separately_from_requested_alias():
+    result = adapter(ScriptedTransport([success(model="gpt-5-2025-08-07")])).invoke(
+        model_request()
+    )
+
+    assert result.provider_metadata["requestedModel"] == "gpt-5"
+    assert result.provider_metadata["providerModel"] == "gpt-5-2025-08-07"
+
+
+@pytest.mark.parametrize("parameter", ["previous_response_id", "conversation", "text"])
+def test_stateful_or_adapter_owned_parameters_are_rejected(parameter):
+    transport = ScriptedTransport([success()])
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(model_request(parameters={parameter: "provider-state"}))
+
+    assert raised.value.code == "invalid_configuration"
+    assert raised.value.recoverable is False
+    assert transport.requests == []
+
+
+def test_nonfinite_assembled_input_is_a_permanent_normalized_failure():
+    request = model_request()
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "nonFinite": float("nan")},
+        correlation=request.correlation,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([success()])).invoke(request)
+
+    assert raised.value.code == "invalid_configuration"
+    assert raised.value.recoverable is False
 
 
 def test_unsupported_provider_and_missing_credentials_fail_fast(tmp_path: Path):

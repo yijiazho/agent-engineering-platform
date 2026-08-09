@@ -136,7 +136,7 @@ def test_adapter_configuration_failure_terminalizes_both_invocations() -> None:
         model_ref={"kind": "Model", "name": "test-model", "version": "1.0.0"},
         provider="openai",
         model="gpt-5",
-        parameters={"text": "must-not-override-structured-output"},
+        parameters={"previous_response_id": "must-not-use-provider-state"},
     )
     agent = resolved_agent()
     agent["modelParameters"] = dict(configuration.parameters)
@@ -164,7 +164,7 @@ def test_adapter_configuration_failure_terminalizes_both_invocations() -> None:
     assert result["status"] == "FAILED"
     assert result["failure"] == {
         "class": "PERMANENT",
-        "message": "model provider configuration overrides bounded fields",
+        "message": "model provider configuration contains unsupported parameters",
         "retryable": False,
     }
     assert model is not None and model["status"] == "FAILED"

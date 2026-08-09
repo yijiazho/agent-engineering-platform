@@ -12,6 +12,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import re
 from threading import Event, Thread
 import time
 from typing import Any, Protocol
@@ -32,7 +33,8 @@ from aep.model_invocation import (
 _DEFAULT_API_URL = "https://api.openai.com/v1"
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
-_RESERVED_PARAMETERS = frozenset({"model", "input", "max_output_tokens", "text"})
+_ALLOWED_PARAMETERS = frozenset({"temperature", "top_p"})
+_PROVIDER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 
 
 class ModelProviderConfigurationError(ValueError):
@@ -220,38 +222,47 @@ class OpenAIModelAdapter(ModelAdapter):
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
             )
-        collisions = _RESERVED_PARAMETERS.intersection(configuration.parameters)
-        if collisions:
+        unsupported_parameters = set(configuration.parameters) - _ALLOWED_PARAMETERS
+        if unsupported_parameters:
             raise ModelInvocationError(
-                "model provider configuration overrides bounded fields",
+                "model provider configuration contains unsupported parameters",
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
             )
 
         timeout_ms = configuration.timeout_ms or 60_000
         deadline = self._monotonic() + timeout_ms / 1000
-        payload: dict[str, Any] = {
-            "model": configuration.model,
-            "input": json.dumps(
-                dict(request.input),
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=True,
-                allow_nan=False,
-            ),
-            "text": {
-                "format": {
-                    "type": "json_schema",
-                    "name": "aep_structured_output",
-                    "schema": _provider_schema(request.input["outputSchema"]),
-                    "strict": True,
-                }
-            },
-            **dict(configuration.parameters),
-        }
-        if configuration.token_limit is not None:
-            payload["max_output_tokens"] = configuration.token_limit
-        encoded = json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        try:
+            payload: dict[str, Any] = {
+                "model": configuration.model,
+                "input": json.dumps(
+                    dict(request.input),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=True,
+                    allow_nan=False,
+                ),
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "aep_structured_output",
+                        "schema": _provider_schema(request.input["outputSchema"]),
+                        "strict": True,
+                    }
+                },
+                **dict(configuration.parameters),
+            }
+            if configuration.token_limit is not None:
+                payload["max_output_tokens"] = configuration.token_limit
+            encoded = json.dumps(
+                payload, separators=(",", ":"), allow_nan=False
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            raise ModelInvocationError(
+                "model provider configuration cannot be serialized safely",
+                classification=ModelErrorClass.PERMANENT,
+                code="invalid_configuration",
+            ) from None
         attempts: list[dict[str, Any]] = []
         started = self._monotonic()
 
@@ -306,7 +317,7 @@ class OpenAIModelAdapter(ModelAdapter):
                     provider_metadata={
                         **dict(failure.provider_metadata),
                         "provider": "openai",
-                        "model": configuration.model,
+                        "requestedModel": configuration.model,
                         "requestId": request_id,
                         "attemptCount": attempt,
                         "attempts": attempts,
@@ -323,7 +334,7 @@ class OpenAIModelAdapter(ModelAdapter):
                     code="timeout",
                     provider_metadata={
                         "provider": "openai",
-                        "model": configuration.model,
+                        "requestedModel": configuration.model,
                         "requestId": request_id,
                         "attemptCount": attempt,
                         "attempts": attempts,
@@ -388,14 +399,11 @@ def _successful_response(
     if not isinstance(document, Mapping):
         raise _malformed()
     request_id = _safe_provider_id(document.get("id")) or _request_id(response.headers)
-    actual_model = document.get("model")
-    if actual_model != requested_model:
-        raise ModelInvocationError(
-            "model provider returned a different model identity",
-            classification=ModelErrorClass.PERMANENT,
-            code="model_identity_mismatch",
-            provider_metadata={"provider": "openai", "model": requested_model, "requestId": request_id},
-        )
+    provider_model = document.get("model")
+    if not isinstance(provider_model, str) or not _PROVIDER_MODEL_PATTERN.fullmatch(
+        provider_model
+    ):
+        raise _malformed(request_id=request_id, model=requested_model)
     status = document.get("status")
     refusal = _refusal(document)
     if refusal:
@@ -403,21 +411,27 @@ def _successful_response(
             "model provider refused the structured request",
             classification=ModelErrorClass.PERMANENT,
             code="safety_refusal",
-            provider_metadata={"provider": "openai", "model": requested_model, "requestId": request_id, "finishReason": "refusal"},
+            provider_metadata=_response_metadata(
+                requested_model, provider_model, request_id, finish_reason="refusal"
+            ),
         )
     if status == "failed":
         raise ModelInvocationError(
             "model provider failed the structured request",
             classification=ModelErrorClass.PERMANENT,
             code="provider_error",
-            provider_metadata={"provider": "openai", "model": requested_model, "requestId": request_id, "finishReason": "failed"},
+            provider_metadata=_response_metadata(
+                requested_model, provider_model, request_id, finish_reason="failed"
+            ),
         )
     if status != "completed":
         raise ModelInvocationError(
             "model provider returned an incomplete response",
             classification=ModelErrorClass.RECOVERABLE,
             code="incomplete_response",
-            provider_metadata={"provider": "openai", "model": requested_model, "requestId": request_id, "finishReason": "incomplete"},
+            provider_metadata=_response_metadata(
+                requested_model, provider_model, request_id, finish_reason="incomplete"
+            ),
         )
     output_text = _output_text(document)
     try:
@@ -437,7 +451,8 @@ def _successful_response(
         latency_ms=max(0, latency_ms),
         provider_metadata={
             "provider": "openai",
-            "model": requested_model,
+            "requestedModel": requested_model,
+            "providerModel": provider_model,
             "requestId": request_id,
             "finishReason": "completed",
             "attemptCount": attempt_count,
@@ -507,13 +522,29 @@ def _failure(code: str, *, recoverable: bool) -> ModelInvocationError:
 def _malformed(*, request_id: str | None = None, model: str | None = None) -> ModelInvocationError:
     metadata = {"provider": "openai", "requestId": request_id}
     if model is not None:
-        metadata["model"] = model
+        metadata["requestedModel"] = model
     return ModelInvocationError(
         "model provider returned a malformed structured response",
         classification=ModelErrorClass.PERMANENT,
         code="malformed_response",
         provider_metadata=metadata,
     )
+
+
+def _response_metadata(
+    requested_model: str,
+    provider_model: str,
+    request_id: str | None,
+    *,
+    finish_reason: str,
+) -> dict[str, Any]:
+    return {
+        "provider": "openai",
+        "requestedModel": requested_model,
+        "providerModel": provider_model,
+        "requestId": request_id,
+        "finishReason": finish_reason,
+    }
 
 
 def _request_id(headers: Mapping[str, str]) -> str | None:

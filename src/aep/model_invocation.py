@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from math import isfinite
 from types import MappingProxyType
 from typing import Any
 
@@ -48,6 +49,11 @@ class ModelConfiguration:
             raise ValueError("token_limit must be positive")
         if self.timeout_ms is not None and self.timeout_ms < 1:
             raise ValueError("timeout_ms must be positive")
+        if any(
+            isinstance(value, float) and not isfinite(value)
+            for value in self.parameters.values()
+        ):
+            raise ValueError("parameters values must be finite")
         retry_policy = dict(self.retry_policy)
         unknown_retry_fields = set(retry_policy) - {"maxAttempts", "backoffMs"}
         if unknown_retry_fields:

@@ -22,11 +22,14 @@ spec:
     backoffMs: 1000
 ```
 
-The adapter passes `parameters` to the Responses API unchanged. The names
-`model`, `input`, `max_output_tokens`, and `text` are adapter-owned and cannot
-be overridden through `parameters`. `tokenLimit` becomes
-`max_output_tokens`; `timeoutMs` is one deadline across all attempts; and
-`retryPolicy` is the maximum attempt and backoff bound. The adapter requests
+The live adapter accepts only the stateless generation parameters
+`temperature` and `top_p`; their values must be finite. All other parameter
+names, including state-bearing Responses options such as
+`previous_response_id` and `conversation`, fail permanently before a provider
+request. This prevents provider-side conversation state from changing an
+invocation outside its assembled, content-addressed ModelRequest. `tokenLimit`
+becomes `max_output_tokens`; `timeoutMs` is one deadline across all attempts;
+and `retryPolicy` is the maximum attempt and backoff bound. The adapter requests
 strict JSON Schema output using the provider-supported structural projection
 of the ResolvedAgent output schema. Unsupported generation hints such as
 `minLength` and `uniqueItems` are omitted only from the provider request. A
@@ -82,24 +85,32 @@ by a bounded live invocation.
 
 ## Failure And Evidence Contract
 
-Success evidence records provider request ID, requested model identity, token
-usage, latency, finish state, and attempt count. The ModelInvocation separately
-records the exact provider, model, parameters, token limit, timeout, and retry
-policy resolved from the versioned Model Resource. Input and output bodies are
-represented by content addresses in lifecycle evidence.
+Success evidence records provider request ID, the requested Model Resource
+identity, the provider-resolved model identity, token usage, latency, finish
+state, and attempt count. OpenAI aliases such as `gpt-5` may resolve to a
+dated snapshot; this is recorded as `requestedModel` and `providerModel`
+instead of rejecting a valid alias response. Provider model IDs must match a
+tightly bounded identifier format before entering evidence. The
+ModelInvocation separately records the exact provider, model, parameters,
+token limit, timeout, and retry policy resolved from the versioned Model
+Resource. Input and output bodies are represented by content addresses in
+lifecycle evidence.
 
 Provider request IDs from response headers and bodies are always represented
 by a deterministic `redacted:sha256:` identity before they enter attempt
 metadata, runtime persistence, or lifecycle logs. This retains correlation
 without trusting any provider-controlled string as safe evidence.
-Adapter-owned parameter collisions and other invocation-time configuration
-failures are permanent classified model failures, so both ModelInvocation and
-AgentInvocation evidence becomes terminal.
+Unsupported parameters and other invocation-time configuration failures are
+permanent classified model failures, so both ModelInvocation and
+AgentInvocation evidence becomes terminal. Non-finite Resource parameter
+values are rejected during Model configuration, before runtime records are
+created; unsafe serialization discovered later is normalized to the same
+terminal failure path.
 
 Timeouts, rate limits, incomplete responses, and retryable provider or
 transport failures are recoverable only within the Resource retry/deadline
 bounds. Authentication failures, unsupported configuration, safety refusals,
-model-identity mismatches, rejected requests, and malformed structured output
-are permanent. Provider error bodies and transport exception text are reduced
+rejected requests, and malformed structured output are permanent. Provider
+error bodies and transport exception text are reduced
 to fixed diagnostics so credentials, prompts, ContextPackage bodies, and
 model output bodies do not enter exceptions or lifecycle logs.

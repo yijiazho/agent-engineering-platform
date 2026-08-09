@@ -76,13 +76,20 @@ Provider-controlled request IDs become deterministic redacted hashes before
 persistence or logging. Invocation-time configuration failures are normalized
 as permanent Model failures so the coordinator terminalizes both invocation
 records.
+The adapter permits only finite, stateless generation parameters and rejects
+provider conversation handles such as `previous_response_id` and
+`conversation`. It records the configured alias and provider-resolved snapshot
+separately, allowing normal OpenAI alias resolution without weakening model
+identity evidence. Configuration rejects non-finite numeric parameters before
+runtime mutation, while serialization failures are also normalized as
+permanent terminal failures.
 The urllib transport enforces the remaining Model deadline across connection
 and incremental response reads through a cancellable worker, preventing slow
 streams from extending the invocation indefinitely. Redirect handling is
 disabled, so credentials are never forwarded to a different or downgraded
 origin.
 Offline scripted-transport tests cover structured success, bounds and usage,
-timeouts, transient retry, rate limiting, refusal, malformed output, model
-identity mismatch, configuration failure, and redaction. The operator guide
-documents secret injection and a credential-free, network-free verification
-path.
+timeouts, transient retry, rate limiting, refusal, malformed output, alias
+resolution, stateless configuration enforcement, and redaction. The operator
+guide documents secret injection and a credential-free, network-free
+verification path.

@@ -142,3 +142,14 @@ def test_request_copies_mutable_configuration_and_input() -> None:
 
     assert configuration.model_ref["name"] == "test-model"
     assert model_request.input["messages"] == ["original"]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_configuration_rejects_nonfinite_parameters(value: float) -> None:
+    with pytest.raises(ValueError, match="must be finite"):
+        ModelConfiguration(
+            model_ref={"kind": "Model", "name": "test-model", "version": "1.0.0"},
+            provider="openai",
+            model="gpt-5",
+            parameters={"temperature": value},
+        )
