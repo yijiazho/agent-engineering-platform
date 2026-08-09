@@ -1,0 +1,111 @@
+# GitHub App Provider Operations
+
+The AEP GitHub provider binds one deployment to one installed GitHub App and
+one repository. The App authenticates GitHub API issue reads and pull-request
+creation, repository source fetches, and execution-branch pushes. It does not
+authorize those actions: Publication Policy and the separate `git.push` and
+`github.create_pr` capability decisions remain mandatory Tool Runtime gates.
+
+## Create And Install The App
+
+Create a GitHub App owned by the repository owner and configure its webhook to
+send JSON to:
+
+```text
+https://<event-controller>/v1/webhooks/github
+```
+
+Set a webhook secret and subscribe only to **Issues**. AEP accepts the
+`issues/opened` action; the App does not need Push or Pull request webhook
+subscriptions for the MVP.
+
+Grant these repository permissions and no organization or account permissions:
+
+| Repository permission | Access | Used for |
+| --- | --- | --- |
+| Metadata | Read | Installation and repository identity |
+| Issues | Read | Triggering issue retrieval |
+| Contents | Read and write | Default-branch fetch and execution-branch push |
+| Pull requests | Read and write | Duplicate lookup and PR creation |
+
+Install the App on **Only select repositories**, select the bound repository,
+and record the numeric App ID. AEP resolves the installation through
+`GET /repos/{owner}/{repository}/installation`; operators do not configure or
+persist an installation token or installation ID.
+
+## Supply Runtime Secrets And Binding
+
+Mount the App's unencrypted PEM private key as a read-only secret file. Keep it
+separate from the webhook HMAC secret. Configure the provider process with:
+
+```text
+AEP_GITHUB_APP_ID=<numeric-app-id>
+AEP_GITHUB_APP_PRIVATE_KEY_FILE=/run/secrets/github-app-private-key.pem
+AEP_REPOSITORY_OWNER=<owner>
+AEP_REPOSITORY_NAME=<repository>
+AEP_REPOSITORY_DEFAULT_BRANCH=main
+AEP_STATE_ROOT=/var/lib/aep
+```
+
+`AEP_GITHUB_API_URL` defaults to `https://api.github.com` and may identify a
+trusted GitHub Enterprise API endpoint. `AEP_GITHUB_AUTHORIZED_BRANCH_PREFIX`
+defaults to `aep/execution/`. The standard environment factory rejects missing
+inputs, non-HTTPS API URLs, invalid App IDs, and inconsistent provider
+bindings. Never put these values, the PEM content, webhook secret, JWTs, or
+installation tokens in `.ai/` Resources.
+
+At startup, construct the provider with
+`github_app_provider_from_environment`. Its bundle supplies:
+
+* `client` to `GitHubToolAdapter`;
+* `credentials` to both `GitToolAdapter` and `ExecutionCheckoutManager`; and
+* `readiness()` for a credential-safe installation diagnostic.
+
+Readiness must report `READY`, provider, repository, App ID, installation ID,
+base branch, and authorized branch prefix. It never reports secret paths,
+private-key material, JWTs, or installation tokens. A failed installation
+lookup keeps the provider unready. Every readiness probe revalidates the
+repository installation; an uninstall, suspension, or replacement installation
+therefore cannot remain hidden behind a process-local identity cache.
+
+## Token And Mutation Behavior
+
+The provider signs a GitHub App JWT only at the authentication boundary,
+requests a repository-restricted installation token, and renews it before
+expiry under a concurrency lock. API authentication failure discards the
+cached token. Git credential leases inject a token through a temporary askpass
+program and process environment; the checkout remote URL and Git command
+arguments never contain credentials. Each lease clears its environment and
+removes its askpass program after fetch or push.
+
+Before PR creation, the Tool Runtime verifies the immutable publication
+evidence graph and matching successful push. The provider then independently
+checks the repository, execution-branch prefix, and base branch. It queries for
+an existing PR with the same owner/head/base before posting, making a retry
+reconcile rather than duplicate the PR. Timeouts and retryable server responses
+after a PR POST are recorded as an unknown mutation outcome and are not
+automatically replayed.
+
+One monotonic deadline covers installation lookup, token creation, duplicate
+lookup, and PR creation. Each request receives only the remaining time. A
+timeout before the PR POST begins is `NOT_ATTEMPTED` and may be retried; a
+timeout after the POST begins is `UNKNOWN` and requires reconciliation.
+This includes transport failure, oversized or malformed successful responses,
+and any other condition that prevents confirmation after the POST starts.
+Installation lookup and installation-token transport timeouts preserve timeout
+classification through the Tool boundary rather than becoming provider errors.
+
+## Rotate Or Revoke Credentials
+
+To rotate the App private key:
+
+1. Generate a second private key in GitHub App settings.
+2. Atomically replace the mounted secret file and restart or roll the provider
+   processes so no process retains an old file handle.
+3. Require readiness to resolve the same repository and installation identity.
+4. Delete the old private key in GitHub only after every process is ready.
+
+Installation tokens expire automatically and are never operator-managed. To
+revoke access immediately, suspend or uninstall the App from the repository,
+then stop AEP workers. Reinstalling or changing selected repositories requires
+a fresh readiness check before webhook delivery is enabled.

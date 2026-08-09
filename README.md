@@ -384,6 +384,14 @@ secrets, or provider credentials to `.ai/` Resources. Credentials should be
 short-lived where the provider supports it and must remain outside Tool input,
 output, logs, and GeneratedArtifact bodies.
 
+The concrete repository-bound provider uses GitHub App installation tokens for
+both API calls and ephemeral Git askpass leases. It performs duplicate-PR
+reconciliation before creation, caches tokens only until their refresh window,
+and exposes a secret-free App/installation readiness diagnostic. See the
+[GitHub App operator guide](docs/operations/github-app.md) for exact webhook
+subscription, least-privilege permissions, runtime inputs, installation, and
+key-rotation procedures.
+
 ### 4. Process The Issue Into A Pull Request
 
 For an accepted event, the controllers perform the following bounded flow:
@@ -532,10 +540,12 @@ Implemented foundations currently include:
 * Trusted, revision-bound execution-checkout provisioning with provider-neutral
   repository sources and credential leases, atomic execution ownership,
   isolated deterministic branches, and evidence-gated cleanup and recovery.
+* A repository-bound GitHub App provider with renewable installation-token
+  caching, live issue/PR REST operations, duplicate reconciliation, scoped Git
+  credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work includes a complete self-hosting Resource bundle, live
-GitHub and Model provider integrations, and dogfood deployment required to
+The remaining work includes a live Model provider integration and dogfood deployment required to
 register this repository with a running AEP control plane. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.

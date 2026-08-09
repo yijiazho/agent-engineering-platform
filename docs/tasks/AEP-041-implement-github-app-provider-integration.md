@@ -1,6 +1,6 @@
 # AEP-041: Implement GitHub App Provider Integration
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -61,3 +61,29 @@ Implement a GitHub App integration that:
 * Operator documentation lists the GitHub App webhook subscription, repository
   permissions, secret inputs, installation procedure, and credential rotation
   process.
+
+## Implementation Notes
+
+`aep.github_app_provider` implements repository-bound GitHub App JWT signing,
+installation resolution, concurrency-safe renewable token caching, a bounded
+HTTP transport, the existing GitHub client operations, duplicate pull-request
+reconciliation, one-use Git askpass credential leases for checkout fetch and
+Tool push, safe failure classification, and credential-free readiness. The
+environment factory fails closed over explicit repository, App, key-file,
+default-branch, state-root, API, and branch-prefix inputs.
+Sequential provider calls share one monotonic deadline and receive only its
+remaining budget. Readiness revalidates installation identity on every probe,
+and authentication or installation failures invalidate cached identity.
+Pull-request timeout evidence distinguishes pre-mutation `NOT_ATTEMPTED` from
+post-POST `UNKNOWN` state. All unconfirmed post-POST failures, including
+malformed successful responses, retain that unknown state, while installation
+lookup and token-request transport timeouts remain Tool `TIMED_OUT` results.
+
+The existing GitHub Tool remains responsible for immutable publication
+evidence and Publication Policy plus `github.create_pr` authorization; the Git
+Tool separately requires `git.push` and retains `UNKNOWN` for ambiguous pushes.
+Provider tests use a scripted transport and local bare Git remote to cover
+renewal, concurrency, issue read, authorized push, successful PR creation,
+duplicate reconciliation, rate limiting, binding denial, redaction, and
+ambiguous mutation without live credentials. Operator setup and rotation are
+documented in `docs/operations/github-app.md`.

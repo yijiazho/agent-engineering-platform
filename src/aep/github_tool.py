@@ -120,7 +120,16 @@ _ATTEMPT_SCHEMA = {
         "attempt": {"type": "integer", "minimum": 1},
         "providerRequestId": {"type": ["string", "null"]},
         "classification": {
-            "enum": ["SUCCESS", "RATE_LIMIT", "PROVIDER", "TIMEOUT"]
+            "enum": [
+                "SUCCESS",
+                "AUTHENTICATION",
+                "AUTHORIZATION",
+                "VALIDATION",
+                "RATE_LIMIT",
+                "PROVIDER",
+                "AMBIGUOUS_MUTATION",
+                "TIMEOUT",
+            ]
         },
         "retryable": {"type": "boolean"},
         "retryAfterMs": {"type": ["integer", "null"], "minimum": 0},
@@ -231,6 +240,8 @@ class GitHubClient(Protocol):
 
 
 class GitHubProviderError(RuntimeError):
+    classification = "PROVIDER"
+
     def __init__(
         self,
         message: str,
@@ -246,6 +257,8 @@ class GitHubProviderError(RuntimeError):
 
 
 class GitHubRateLimitError(GitHubProviderError):
+    classification = "RATE_LIMIT"
+
     def __init__(
         self,
         message: str = "GitHub rate limit exceeded",
@@ -696,9 +709,7 @@ class _GitHubExecution(ToolExecution):
         )
 
     def _failure(self, error: GitHubProviderError) -> ToolResult:
-        category = (
-            "RATE_LIMIT" if isinstance(error, GitHubRateLimitError) else "PROVIDER"
-        )
+        category = error.classification
         return self._result(
             ToolResultStatus.FAILED,
             {
@@ -706,6 +717,11 @@ class _GitHubExecution(ToolExecution):
                 "repository": self._request.input["repository"],
                 "failure": {
                     "category": category,
+                    "mutationState": (
+                        "UNKNOWN"
+                        if error.classification == "AMBIGUOUS_MUTATION"
+                        else "NOT_ATTEMPTED"
+                    ),
                     "retryable": error.retryable,
                     "retryAfterMs": error.retry_after_ms,
                     "attemptCount": len(self._attempts),
@@ -728,6 +744,7 @@ class _GitHubExecution(ToolExecution):
         request_id = getattr(self._current, "request_id", None)
         ambiguous_publication = (
             self._request.input["operation"] == CREATE_PULL_REQUEST
+            and bool(getattr(self._current, "mutation_started", True))
         )
         self._attempts.append(
             {
@@ -746,6 +763,9 @@ class _GitHubExecution(ToolExecution):
                 "repository": self._request.input["repository"],
                 "failure": {
                     "category": "TIMEOUT",
+                    "mutationState": (
+                        "UNKNOWN" if ambiguous_publication else "NOT_ATTEMPTED"
+                    ),
                     "retryable": not ambiguous_publication,
                     "ambiguousPublication": ambiguous_publication,
                     "attemptCount": len(self._attempts),
@@ -837,9 +857,7 @@ def _attempt_record(attempt: int, error: GitHubProviderError) -> dict[str, Any]:
     return {
         "attempt": attempt,
         "providerRequestId": error.request_id,
-        "classification": (
-            "RATE_LIMIT" if isinstance(error, GitHubRateLimitError) else "PROVIDER"
-        ),
+        "classification": error.classification,
         "retryable": error.retryable,
         "retryAfterMs": error.retry_after_ms,
         "outcome": "FAILED",

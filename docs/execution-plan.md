@@ -162,7 +162,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 38 | [AEP-038: Implement Authenticated GitHub Webhook Ingress](tasks/AEP-038-implement-authenticated-github-webhook-ingress.md) | Completed |
 | 39 | [AEP-039: Provision Revision-Bound Execution Checkouts](tasks/AEP-039-provision-revision-bound-execution-checkouts.md) | Completed |
 | 40 | [AEP-040: Create Self-Hosting Resource Bundle](tasks/AEP-040-create-self-hosting-resource-bundle.md) | Completed |
-| 41 | [AEP-041: Implement GitHub App Provider Integration](tasks/AEP-041-implement-github-app-provider-integration.md) | Not Started |
+| 41 | [AEP-041: Implement GitHub App Provider Integration](tasks/AEP-041-implement-github-app-provider-integration.md) | Completed |
 | 42 | [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md) | Not Started |
 | 43 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | Not Started |
 
@@ -212,7 +212,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-038 | AEP-005, AEP-006, AEP-007, AEP-008, AEP-035, AEP-036 | Completed |
 | AEP-039 | AEP-015, AEP-021, AEP-022, AEP-035, AEP-036 | Completed |
 | AEP-040 | AEP-003, AEP-017, AEP-020, AEP-025, AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
-| AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Not Started |
+| AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Completed |
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Not Started |
 | AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Not Started |
 
