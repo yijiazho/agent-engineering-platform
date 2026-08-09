@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Tool","metadata":{"name":"git","version":"1.0.0"},"spec":{"category":"execution","capabilities":["git.read","git.push"],"inputSchema":{"type":"object"},"outputSchema":{"type":"object"}}}

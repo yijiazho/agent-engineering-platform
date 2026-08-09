@@ -1,0 +1,7 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Policy",
+  "metadata": {"name": "agent-safety", "version": "1.0.0"},
+  "spec": {"type": "pre-execution-capability", "rules": [
+    {"effect": "deny", "capabilities": ["repository.retrieve", "secret.read", "github.merge_pr", "deployment.create"], "reason": "Agents cannot retrieve repository data, access secrets, merge, or deploy."}
+  ]}
+}

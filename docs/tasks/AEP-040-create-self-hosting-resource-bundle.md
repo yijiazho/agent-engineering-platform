@@ -1,6 +1,6 @@
 # AEP-040: Create Self-Hosting Resource Bundle
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 

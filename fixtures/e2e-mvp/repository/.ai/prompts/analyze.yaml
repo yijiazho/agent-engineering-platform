@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Prompt","metadata":{"name":"analyze","version":"1.0.0"},"spec":{"system":"Analyze only the supplied ContextPackage.","formatting":"Return structured JSON."}}

@@ -1,0 +1,11 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
+  "metadata": {"name": "git", "version": "2.0.0", "description": "Revision-bound commit and branch push used only by CreatePullRequest."},
+  "spec": {
+    "category": "external-service", "capabilities": ["git.push"],
+    "inputSchema": {"type": "object", "required": ["operation", "expectedRevision", "branch"], "properties": {"operation": {"type": "string", "enum": ["commit_changes", "push_branch"]}, "expectedRevision": {"type": "string", "minLength": 7}, "branch": {"type": "string", "minLength": 1}}},
+    "outputSchema": {"type": "object"},
+    "permissions": ["repository:push-branch"], "timeoutMs": 60000,
+    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000}
+  }
+}

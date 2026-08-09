@@ -1,0 +1,5 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt",
+  "metadata": {"name": "issue-analysis", "version": "1.0.0"},
+  "spec": {"system": "Analyze only the supplied, revision-bound ContextPackage. Do not request repository access or invent requirements. Return a concise change statement, testable acceptance criteria, risks, and likely repository areas.", "formatting": "Return only JSON matching the Task output schema."}
+}

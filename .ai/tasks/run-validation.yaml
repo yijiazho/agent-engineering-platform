@@ -1,0 +1,25 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
+  "metadata": {"name": "run-validation", "version": "1.0.0"},
+  "spec": {
+    "objective": "Compile and run the locked repository test suite in an isolated, network-disabled container.",
+    "outputs": {"type": "object"},
+    "requiredContext": ["prior-artifacts", "policies"],
+    "evaluations": [
+      {"kind": "Evaluation", "name": "repository-build", "version": "1.0.0"},
+      {"kind": "Evaluation", "name": "repository-tests", "version": "1.0.0"}
+    ],
+    "policies": [{"kind": "Policy", "name": "validation-capabilities", "version": "1.0.0"}],
+    "validation": {
+      "toolRef": {"kind": "Tool", "name": "docker-validation", "version": "1.0.0"},
+      "image": "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+      "commands": [
+        {"type": "build", "argv": ["python", "/workspace/deploy/validation/offline_bootstrap.py", "--workspace", "/workspace"]},
+        {"type": "test", "argv": ["python", "-m", "pytest", "/workspace/tests"]}
+      ],
+      "workspaceMount": {"containerPath": "/workspace", "readOnly": false},
+      "resources": {"cpuLimit": 2, "memoryBytes": 1073741824},
+      "timeoutMs": 600000
+    }
+  }
+}

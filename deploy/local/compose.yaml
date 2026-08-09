@@ -30,6 +30,10 @@ services:
       <<: *aep-environment
       AEP_SERVICE_NAME: "event-controller"
       AEP_SERVICE_PORT: "8081"
+      AEP_GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github_webhook_secret
+      AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES: ${AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES:-1048576}
+    secrets:
+      - github_webhook_secret
     ports:
       - "8081:8081"
     healthcheck:
@@ -110,3 +114,7 @@ services:
 
 volumes:
   aep-state:
+
+secrets:
+  github_webhook_secret:
+    file: ${AEP_GITHUB_WEBHOOK_SECRET_FILE:-./secrets/github-webhook-secret.txt}

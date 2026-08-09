@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Policy","metadata":{"name":"workspace-write","version":"1.0.0"},"spec":{"type":"pre-execution-capability","rules":[{"effect":"allow","capabilities":["filesystem.write","git.read"],"reason":"Allow fixture patch generation."}]}}

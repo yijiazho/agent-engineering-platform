@@ -1,0 +1,16 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
+  "metadata": {"name": "generate-patch", "version": "1.0.0"},
+  "spec": {
+    "objective": "Generate only the file changes authorized by the evaluated implementation plan.",
+    "agentRef": {"kind": "Agent", "name": "code-generator", "version": "1.0.0"},
+    "outputs": {
+      "type": "object", "additionalProperties": false, "required": ["changes"],
+      "properties": {"changes": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["path", "content"], "properties": {"path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}}}}
+    },
+    "requiredContext": ["repository-inventory", "candidate-files", "documentation", "dependency-manifests", "test-hints", "knowledge", "policies", "prior-artifacts"],
+    "knowledgeBases": [{"kind": "KnowledgeBase", "name": "aep-repository", "version": "1.0.0"}],
+    "evaluations": [{"kind": "Evaluation", "name": "patch-safety", "version": "1.0.0"}],
+    "policies": [{"kind": "Policy", "name": "workspace-write", "version": "1.0.0"}]
+  }
+}

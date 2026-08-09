@@ -1,0 +1,5 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Evaluation",
+  "metadata": {"name": "workflow-acceptance", "version": "1.0.0"},
+  "spec": {"type": "acceptance", "successCriteria": ["Issue analysis, implementation plan, patch, build, and test evidence are present and revision-consistent.", "Every required upstream EvaluationResult passed.", "No LLM or publication action is used to determine acceptance."]}
+}

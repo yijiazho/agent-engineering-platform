@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Model","metadata":{"name":"fixture-model","version":"1.0.0"},"spec":{"provider":"local","model":"fixture-model-v1","parameters":{"temperature":0},"tokenLimit":1024,"timeoutMs":1000}}

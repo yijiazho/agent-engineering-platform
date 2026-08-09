@@ -1,0 +1,10 @@
+{
+  "id": "event-self-hosting-0001",
+  "source": "github",
+  "type": "github.issue.created",
+  "repository": {"owner": "yijiazho", "name": "agent-engineering-platform"},
+  "issue": {"number": 40, "title": "Exercise the self-hosting workflow", "body": "Run the deterministic bundle checks."},
+  "sender": {"login": "maintainer"},
+  "receivedAt": "2026-08-07T00:00:00Z",
+  "deduplicationKey": "github:delivery:self-hosting-0001"
+}

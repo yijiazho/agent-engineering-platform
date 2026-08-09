@@ -1,0 +1,11 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
+  "metadata": {"name": "github", "version": "1.0.0", "description": "Create one evidence-bound pull request; merging is not supported."},
+  "spec": {
+    "category": "external-service", "capabilities": ["github.create_pr"],
+    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "repository", "head", "base", "title", "body", "publicationEvidence"], "properties": {"operation": {"const": "createPullRequest"}, "repository": {"type": "string", "minLength": 3}, "head": {"type": "string", "minLength": 1}, "base": {"type": "string", "minLength": 1}, "title": {"type": "string", "minLength": 1}, "body": {"type": "string"}, "issueNumber": {"type": "integer", "minimum": 1}, "publicationEvidence": {"type": "object"}}},
+    "outputSchema": {"type": "object"},
+    "permissions": ["github:pull-request:create"], "timeoutMs": 60000,
+    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000}
+  }
+}
