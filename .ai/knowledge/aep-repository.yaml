@@ -1,0 +1,17 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "KnowledgeBase",
+  "metadata": {"name": "aep-repository", "version": "1.0.0", "description": "Maintained and derived knowledge for this repository at the WorkflowExecution revision."},
+  "spec": {
+    "sources": [
+      {"type": "docs", "path": "README.md"},
+      {"type": "docs", "path": "docs/architecture/"},
+      {"type": "adr", "path": "docs/adr/"},
+      {"type": "docs", "path": "docs/tasks/"},
+      {"type": "repository", "path": "schemas/"},
+      {"type": "repository", "path": "src/"},
+      {"type": "repository", "path": "tests/"}
+    ],
+    "indexing": {"strategy": "hybrid"},
+    "refreshPolicy": "on-change", "visibility": "workspace"
+  }
+}

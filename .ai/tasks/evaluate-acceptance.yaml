@@ -1,0 +1,10 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
+  "metadata": {"name": "evaluate-acceptance", "version": "1.0.0"},
+  "spec": {
+    "objective": "Deterministically aggregate revision-bound analysis, plan, patch, build, and test evidence.",
+    "outputs": {"type": "object", "additionalProperties": false, "required": ["outcome", "supportingEvidence"], "properties": {"outcome": {"type": "string", "enum": ["PASS", "FAIL"]}, "supportingEvidence": {"type": "array", "items": {"type": "string", "minLength": 1}}}},
+    "requiredContext": ["prior-artifacts"],
+    "evaluations": [{"kind": "Evaluation", "name": "workflow-acceptance", "version": "1.0.0"}]
+  }
+}

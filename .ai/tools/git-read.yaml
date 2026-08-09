@@ -1,0 +1,11 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
+  "metadata": {"name": "git", "version": "1.0.0", "description": "Read-only Git evidence for patch generation."},
+  "spec": {
+    "category": "execution", "capabilities": ["git.read"],
+    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "expectedRevision", "branch"], "properties": {"operation": {"type": "string", "enum": ["status", "diff"]}, "expectedRevision": {"type": "string", "minLength": 7}, "branch": {"type": "string", "minLength": 1}}},
+    "outputSchema": {"type": "object"},
+    "permissions": ["repository:read"], "timeoutMs": 10000,
+    "retryPolicy": {"maxAttempts": 1}
+  }
+}

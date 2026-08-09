@@ -1,0 +1,11 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
+  "metadata": {"name": "filesystem", "version": "1.0.0", "description": "Workspace-confined file writes selected by the evaluated implementation plan."},
+  "spec": {
+    "category": "execution", "capabilities": ["filesystem.write"],
+    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "path", "content"], "properties": {"operation": {"const": "write"}, "path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}},
+    "outputSchema": {"type": "object"},
+    "permissions": ["workspace:write"], "timeoutMs": 5000,
+    "retryPolicy": {"maxAttempts": 1}
+  }
+}

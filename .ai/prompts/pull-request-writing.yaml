@@ -1,0 +1,5 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt",
+  "metadata": {"name": "pull-request-writing", "version": "1.0.0"},
+  "spec": {"system": "Summarize only the supplied issue, evaluated plan, patch, and validation evidence for human review. Never claim tests passed unless the evidence says they passed. The pull request remains unmerged.", "formatting": "Return only JSON with title and body matching the Agent output schema."}
+}

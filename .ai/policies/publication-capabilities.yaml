@@ -1,0 +1,7 @@
+{
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Policy",
+  "metadata": {"name": "publication-capabilities", "version": "1.0.0"},
+  "spec": {"type": "pre-execution-capability", "rules": [
+    {"effect": "allow", "capabilities": ["git.push", "github.create_pr"], "reason": "CreatePullRequest may publish only after its deterministic evidence and Publication Policy gates pass."}
+  ]}
+}

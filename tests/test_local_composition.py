@@ -19,6 +19,7 @@ from aep.local_service import (
     LocalServiceRuntime,
     MVP_SERVICE_PORTS,
 )
+from aep.resource_loader import ResourceLoader, format_ref
 from aep.github_webhook import WEBHOOK_PATH
 
 
@@ -46,12 +47,10 @@ def test_smoke_starts_all_services_and_resolves_basic_resources(tmp_path: Path) 
         with urlopen(f"{resource_address}/v1/resources", timeout=2) as response:
             resolved = json.load(response)
 
+    loaded = ResourceLoader(REPOSITORY_ROOT).load()
     assert resolved == {
         "workspace": "Workspace/agent-engineering-platform:1.0.0",
-        "resources": [
-            "Workspace/agent-engineering-platform:1.0.0",
-            "Event/github-issue-created:1.0.0",
-        ],
+        "resources": [format_ref(resource.ref) for resource in loaded.resources],
     }
     for service_name in MVP_SERVICE_PORTS:
         marker = json.loads((tmp_path / service_name / "ready.json").read_text())
