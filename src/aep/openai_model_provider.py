@@ -239,10 +239,12 @@ class OpenAIModelAdapter(ModelAdapter):
         timeout_ms = configuration.timeout_ms
         deadline = self._monotonic() + timeout_ms / 1000
         try:
+            instructions, provider_input = _provider_input(request.input)
             payload: dict[str, Any] = {
                 "model": configuration.model,
+                "instructions": instructions,
                 "input": json.dumps(
-                    dict(request.input),
+                    provider_input,
                     sort_keys=True,
                     separators=(",", ":"),
                     ensure_ascii=True,
@@ -263,7 +265,7 @@ class OpenAIModelAdapter(ModelAdapter):
             encoded = json.dumps(
                 payload, separators=(",", ":"), allow_nan=False
             ).encode("utf-8")
-        except (TypeError, ValueError):
+        except (KeyError, TypeError, ValueError):
             raise ModelInvocationError(
                 "model provider configuration cannot be serialized safely",
                 classification=ModelErrorClass.PERMANENT,
@@ -610,3 +612,34 @@ def _provider_schema(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_provider_schema(item) for item in value]
     return value
+
+
+def _provider_input(assembled_input: Mapping[str, Any]) -> tuple[str, dict[str, Any]]:
+    prompt = assembled_input.get("prompt")
+    context_package = assembled_input.get("contextPackage")
+    if not isinstance(prompt, Mapping) or not isinstance(context_package, Mapping):
+        raise ValueError("assembled input is missing prompt or context")
+    system = prompt.get("system")
+    formatting = prompt.get("formatting")
+    examples = prompt.get("examples")
+    if not isinstance(system, str) or not system:
+        raise ValueError("assembled prompt is missing system instructions")
+    if formatting is not None and (not isinstance(formatting, str) or not formatting):
+        raise ValueError("assembled prompt formatting is invalid")
+    instruction_parts = [system]
+    if formatting is not None:
+        instruction_parts.append(formatting)
+    if examples is not None:
+        instruction_parts.append(
+            "Examples:\n"
+            + json.dumps(
+                examples,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+        )
+    return "\n\n".join(instruction_parts), {
+        "contextPackage": dict(context_package),
+    }

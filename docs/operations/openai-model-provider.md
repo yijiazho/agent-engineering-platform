@@ -46,6 +46,15 @@ The self-hosting `gpt-5` Resource omits `parameters` because that model does
 not accept `temperature` or `top_p`. Use these optional generation parameters
 only with a configured model that supports them.
 
+The adapter sends the versioned Prompt Resource's `system` and `formatting`
+content through the Responses API `instructions` channel. Prompt examples, if
+present, are included there as trusted instructions as well. The top-level
+`input` contains only the assembled ContextPackage, keeping user-controlled
+issue and repository text at user priority instead of placing it alongside
+self-hosting guardrails. Structured-output enforcement remains provider-owned
+through `text.format`, and the complete provider-neutral ModelRequest remains
+content-addressed in runtime evidence.
+
 The HTTP transport applies each attempt's remaining budget to the complete
 operation, including connection setup, response headers, and incremental body
 reads. A cancellable deadline worker closes an active response and returns a

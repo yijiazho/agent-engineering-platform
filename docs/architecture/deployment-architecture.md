@@ -675,6 +675,10 @@ Only finite, stateless generation parameters cross this provider boundary;
 provider conversation handles are rejected. Evidence records the Model
 Resource's requested identity separately from the bounded provider-resolved
 identity so aliases can resolve to snapshots without changing the request.
+The adapter maps the versioned Prompt system and formatting content to the
+provider instruction channel, while the ContextPackage remains user content.
+This preserves provider-level priority for self-hosting guardrails over
+potentially adversarial issue and repository text.
 
 The GitHub provider resolves the installation from the bound owner/name and
 uses a repository-restricted, short-lived installation token. Token refresh is

@@ -86,6 +86,10 @@ permanent terminal failures.
 The live OpenAI adapter also requires an explicit Resource `timeoutMs`; it does
 not apply an unrecorded provider default, so persisted effective configuration
 always contains the deadline used for a request.
+Provider translation maps the versioned Prompt system, formatting, and examples
+to the Responses API instruction channel while sending only the ContextPackage
+as user input. Adversarial issue or repository text therefore cannot occupy the
+same provider-priority channel as the self-hosting guardrails.
 The urllib transport enforces the remaining Model deadline across connection
 and incremental response reads through a cancellable worker, preventing slow
 streams from extending the invocation indefinitely. Redirect handling is
