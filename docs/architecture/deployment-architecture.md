@@ -655,6 +655,18 @@ fetch, choose revisions, or retrieve repository knowledge directly. GitHub App
 and Model provider credentials enter only through runtime secret and injected
 provider boundaries.
 
+The live MVP Model boundary selects the OpenAI adapter from the immutable
+`Model.spec.provider`. The adapter translates the already assembled Prompt,
+ContextPackage, and output schema to one strict structured Responses API
+request. Model Resource parameters, output-token limit, timeout, and retry
+policy remain the effective invocation bounds and are recorded on
+ResolvedAgent and ModelInvocation evidence. The API key is read from
+`AEP_OPENAI_API_KEY_FILE`; endpoint configuration comes from
+`AEP_OPENAI_API_URL`, never from a Resource. Fixed failure diagnostics and
+content addresses keep credentials and request/output bodies out of lifecycle
+logs. Local selection and endpoint verification requires neither credentials
+nor network access; live startup fails closed when the secret is missing.
+
 The GitHub provider resolves the installation from the bound owner/name and
 uses a repository-restricted, short-lived installation token. Token refresh is
 single-flight under concurrency and occurs before expiry. The provider adapts

@@ -384,6 +384,14 @@ secrets, or provider credentials to `.ai/` Resources. Credentials should be
 short-lived where the provider supports it and must remain outside Tool input,
 output, logs, and GeneratedArtifact bodies.
 
+The self-hosting Model selects the live OpenAI Responses API adapter with
+`spec.provider: openai`. Mount its key through `AEP_OPENAI_API_KEY_FILE` in the
+AgentInvocation execution process; `AEP_OPENAI_API_URL` optionally selects a
+clean HTTPS-compatible endpoint. Model identity, parameters, output-token
+limit, timeout, and retry policy come only from the immutable Model Resource.
+See the [OpenAI Model provider operator guide](docs/operations/openai-model-provider.md)
+for supported configuration, safe evidence, and credential-free verification.
+
 The concrete repository-bound provider uses GitHub App installation tokens for
 both API calls and ephemeral Git askpass leases. It performs duplicate-PR
 reconciliation before creation, caches tokens only until their refresh window,
@@ -443,10 +451,10 @@ Before enabling a real webhook, verify the deployment in this order:
    denied `github.create_pr`, and confirm that no branch is pushed and no pull
    request is created.
 
-Step 5 becomes available when AEP-037 is implemented. Until the webhook ingress,
-provider wiring, and that harness are complete, use the component tests and
-local composition only for contract and readiness validation, not for a live
-repository integration.
+The deterministic harness, authenticated webhook ingress, execution checkout,
+GitHub App integration, and live Model adapter are implemented. The local
+Compose topology remains a credential-free smoke test until AEP-043 supplies
+and verifies the pinned dogfood deployment.
 
 ## Key Documents
 
@@ -462,7 +470,7 @@ repository integration.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 37 of the 43 implementation tasks are complete.
+contracts are established, and 42 of the 43 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -545,8 +553,8 @@ Implemented foundations currently include:
   credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work includes a live Model provider integration and dogfood deployment required to
-register this repository with a running AEP control plane. See
+The remaining work is the dogfood deployment required to register this
+repository with a running AEP control plane. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

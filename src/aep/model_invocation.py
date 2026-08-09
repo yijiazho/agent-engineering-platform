@@ -34,6 +34,7 @@ class ModelConfiguration:
     parameters: JsonObject = field(default_factory=dict)
     token_limit: int | None = None
     timeout_ms: int | None = None
+    retry_policy: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.provider or not self.model:
@@ -47,8 +48,47 @@ class ModelConfiguration:
             raise ValueError("token_limit must be positive")
         if self.timeout_ms is not None and self.timeout_ms < 1:
             raise ValueError("timeout_ms must be positive")
+        retry_policy = dict(self.retry_policy)
+        unknown_retry_fields = set(retry_policy) - {"maxAttempts", "backoffMs"}
+        if unknown_retry_fields:
+            raise ValueError("retry_policy contains unsupported fields")
+        max_attempts = retry_policy.get("maxAttempts", 1)
+        backoff_ms = retry_policy.get("backoffMs", 0)
+        if (
+            not isinstance(max_attempts, int)
+            or isinstance(max_attempts, bool)
+            or max_attempts < 1
+        ):
+            raise ValueError("retry_policy.maxAttempts must be a positive integer")
+        if (
+            not isinstance(backoff_ms, int)
+            or isinstance(backoff_ms, bool)
+            or backoff_ms < 0
+        ):
+            raise ValueError("retry_policy.backoffMs must be a non-negative integer")
         object.__setattr__(self, "model_ref", _mapping(self.model_ref))
         object.__setattr__(self, "parameters", _mapping(self.parameters))
+        object.__setattr__(self, "retry_policy", _mapping(retry_policy))
+
+    @property
+    def max_attempts(self) -> int:
+        return int(self.retry_policy.get("maxAttempts", 1))
+
+    @property
+    def backoff_ms(self) -> int:
+        return int(self.retry_policy.get("backoffMs", 0))
+
+    def as_record(self) -> dict[str, Any]:
+        """Return the exact effective configuration safe for runtime evidence."""
+
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "parameters": deepcopy(dict(self.parameters)),
+            "tokenLimit": self.token_limit,
+            "timeoutMs": self.timeout_ms,
+            "retryPolicy": deepcopy(dict(self.retry_policy)),
+        }
 
 
 @dataclass(frozen=True)
@@ -176,6 +216,7 @@ def model_invocation_record(
         "updatedAt": completed_at,
         "agentInvocationId": agent_invocation_id,
         "modelRef": dict(request.configuration.model_ref),
+        "modelConfiguration": request.configuration.as_record(),
         "status": "SUCCEEDED",
         "tokenUsage": response.usage.as_record(),
         "latencyMs": response.latency_ms,

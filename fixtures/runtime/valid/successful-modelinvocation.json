@@ -23,6 +23,14 @@
     "name": "gpt-4o-mini",
     "version": "1.0.0"
   },
+  "modelConfiguration": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "parameters": {"temperature": 0.2},
+    "tokenLimit": 32000,
+    "timeoutMs": 60000,
+    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000}
+  },
   "status": "SUCCEEDED",
   "inputAddress": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
   "outputAddress": "sha256:2222222222222222222222222222222222222222222222222222222222222222",

@@ -60,6 +60,14 @@
   "modelParameters": {
     "temperature": 0.2
   },
+  "modelConfiguration": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "parameters": {"temperature": 0.2},
+    "tokenLimit": 32000,
+    "timeoutMs": 60000,
+    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000}
+  },
   "outputSchema": {
     "type": "object"
   },

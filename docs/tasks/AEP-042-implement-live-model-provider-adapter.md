@@ -1,6 +1,6 @@
 # AEP-042: Implement Live Model Provider Adapter
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -56,3 +56,28 @@ Implement one live MVP Model provider adapter, selected from the explicit
   missing credentials, and redaction without network access.
 * README and deployment documentation describe provider selection, secret
   injection, supported configuration, and a credential-free verification mode.
+
+## Implementation Notes
+
+`aep.openai_model_provider` implements a dependency-free OpenAI Responses API
+adapter behind the existing `ModelAdapter` interface. It translates only the
+assembled model input, requests strict JSON Schema output, enforces the Model
+Resource model, parameters, output-token limit, one overall timeout, and retry
+policy, and normalizes request identity, model identity, usage, latency, finish
+state, attempts, and safe failures. Runtime-only configuration reads the API
+key from `AEP_OPENAI_API_KEY_FILE` and an optional clean HTTPS endpoint from
+`AEP_OPENAI_API_URL`; unsupported providers and missing or invalid credentials
+fail before invocation.
+
+ResolvedAgent and ModelInvocation evidence now retain the exact effective
+Model configuration in addition to the immutable Model reference. Provider
+and transport bodies never enter fixed failure messages or exception chains.
+Provider-controlled request IDs become deterministic redacted hashes before
+persistence or logging. Invocation-time configuration failures are normalized
+as permanent Model failures so the coordinator terminalizes both invocation
+records.
+Offline scripted-transport tests cover structured success, bounds and usage,
+timeouts, transient retry, rate limiting, refusal, malformed output, model
+identity mismatch, configuration failure, and redaction. The operator guide
+documents secret injection and a credential-free, network-free verification
+path.

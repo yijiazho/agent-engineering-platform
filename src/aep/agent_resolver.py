@@ -172,7 +172,8 @@ def resolve_agent(
     )
     _reject_unconditionally_denied_tools(tools, policies)
 
-    model_parameters = _mapping_or_empty(_spec(model).get("parameters"), "Model.spec.parameters")
+    model_spec = _spec(model)
+    model_parameters = _mapping_or_empty(model_spec.get("parameters"), "Model.spec.parameters")
     output_schema_value = agent_spec.get("outputSchema", task_spec.get("outputs"))
     if not isinstance(output_schema_value, Mapping) or not output_schema_value:
         raise InvalidAgentReferenceError(
@@ -202,6 +203,14 @@ def resolve_agent(
         "toolRefs": [_ref_record(ref) for ref in tool_refs],
         "policyRefs": [_ref_record(ref) for ref in policy_refs],
         "modelParameters": deepcopy(dict(model_parameters)),
+        "modelConfiguration": {
+            "provider": model_spec["provider"],
+            "model": model_spec["model"],
+            "parameters": deepcopy(dict(model_parameters)),
+            "tokenLimit": model_spec.get("tokenLimit"),
+            "timeoutMs": model_spec.get("timeoutMs"),
+            "retryPolicy": deepcopy(dict(model_spec.get("retryPolicy", {}))),
+        },
         "outputSchema": deepcopy(dict(output_schema_value)),
         "resolvedAt": resolved_at,
     }

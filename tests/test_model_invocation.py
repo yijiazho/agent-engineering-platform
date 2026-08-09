@@ -111,6 +111,7 @@ def test_builds_modelinvocation_record_with_model_and_execution_metadata() -> No
 
     assert record["kind"] == "ModelInvocation"
     assert record["modelRef"] == model_request.configuration.model_ref
+    assert record["modelConfiguration"] == model_request.configuration.as_record()
     assert record["agentInvocationId"] == "agentinvocation-123456789abc"
     assert record["tokenUsage"] == {"input": 8, "output": 3}
     assert record["latencyMs"] == 12

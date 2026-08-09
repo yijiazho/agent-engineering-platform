@@ -45,6 +45,14 @@ def test_resolves_exact_resources_to_immutable_schema_valid_runtime_object() -> 
         "agent-policy",
     ]
     assert resolved["modelParameters"] == {"temperature": 0.2}
+    assert resolved["modelConfiguration"] == {
+        "provider": "openai",
+        "model": "gpt-5",
+        "parameters": {"temperature": 0.2},
+        "tokenLimit": None,
+        "timeoutMs": None,
+        "retryPolicy": {},
+    }
     assert resolved["outputSchema"] == {
         "type": "object",
         "required": ("summary",),

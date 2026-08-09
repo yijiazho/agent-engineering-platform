@@ -122,6 +122,7 @@ def invoke_agent(
         "provenance": model_provenance,
         "agentInvocationId": invocation_id,
         "modelRef": deepcopy(dict(model_configuration.model_ref)),
+        "modelConfiguration": model_configuration.as_record(),
         "status": "RUNNING",
         "inputAddress": input_address,
         "schemaValidation": "NOT_RUN",
@@ -347,6 +348,10 @@ def _validate_inputs(
     if dict(configuration.parameters) != agent.get("modelParameters", {}):
         raise AgentInvocationContractError(
             "model_configuration parameters must match ResolvedAgent.modelParameters"
+        )
+    if "modelConfiguration" in agent and configuration.as_record() != agent["modelConfiguration"]:
+        raise AgentInvocationContractError(
+            "model_configuration must match ResolvedAgent.modelConfiguration"
         )
     try:
         Draft202012Validator.check_schema(agent["outputSchema"])
