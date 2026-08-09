@@ -13,8 +13,6 @@ The Resource owns the model identity and every invocation bound:
 spec:
   provider: openai
   model: gpt-5
-  parameters:
-    temperature: 0.1
   tokenLimit: 32000
   timeoutMs: 120000
   retryPolicy:
@@ -29,17 +27,24 @@ names, including state-bearing Responses options such as
 request. This prevents provider-side conversation state from changing an
 invocation outside its assembled, content-addressed ModelRequest. `tokenLimit`
 becomes `max_output_tokens`; `timeoutMs` is one deadline across all attempts;
-and `retryPolicy` is the maximum attempt and backoff bound. The adapter requests
-strict JSON Schema output using the provider-supported structural projection
-of the ResolvedAgent output schema. Unsupported generation hints such as
-`minLength` and `uniqueItems` are omitted only from the provider request. A
-provider success is parsed as JSON and then the AgentInvocation coordinator
+and `retryPolicy` is the maximum attempt and backoff bound. Although the base
+Model schema permits omission, `timeoutMs` is required by the live OpenAI
+adapter so every elapsed deadline is explicit in ResolvedAgent and
+ModelInvocation evidence. The adapter requests strict JSON Schema output using
+the provider-supported structural projection of the ResolvedAgent output
+schema. Unsupported generation hints such as `minLength` and `uniqueItems` are
+omitted only from the provider request. A provider success is parsed as JSON
+and then the AgentInvocation coordinator
 performs authoritative validation against the complete immutable schema before
 artifact publication. This follows the
 [official Structured Outputs schema contract](https://developers.openai.com/api/docs/guides/structured-outputs);
 the configured GPT-5 model supports both the Responses endpoint and Structured
 Outputs according to the
 [official model page](https://developers.openai.com/api/docs/models/gpt-5).
+
+The self-hosting `gpt-5` Resource omits `parameters` because that model does
+not accept `temperature` or `top_p`. Use these optional generation parameters
+only with a configured model that supports them.
 
 The HTTP transport applies each attempt's remaining budget to the complete
 operation, including connection setup, response headers, and incremental body

@@ -58,7 +58,7 @@ def test_normalized_issue_selects_only_six_task_workflow_in_order(
     )
     resolution = resolve_workflow_for_event(event, resources)
     assert resolution.workflow_refs == (
-        ResourceRef("Workflow", "issue-to-pr", "1.0.0"),
+        ResourceRef("Workflow", "issue-to-pr", "1.0.1"),
     )
 
     workflow = resources.get(resolution.workflow_refs[0])
@@ -102,6 +102,11 @@ def test_context_and_agent_boundaries_are_explicit(
                 "capabilities"
             ]
         }
+
+    model = resources.get(ResourceRef("Model", "default-reasoning", "1.0.1"))
+    assert model is not None
+    assert "parameters" not in model.data["spec"]
+    assert model.data["spec"]["timeoutMs"] == 120000
 
 
 def test_capabilities_fail_closed_and_publication_is_exclusive(

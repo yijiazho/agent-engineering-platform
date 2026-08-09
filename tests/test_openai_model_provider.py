@@ -351,6 +351,17 @@ def test_stateful_or_adapter_owned_parameters_are_rejected(parameter):
     assert transport.requests == []
 
 
+def test_missing_timeout_is_rejected_instead_of_using_an_unrecorded_default():
+    transport = ScriptedTransport([success()])
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(model_request(timeout_ms=None))
+
+    assert raised.value.code == "invalid_configuration"
+    assert raised.value.recoverable is False
+    assert transport.requests == []
+
+
 def test_nonfinite_assembled_input_is_a_permanent_normalized_failure():
     request = model_request()
     request = ModelRequest(

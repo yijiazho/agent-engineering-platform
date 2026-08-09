@@ -229,8 +229,14 @@ class OpenAIModelAdapter(ModelAdapter):
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
             )
+        if configuration.timeout_ms is None:
+            raise ModelInvocationError(
+                "OpenAI model provider configuration requires timeoutMs",
+                classification=ModelErrorClass.PERMANENT,
+                code="invalid_configuration",
+            )
 
-        timeout_ms = configuration.timeout_ms or 60_000
+        timeout_ms = configuration.timeout_ms
         deadline = self._monotonic() + timeout_ms / 1000
         try:
             payload: dict[str, Any] = {

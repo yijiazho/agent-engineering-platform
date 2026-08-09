@@ -83,6 +83,9 @@ separately, allowing normal OpenAI alias resolution without weakening model
 identity evidence. Configuration rejects non-finite numeric parameters before
 runtime mutation, while serialization failures are also normalized as
 permanent terminal failures.
+The live OpenAI adapter also requires an explicit Resource `timeoutMs`; it does
+not apply an unrecorded provider default, so persisted effective configuration
+always contains the deadline used for a request.
 The urllib transport enforces the remaining Model deadline across connection
 and incremental response reads through a cancellable worker, preventing slow
 streams from extending the invocation indefinitely. Redirect handling is
