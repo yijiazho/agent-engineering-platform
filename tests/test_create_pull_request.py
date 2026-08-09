@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,11 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.create_pull_request import CreatePullRequestTaskHandler
+from aep.execution_checkout import (
+    CheckoutState,
+    ExecutionCheckout,
+    RepositoryIdentity,
+)
 from aep.generated_artifact_store import (
     GeneratedArtifactStore,
     GeneratedArtifactStoreError,
@@ -266,6 +272,40 @@ def test_success_publishes_after_all_three_policy_gates() -> None:
         execution["toolInvocationIds"][0]
     )
     assert description["policyDecisionIds"] == execution["policyDecisionIds"]
+
+
+def test_checkout_bound_working_branch_drives_commit_push_and_pull_request(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, _artifacts, git, github = setup_handler()
+    workspace = tmp_path / "checkout"
+    workspace.mkdir()
+    now = datetime(2026, 8, 7, tzinfo=UTC)
+    checkout = ExecutionCheckout(
+        execution_id=WORKFLOW_ID,
+        repository=RepositoryIdentity("github", "octo", "repo"),
+        base_revision=REVISION,
+        knowledge_revision=REVISION,
+        branch="aep/execution/bound-handler-branch",
+        workspace_path=workspace.resolve(),
+        source_cache_path=(tmp_path / "cache").resolve(),
+        state=CheckoutState.READY,
+        created_at=now,
+        updated_at=now,
+    )
+    unbound = dict(store.get(CREATE_ID))
+    unbound.pop("workingBranch")
+    bound = checkout.binding().orchestration().task_execution_input(unbound)
+
+    result = handler.execute(task, bound)
+
+    assert result.succeeded is True
+    assert bound["workingBranch"] == checkout.branch
+    assert [call.input["branch"] for call in git.calls] == [
+        checkout.branch,
+        checkout.branch,
+    ]
+    assert github.calls[0]["head"] == checkout.branch
 
 
 @pytest.mark.parametrize("effect", ["deny", "require-approval"])

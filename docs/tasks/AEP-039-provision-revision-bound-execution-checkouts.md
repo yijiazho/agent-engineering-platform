@@ -1,6 +1,6 @@
 # AEP-039: Provision Revision-Bound Execution Checkouts
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 

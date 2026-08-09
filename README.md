@@ -272,6 +272,62 @@ The Git Tool intentionally does not clone repositories. It accepts an existing
 worktree, expected revision, and working branch, and rejects revision drift,
 the wrong branch, or an unexpectedly dirty checkout.
 
+The trusted `ExecutionCheckoutManager` implements that provisioning boundary.
+It resolves the configured default branch through an injected
+`RepositorySource`, verifies the recorded 40-character `WorkflowExecution`
+revision, and creates a deterministic `aep/execution/<execution-hash>` branch
+in a dedicated writable worktree. Its boundary metadata supplies the same
+repository identity, base revision, knowledge revision, branch, and workspace
+path to Repository Knowledge, Filesystem, Git, and Docker integrations. A retry
+reclaims the same valid checkout; another execution receives a different path
+and branch.
+
+Operators must configure two non-overlapping durable storage roots: a trusted
+bare source cache writable only by the checkout manager, and a worktree root
+with one writable directory and sufficient build capacity per concurrent
+`WorkflowExecution`. Source credentials are issued through
+`SourceCredentialProvider` leases and injected only into Git process
+environments. Do not put credentials in remote URLs or persistent Git
+configuration. HTTP(S) remotes containing user information, query strings, or
+fragments are rejected before any source operation.
+
+Checkout ownership is durable state, not process memory. The local workflow
+runtime initializes a transactional SQLite registry at
+`AEP_STATE_ROOT/checkout-manager/registry.sqlite3`, the shared bare source cache
+at `AEP_STATE_ROOT/repository-cache`, and writable checkouts at
+`AEP_STATE_ROOT/execution-worktrees`. The registry uses database-enforced path
+and branch uniqueness, compare-and-swap ownership, renewable leases, and
+monotonic fencing tokens. Repository-cache claims use their own fencing token
+so separate workers cannot clone or fetch the same cache concurrently.
+Production deployments may replace SQLite through the `CheckoutRegistry`
+boundary but must preserve those atomic guarantees.
+
+Cleanup is permitted only after terminal execution evidence is durable. Clean
+worktrees are removed idempotently; dirty worktrees and failed removals remain
+recorded for operator recovery. After preserving or discarding useful changes,
+an operator can clean the worktree and retry cleanup. Expired provisioning
+claims can be recovered by a new manager worker, while live claims fail
+recoverably instead of creating a second checkout. Each cache or worktree
+mutation runs inside a heartbeat scope that renews and verifies both applicable
+leases for the entire operation; a worker cannot be taken over merely because a
+bounded Git mutation lasts longer than the base lease. A worker that resumes
+after genuine takeover is fenced before it can start another mutation.
+Credential and Repository Source boundary exceptions, including classified
+adapter exceptions, are normalized to fixed safe diagnostics; opaque credential
+values and provider messages are never copied into errors, exception cause or
+context chains, formatted tracebacks, or persisted lifecycle metadata.
+
+Production consumers are created through `CheckoutBoundOrchestration`, returned
+with the checkout by `provision_orchestration`. That seam scans repository
+context at the bound revision, creates Filesystem, Git, and Docker adapters from
+the bound path, and canonicalizes TaskExecution and publication inputs. The
+checkout branch is written to the TaskExecution `workingBranch` field consumed
+by `CreatePullRequest`, so Git commit and push operations and the pull-request
+head use the same branch. The seam rejects an independently supplied workspace
+path, repository or knowledge revision, repository identity, branch, or
+execution identity that differs from the checkout instead of allowing
+downstream configuration to drift.
+
 ### 3. Configure GitHub Delivery And Credentials
 
 Install a GitHub App, or configure an equivalent webhook and credential
@@ -473,10 +529,12 @@ Implemented foundations currently include:
 * Local composition of the seven MVP service boundaries with
   explicit ports, health checks, one repository and Workspace, and externalized
   local persistence.
+* Trusted, revision-bound execution-checkout provisioning with provider-neutral
+  repository sources and credential leases, atomic execution ownership,
+  isolated deterministic branches, and evidence-gated cleanup and recovery.
 
 
-The remaining work includes execution-checkout
-provisioning, a complete self-hosting Resource bundle, live
+The remaining work includes a complete self-hosting Resource bundle, live
 GitHub and Model provider integrations, and dogfood deployment required to
 register this repository with a running AEP control plane. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the

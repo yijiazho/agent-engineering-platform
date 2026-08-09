@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Any, Final
 from urllib.request import urlopen
 
+from aep.execution_checkout import local_checkout_registry
 from aep.github_webhook import (
     DEFAULT_MAX_BODY_BYTES,
     WEBHOOK_PATH,
@@ -178,6 +179,17 @@ class LocalServiceRuntime:
 
         service_state = config.state_root / config.service_name
         service_state.mkdir(parents=True, exist_ok=True)
+        if config.service_name == "workflow-runtime":
+            # The shared aep-state volume carries checkout ownership across
+            # adapter restarts. Source objects and mutable worktrees remain in
+            # separate directories under that same durable boundary.
+            local_checkout_registry(config.state_root)
+            (config.state_root / "repository-cache").mkdir(
+                parents=True, exist_ok=True
+            )
+            (config.state_root / "execution-worktrees").mkdir(
+                parents=True, exist_ok=True
+            )
         marker = service_state / "ready.json"
         marker.write_text(
             json.dumps(

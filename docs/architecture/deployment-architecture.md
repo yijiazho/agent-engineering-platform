@@ -655,6 +655,47 @@ fetch, choose revisions, or retrieve repository knowledge directly. GitHub App
 and Model provider credentials enter only through runtime secret and injected
 provider boundaries.
 
+The checkout manager uses separate, non-overlapping roots for the trusted bare
+source cache and execution worktrees. A provider-neutral Repository Source
+materializes the configured default branch with ephemeral credential leases,
+then the manager verifies the WorkflowExecution's exact commit before creating
+a deterministic execution branch. An atomic registry owns each derived path
+and branch, rejects cross-execution reuse, and leases in-progress claims so an
+interrupted worker can recover without racing a live worker. Ready checkout
+metadata is the shared repository, revision, branch, and path binding supplied
+to Repository Knowledge, Filesystem, Git, and Docker boundaries.
+
+The local persistence adapter implements the registry with SQLite under the
+shared state volume. Transactions provide compare-and-swap ownership and
+database-enforced uniqueness for execution paths and repository branches.
+Execution and repository-cache claims carry independent, monotonically
+increasing fencing tokens. The manager renews and verifies those claims before
+and throughout every source-cache or worktree mutation with an active heartbeat.
+This prevents takeover while a bounded mutation is still running and prevents
+an expired worker from starting another mutation after a genuine takeover.
+Credential and Repository Source failures, even adapter-supplied classified
+failures, are reduced to fixed safe diagnostics; provider exception text and
+credential values are excluded from errors, exception cause or context chains,
+formatted tracebacks, and persisted runtime evidence. HTTP(S) source URLs with
+user information, queries, or fragments are invalid configuration.
+
+`CheckoutBoundOrchestration` is the production handoff from provisioning to
+execution. It creates the revision-bound Repository Knowledge snapshot and
+Context Builder provider, Filesystem workspace, Git adapter, Docker authorized
+workspace, and publication inputs from the same immutable binding. Existing
+runtime fields are checked rather than overwritten silently. The binding writes
+the checkout branch to the TaskExecution `workingBranch` field consumed by
+`CreatePullRequest`, ensuring its Git commit and push operations and GitHub
+pull-request head use the bound branch. Any independently supplied path,
+revision, repository, branch, or execution identity mismatch is a configuration
+failure.
+
+Source-cache and worktree storage must survive worker restart and be sized for
+the repository plus maximum concurrent builds. Credentials must never be
+embedded in cache remotes or Git configuration. Cleanup starts only after
+terminal evidence is durable. Dirty worktrees or removal failures are retained
+with classified recovery metadata for operator inspection; clean removal is
+idempotent, and expired provisioning claims may be retried safely.
 The Event Controller implements this edge at `POST /v1/webhooks/github`. It
 loads the HMAC secret from runtime configuration, verifies the raw body before
 JSON decoding, limits request size, and accepts only `issues/opened` for the
