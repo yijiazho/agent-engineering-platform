@@ -12,11 +12,12 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+from threading import Event, Thread
 import time
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from aep.model_invocation import (
     ModelAdapter,
@@ -30,6 +31,7 @@ from aep.model_invocation import (
 
 _DEFAULT_API_URL = "https://api.openai.com/v1"
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+_READ_CHUNK_BYTES = 64 * 1024
 _RESERVED_PARAMETERS = frozenset({"model", "input", "max_output_tokens", "text"})
 
 
@@ -56,7 +58,10 @@ class ProviderHttpTransport(Protocol):
 
 
 class UrllibProviderTransport:
-    """Small dependency-free HTTPS transport with a bounded response body."""
+    """Deadline-bound HTTPS transport that never follows redirects."""
+
+    def __init__(self) -> None:
+        self._opener = build_opener(_NoRedirectHandler())
 
     def request(
         self,
@@ -66,30 +71,104 @@ class UrllibProviderTransport:
         body: bytes,
         timeout_ms: int,
     ) -> ProviderHttpResponse:
+        if timeout_ms < 1:
+            raise TimeoutError("provider request timed out")
         request = Request(url, data=body, headers=dict(headers), method="POST")
+        completed = Event()
+        cancelled = Event()
+        active_response: list[Any] = []
+        outcome: list[tuple[str, ProviderHttpResponse | None]] = []
+
+        def run() -> None:
+            try:
+                result = self._request_sync(
+                    request,
+                    timeout_ms=timeout_ms,
+                    cancelled=cancelled,
+                    active_response=active_response,
+                )
+            except TimeoutError:
+                outcome.append(("timeout", None))
+            except Exception:
+                outcome.append(("failure", None))
+            else:
+                outcome.append(("response", result))
+            finally:
+                completed.set()
+
+        worker = Thread(target=run, name="aep-openai-http", daemon=True)
+        worker.start()
+        if not completed.wait(timeout_ms / 1000):
+            cancelled.set()
+            if active_response:
+                try:
+                    active_response[0].close()
+                except Exception:
+                    pass
+            raise TimeoutError("provider request timed out")
+
+        kind, result = outcome[0]
+        if kind == "timeout":
+            raise TimeoutError("provider request timed out")
+        if kind == "failure" or result is None:
+            raise ConnectionError("provider transport failed")
+        return result
+
+    def _request_sync(
+        self,
+        request: Request,
+        *,
+        timeout_ms: int,
+        cancelled: Event,
+        active_response: list[Any],
+    ) -> ProviderHttpResponse:
         try:
-            with urlopen(request, timeout=max(0.001, timeout_ms / 1000)) as response:
-                payload = response.read(_MAX_RESPONSE_BYTES + 1)
-                if len(payload) > _MAX_RESPONSE_BYTES:
-                    raise ValueError("provider response exceeded size limit")
+            with self._opener.open(
+                request, timeout=max(0.001, timeout_ms / 1000)
+            ) as response:
+                active_response.append(response)
+                payload = _read_bounded(response, cancelled)
                 return ProviderHttpResponse(
                     status=int(response.status),
                     headers=dict(response.headers.items()),
                     body=payload,
                 )
         except HTTPError as error:
-            payload = error.read(_MAX_RESPONSE_BYTES + 1)
-            if len(payload) > _MAX_RESPONSE_BYTES:
-                payload = b""
-            return ProviderHttpResponse(
-                status=int(error.code),
-                headers=dict(error.headers.items()) if error.headers else {},
-                body=payload,
-            )
+            with error:
+                active_response.append(error)
+                payload = _read_bounded(error, cancelled)
+                return ProviderHttpResponse(
+                    status=int(error.code),
+                    headers=dict(error.headers.items()) if error.headers else {},
+                    body=payload,
+                )
         except (TimeoutError, URLError) as error:
             if isinstance(error, URLError) and not isinstance(error.reason, TimeoutError):
                 raise ConnectionError("provider transport failed") from None
             raise TimeoutError("provider request timed out") from None
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _read_bounded(response: Any, cancelled: Event) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    read = getattr(response, "read1", None) or response.read
+    while True:
+        if cancelled.is_set():
+            raise TimeoutError("provider request timed out")
+        chunk = read(min(_READ_CHUNK_BYTES, _MAX_RESPONSE_BYTES + 1 - size))
+        if cancelled.is_set():
+            raise TimeoutError("provider request timed out")
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > _MAX_RESPONSE_BYTES:
+            raise ValueError("provider response exceeded size limit")
 
 
 @dataclass(frozen=True)

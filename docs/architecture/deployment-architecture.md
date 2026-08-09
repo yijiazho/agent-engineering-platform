@@ -666,6 +666,11 @@ ResolvedAgent and ModelInvocation evidence. The API key is read from
 content addresses keep credentials and request/output bodies out of lifecycle
 logs. Local selection and endpoint verification requires neither credentials
 nor network access; live startup fails closed when the secret is missing.
+The provider transport applies one remaining deadline to connection, headers,
+and bounded incremental response reads, and cancels the caller-visible
+operation when that deadline expires. It never follows HTTP redirects, which
+prevents the Authorization header from crossing origins or an HTTPS-to-HTTP
+downgrade.
 
 The GitHub provider resolves the installation from the bound owner/name and
 uses a repository-restricted, short-lived installation token. Token refresh is

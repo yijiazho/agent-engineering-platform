@@ -76,6 +76,11 @@ Provider-controlled request IDs become deterministic redacted hashes before
 persistence or logging. Invocation-time configuration failures are normalized
 as permanent Model failures so the coordinator terminalizes both invocation
 records.
+The urllib transport enforces the remaining Model deadline across connection
+and incremental response reads through a cancellable worker, preventing slow
+streams from extending the invocation indefinitely. Redirect handling is
+disabled, so credentials are never forwarded to a different or downgraded
+origin.
 Offline scripted-transport tests cover structured success, bounds and usage,
 timeouts, transient retry, rate limiting, refusal, malformed output, model
 identity mismatch, configuration failure, and redaction. The operator guide

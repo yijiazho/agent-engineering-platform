@@ -1,6 +1,9 @@
 import json
 from hashlib import sha256
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Event, Thread
+import time
 import traceback
 
 import pytest
@@ -11,6 +14,7 @@ from aep.openai_model_provider import (
     OpenAIModelAdapter,
     OpenAIProviderConfig,
     ProviderHttpResponse,
+    UrllibProviderTransport,
     _provider_schema,
     openai_model_adapter_from_environment,
     verify_openai_model_provider_environment,
@@ -28,6 +32,63 @@ class ScriptedTransport:
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+class SlowStreamingResponse:
+    status = 200
+    headers = {}
+
+    def __init__(self):
+        self.closed = Event()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.close()
+
+    def read1(self, _size):
+        time.sleep(0.01)
+        return b"" if self.closed.is_set() else b"x"
+
+    def close(self):
+        self.closed.set()
+
+
+class StaticOpener:
+    def __init__(self, response):
+        self.response = response
+
+    def open(self, *_args, **_kwargs):
+        return self.response
+
+
+class RedirectOriginHandler(BaseHTTPRequestHandler):
+    redirect_url = ""
+    authorizations = []
+
+    def do_POST(self):
+        type(self).authorizations.append(self.headers.get("Authorization"))
+        self.send_response(302)
+        self.send_header("Location", type(self).redirect_url)
+        self.end_headers()
+
+    def log_message(self, *_args):
+        pass
+
+
+class RedirectTargetHandler(BaseHTTPRequestHandler):
+    authorizations = []
+
+    def do_GET(self):
+        type(self).authorizations.append(self.headers.get("Authorization"))
+        self.send_response(200)
+        self.end_headers()
+
+    do_POST = do_GET
+
+    def log_message(self, *_args):
+        pass
 
 
 def model_request(
@@ -101,6 +162,55 @@ def adapter(transport):
 
 def normalized_id(value):
     return "redacted:sha256:" + sha256(value.encode()).hexdigest()
+
+
+def test_urllib_transport_enforces_one_deadline_across_slow_body_reads():
+    response = SlowStreamingResponse()
+    transport = UrllibProviderTransport()
+    transport._opener = StaticOpener(response)
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        transport.request(
+            url="https://api.openai.com/v1/responses",
+            headers={"Authorization": "Bearer sk-secret"},
+            body=b"{}",
+            timeout_ms=30,
+        )
+
+    assert time.monotonic() - started < 0.25
+    assert response.closed.wait(0.25)
+
+
+def test_urllib_transport_rejects_redirect_without_forwarding_authorization():
+    RedirectOriginHandler.authorizations = []
+    RedirectTargetHandler.authorizations = []
+    target = ThreadingHTTPServer(("127.0.0.1", 0), RedirectTargetHandler)
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), RedirectOriginHandler)
+    RedirectOriginHandler.redirect_url = (
+        f"http://127.0.0.1:{target.server_address[1]}/redirected"
+    )
+    threads = [
+        Thread(target=server.serve_forever, daemon=True) for server in (target, origin)
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        result = UrllibProviderTransport().request(
+            url=f"http://127.0.0.1:{origin.server_address[1]}/responses",
+            headers={"Authorization": "Bearer sk-must-not-forward"},
+            body=b"{}",
+            timeout_ms=1_000,
+        )
+    finally:
+        origin.shutdown()
+        target.shutdown()
+        origin.server_close()
+        target.server_close()
+
+    assert result.status == 302
+    assert RedirectOriginHandler.authorizations == ["Bearer sk-must-not-forward"]
+    assert RedirectTargetHandler.authorizations == []
 
 
 def test_structured_success_preserves_exact_model_bounds_and_usage_evidence():

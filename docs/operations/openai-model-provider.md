@@ -38,6 +38,14 @@ the configured GPT-5 model supports both the Responses endpoint and Structured
 Outputs according to the
 [official model page](https://developers.openai.com/api/docs/models/gpt-5).
 
+The HTTP transport applies each attempt's remaining budget to the complete
+operation, including connection setup, response headers, and incremental body
+reads. A cancellable deadline worker closes an active response and returns a
+timeout even when a peer continuously trickles bytes below the socket's
+per-operation timeout. HTTP redirects are never followed: a 3xx response is
+normalized as a provider failure, so the Authorization header cannot cross to
+another origin or an HTTP downgrade.
+
 ## Inject The Credential And Endpoint
 
 Mount the API key as a read-only runtime secret file in every process that
