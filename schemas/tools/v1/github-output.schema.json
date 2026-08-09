@@ -11,7 +11,7 @@
       "properties": {
         "attempt": { "type": "integer", "minimum": 1 },
         "providerRequestId": { "type": ["string", "null"] },
-        "classification": { "enum": ["SUCCESS", "RATE_LIMIT", "PROVIDER", "TIMEOUT"] },
+        "classification": { "enum": ["SUCCESS", "AUTHENTICATION", "AUTHORIZATION", "VALIDATION", "RATE_LIMIT", "PROVIDER", "AMBIGUOUS_MUTATION", "TIMEOUT"] },
         "retryable": { "type": "boolean" },
         "retryAfterMs": { "type": ["integer", "null"], "minimum": 0 },
         "outcome": { "enum": ["SUCCEEDED", "FAILED", "TIMED_OUT"] }
@@ -46,9 +46,10 @@
     "providerFailureDetail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["category", "retryable", "retryAfterMs", "attemptCount", "providerRequestId", "traceId", "attempts"],
+      "required": ["category", "mutationState", "retryable", "retryAfterMs", "attemptCount", "providerRequestId", "traceId", "attempts"],
       "properties": {
-        "category": { "enum": ["RATE_LIMIT", "PROVIDER"] },
+        "category": { "enum": ["AUTHENTICATION", "AUTHORIZATION", "VALIDATION", "RATE_LIMIT", "PROVIDER", "AMBIGUOUS_MUTATION"] },
+        "mutationState": { "enum": ["NOT_ATTEMPTED", "UNKNOWN"] },
         "retryable": { "type": "boolean" },
         "retryAfterMs": { "type": ["integer", "null"], "minimum": 0 },
         "attemptCount": { "type": "integer", "minimum": 1 },
@@ -64,9 +65,10 @@
     "timeoutFailureDetail": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["category", "retryable", "ambiguousPublication", "attemptCount", "providerRequestId", "traceId", "attempts"],
+      "required": ["category", "mutationState", "retryable", "ambiguousPublication", "attemptCount", "providerRequestId", "traceId", "attempts"],
       "properties": {
         "category": { "const": "TIMEOUT" },
+        "mutationState": { "enum": ["NOT_ATTEMPTED", "UNKNOWN"] },
         "retryable": { "type": "boolean" },
         "ambiguousPublication": { "type": "boolean" },
         "attemptCount": { "type": "integer", "minimum": 1 },

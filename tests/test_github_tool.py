@@ -864,6 +864,7 @@ def test_hanging_read_is_terminated_killed_and_cleaned_up() -> None:
     assert len(client.issue_calls) == 1
     assert result.failure_class is ToolFailureClass.TIMEOUT
     assert result.output["failure"]["ambiguousPublication"] is False
+    assert result.output["failure"]["mutationState"] == "NOT_ATTEMPTED"
     assert result.output["failure"]["retryable"] is True
     assert result.output["failure"]["providerRequestId"] == "github-timeout-read"
     assert result.output["failure"]["traceId"] == TRACE_ID
@@ -891,6 +892,7 @@ def test_ambiguous_hanging_publication_is_never_replayed() -> None:
     assert client.operations[0].killed is True
     assert client.operations[0].cleaned_up is True
     assert result.output["failure"]["ambiguousPublication"] is True
+    assert result.output["failure"]["mutationState"] == "UNKNOWN"
     assert result.output["failure"]["retryable"] is False
     assert result.output["failure"]["providerRequestId"] == "github-timeout-create"
     with pytest.raises(TypeError):

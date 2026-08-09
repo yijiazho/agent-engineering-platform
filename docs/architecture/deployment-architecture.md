@@ -655,6 +655,28 @@ fetch, choose revisions, or retrieve repository knowledge directly. GitHub App
 and Model provider credentials enter only through runtime secret and injected
 provider boundaries.
 
+The GitHub provider resolves the installation from the bound owner/name and
+uses a repository-restricted, short-lived installation token. Token refresh is
+single-flight under concurrency and occurs before expiry. The provider adapts
+the existing GitHub Tool client operations, reconciles an owner/head/base PR
+before creation, and maps authentication, authorization, validation, rate
+limit, retryable service, timeout, and unknown mutation outcomes to stable Tool
+evidence. Its Git credential provider supplies one-use askpass environments to
+both source fetch and execution-branch push and removes the lease material in a
+`finally`-guarded close. Readiness proves App, installation, repository, base,
+and branch-prefix identity without returning credentials.
+Each provider operation carries one monotonic deadline across authentication,
+reconciliation, and mutation calls. Readiness always revalidates the current
+repository installation, and authentication or installation lookup failures
+invalidate cached installation state. Mutation evidence becomes `UNKNOWN` only
+after the pull-request POST has actually begun, including when a successful
+response cannot be parsed or otherwise confirmed. Authentication transport
+timeouts retain timeout classification through the Tool execution boundary.
+The Git Tool passes its remaining deadline into Git credential acquisition,
+and credential timeouts remain Tool `TIMED_OUT` results before push begins.
+Both primary limit evidence and secondary-limit `403` responses with
+`Retry-After` produce bounded rate-limit retry metadata.
+
 The checkout manager uses separate, non-overlapping roots for the trusted bare
 source cache and execution worktrees. A provider-neutral Repository Source
 materializes the configured default branch with ephemeral credential leases,
