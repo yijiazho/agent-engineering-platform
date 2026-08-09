@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -17,6 +19,7 @@ from aep.local_service import (
     LocalServiceRuntime,
     MVP_SERVICE_PORTS,
 )
+from aep.github_webhook import WEBHOOK_PATH
 
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
@@ -56,7 +59,7 @@ def test_smoke_starts_all_services_and_resolves_basic_resources(tmp_path: Path) 
 
 
 def test_configuration_requires_every_explicit_boundary() -> None:
-    with pytest.raises(LocalServiceConfigurationError, match="AEP_STATE_ROOT"):
+    with pytest.raises(LocalServiceConfigurationError, match="webhook secret"):
         LocalServiceConfig.from_env(
             {
                 "AEP_SERVICE_NAME": "event-controller",
@@ -73,6 +76,103 @@ def test_configuration_requires_every_explicit_boundary() -> None:
                 "AEP_EXECUTION_ENVIRONMENT": "local-test",
             }
         )
+
+
+def test_event_controller_loads_webhook_secret_from_file(tmp_path: Path) -> None:
+    secret_file = tmp_path / "github-webhook-secret"
+    secret_file.write_bytes(b"file-backed-secret\n")
+    values = {
+        "AEP_SERVICE_NAME": "event-controller",
+        "AEP_SERVICE_PORT": "8081",
+        "AEP_REPOSITORY_ROOT": str(REPOSITORY_ROOT),
+        "AEP_RESOURCE_SCHEMA_ROOT": str(REPOSITORY_ROOT / "schemas/resources/v1"),
+        "AEP_REPOSITORY_PROVIDER": "github",
+        "AEP_REPOSITORY_OWNER": "yijiazho",
+        "AEP_REPOSITORY_NAME": "agent-engineering-platform",
+        "AEP_WORKSPACE_NAME": "agent-engineering-platform",
+        "AEP_WORKSPACE_VERSION": "1.0.0",
+        "AEP_EXECUTION_ENVIRONMENT": "local-test",
+        "AEP_STATE_ROOT": str(tmp_path / "state"),
+        "AEP_GITHUB_WEBHOOK_SECRET_FILE": str(secret_file),
+    }
+
+    config = LocalServiceConfig.from_env(values)
+
+    assert config.github_webhook_secret == b"file-backed-secret"
+
+
+def test_event_controller_requires_secret_and_accepts_signed_http_delivery(
+    tmp_path: Path,
+) -> None:
+    config = service_config("event-controller", tmp_path, port=0)
+    payload = json.loads(
+        (REPOSITORY_ROOT / "fixtures/github/issue-created.json").read_text(encoding="utf-8")
+    )
+    payload["repository"]["full_name"] = "yijiazho/agent-engineering-platform"
+    body = json.dumps(payload, sort_keys=True).encode("utf-8")
+    signature = "sha256=" + hmac.new(
+        config.github_webhook_secret or b"", body, hashlib.sha256
+    ).hexdigest()
+
+    with LocalMvpComposition(
+        [
+            config
+            if name == "event-controller"
+            else service_config(name, tmp_path, port=0)
+            for name in MVP_SERVICE_PORTS
+        ]
+    ) as composition:
+        request = Request(
+            composition.addresses["event-controller"] + WEBHOOK_PATH,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+                "X-GitHub-Event": "issues",
+                "X-GitHub-Delivery": "local-delivery-038",
+            },
+        )
+        with urlopen(request, timeout=2) as response:
+            result = json.load(response)
+
+    assert response.status == 202
+    assert result["status"] == "accepted"
+
+
+def test_event_controller_restart_replays_from_shared_durable_state(
+    tmp_path: Path,
+) -> None:
+    config = service_config("event-controller", tmp_path, port=0)
+    payload = json.loads(
+        (REPOSITORY_ROOT / "fixtures/github/issue-created.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["repository"]["full_name"] = "yijiazho/agent-engineering-platform"
+    body = json.dumps(payload, sort_keys=True).encode("utf-8")
+    headers = {
+        "X-Hub-Signature-256": "sha256="
+        + hmac.new(
+            config.github_webhook_secret or b"", body, hashlib.sha256
+        ).hexdigest(),
+        "X-GitHub-Event": "issues",
+        "X-GitHub-Delivery": "restart-delivery-038",
+    }
+
+    first_runtime = LocalServiceRuntime.initialize(config)
+    first = first_runtime.github_webhook_ingress
+    assert first is not None
+    accepted = first.handle(headers=headers, raw_body=body)
+
+    restarted_runtime = LocalServiceRuntime.initialize(config)
+    restarted = restarted_runtime.github_webhook_ingress
+    assert restarted is not None
+    replay = restarted.handle(headers=headers, raw_body=body)
+
+    assert accepted.status_code == 202
+    assert replay.status_code == 200
+    assert replay.body["eventId"] == accepted.body["eventId"]
 
 
 def test_startup_rejects_repository_or_workspace_drift(tmp_path: Path) -> None:
@@ -151,6 +251,10 @@ def test_compose_declares_all_services_health_checks_ports_and_persistence() -> 
     assert compose.count("aep-state:/var/lib/aep") == 1
     assert "../../:/workspace:ro" in compose
     assert "AEP_RESOURCE_SCHEMA_ROOT: /opt/aep/schemas/resources/v1" in compose
+    assert (
+        "AEP_GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github_webhook_secret" in compose
+    )
+    assert "github_webhook_secret:" in compose
 
 
 def service_config(name: str, state_root: Path, *, port: int) -> LocalServiceConfig:
@@ -166,4 +270,7 @@ def service_config(name: str, state_root: Path, *, port: int) -> LocalServiceCon
         workspace_version="1.0.0",
         execution_environment="local-test",
         state_root=state_root,
+        github_webhook_secret=(
+            b"local-test-webhook-secret" if name == "event-controller" else None
+        ),
     )

@@ -655,6 +655,18 @@ fetch, choose revisions, or retrieve repository knowledge directly. GitHub App
 and Model provider credentials enter only through runtime secret and injected
 provider boundaries.
 
+The Event Controller implements this edge at `POST /v1/webhooks/github`. It
+loads the HMAC secret from runtime configuration, verifies the raw body before
+JSON decoding, limits request size, and accepts only `issues/opened` for the
+deployment's bound repository. Its provider-neutral dispatch boundary uses a
+SQLite database on the shared state volume to commit the accepted Event and one
+pending reconciliation-outbox row atomically. Concurrent controller instances
+serialize on that transaction, and restarts observe the same Event and outbox
+identity. A transaction failure rolls back both records so an authenticated
+retry can submit again; a committed replay returns the original Event without
+another outbox row. Edge evidence records the stable trace and outcome but
+excludes request bodies, headers, and secrets.
+
 The deployed version may generate an unmerged pull request proposing its
 successor, but it cannot modify its running image or read-only Resource
 checkout, merge the pull request, or deploy the result. A human-reviewed release

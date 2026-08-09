@@ -70,13 +70,15 @@ Installed development package versions are captured in [requirements-dev.lock](r
 
 ## Local MVP Composition
 
-The credential-free local composition starts the seven MVP control/execution
+The local composition starts the seven MVP control/execution
 service adapters as separate containers. Git-backed Resources are mounted
 read-only from this repository, while service readiness and future local
 runtime state are externalized to the `aep-state` volume.
 
 ```powershell
 Copy-Item deploy/local/.env.example deploy/local/.env
+New-Item -ItemType Directory -Force deploy/local/secrets
+Set-Content -NoNewline deploy/local/secrets/github-webhook-secret.txt "replace-with-a-random-secret"
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml up --build -d
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml ps
 Invoke-RestMethod http://localhost:8081/healthz
@@ -90,10 +92,12 @@ runtime `8083`, Agent Resolver `8084`, Context Builder `8085`, Tool Runtime
 the Resource Controller exposes the read-only `/v1/resources` discovery
 endpoint. Override the repository, Workspace, and execution-environment values
 in `deploy/local/.env`. They must match the single repository-local
-`.ai/workspace.yaml`, or every service fails fast. No external credentials are
-used for startup or Resource discovery. The image explicitly binds Resource
-validation to `/opt/aep/schemas/resources/v1`, independently of the read-only
-repository mount and the installed Python package location.
+`.ai/workspace.yaml`, or every service fails fast. The Event Controller also
+fails fast unless its GitHub webhook secret file is present and non-empty; the
+other services and Resource discovery need no external credentials. The image
+explicitly binds Resource validation to `/opt/aep/schemas/resources/v1`,
+independently of the read-only repository mount and the installed Python
+package location.
 
 `docker compose ... down` keeps the local state volume. To intentionally reset
 that recoverable local state, run the same command with `--volumes`.
@@ -110,10 +114,10 @@ and the repository's versioned `.ai/` Resources.
 > **Current implementation status:** this section defines the integration
 > contract that the completed MVP must satisfy. The repository currently
 > implements the underlying event, workflow, context, Agent, Tool, evaluation,
-> policy, artifact, and observability components, plus the `AnalyzeIssue`,
+> policy, artifact, observability, and authenticated webhook-ingress components,
+> plus the `AnalyzeIssue`,
 > `BuildImplementationPlan`, `GeneratePatch`, `RunValidation`, and
-> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The local Event
-> Controller does not yet expose a webhook POST endpoint. The deterministic
+> `EvaluateAcceptance`, and `CreatePullRequest` Task handlers. The deterministic
 > end-to-end harness is available for local and CI verification. The current
 > Compose stack remains a credential-free
 > service-topology smoke test, not yet a deployable issue-to-PR integration.
@@ -245,10 +249,30 @@ The ingress boundary must:
 6. submit only the first accepted delivery for Workflow resolution.
 
 GitHub retries are deduplicated using
-`github:delivery:<X-GitHub-Delivery>`. Signature verification and the HTTP
-route belong to the deployment ingress and are not implemented by the current
-`aep.local_service` adapter. Do not point a webhook at `/healthz` or
-`/v1/resources`; neither endpoint accepts events.
+`github:delivery:<X-GitHub-Delivery>`. Configure the webhook URL as
+`http(s)://<event-controller>/v1/webhooks/github`, content type as JSON, and
+subscribe to **Issues**. Requests must include `X-Hub-Signature-256`,
+`X-GitHub-Event: issues`, and a non-empty `X-GitHub-Delivery`; only the
+`opened` action for the configured repository is accepted.
+
+The Event Controller verifies HMAC-SHA256 over the raw request bytes before
+decoding JSON. Inject the shared secret through
+`AEP_GITHUB_WEBHOOK_SECRET_FILE` (preferred and used by Compose) or
+`AEP_GITHUB_WEBHOOK_SECRET`, but never both. The default body limit is 1 MiB;
+override it with `AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES`.
+
+First deliveries return `202` with `status: accepted`; authenticated replays
+return `200` with `status: duplicate` and the original `eventId`.
+Authentication failures return `401`, malformed or incomplete requests `400`,
+unsupported or repository-mismatched deliveries `422`, oversized bodies `413`,
+and transient persistence or dispatch failures `503`. GitHub may retry any
+non-2xx response. The deployed adapter atomically stores the normalized Event
+and one pending reconciliation request in
+`<AEP_STATE_ROOT>/shared/github-webhook.sqlite3`. Replays across controller
+restarts or instances return that Event without creating another outbox row;
+a failed transaction is rolled back and can be retried.
+Responses and redacted lifecycle evidence carry a trace ID; secrets, signature
+headers, and request bodies are excluded from evidence.
 
 The GitHub identity used by the execution environment needs the least
 privileges necessary to:
@@ -315,6 +339,10 @@ Before enabling a real webhook, verify the deployment in this order:
    denied `github.create_pr`, and confirm that no branch is pushed and no pull
    request is created.
 
+Step 5 becomes available when AEP-037 is implemented. Until checkout
+provisioning, the complete Resource bundle, provider wiring, and that harness
+are complete, use the component tests and local composition only for contract
+and readiness validation, not for a live repository integration.
 Run step 5 without network access or credentials:
 
 ```powershell
@@ -407,12 +435,15 @@ Implemented foundations currently include:
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
 * Deterministic, budget-aware ContextPackage construction with provenance for
   repository knowledge, Resources, events, policies, and prior artifacts.
-* Credential-free local composition of the seven MVP service boundaries with
+* Authenticated, repository-bound GitHub issue webhook ingress with shared-store
+  deduplication, an atomic durable reconciliation outbox, restart-safe replay,
+  and redacted lifecycle evidence.
+* Local composition of the seven MVP service boundaries with
   explicit ports, health checks, one repository and Workspace, and externalized
   local persistence.
 
 
-The remaining work includes authenticated ingress, execution-checkout
+The remaining work includes execution-checkout
 provisioning, a complete self-hosting Resource bundle, live
 GitHub and Model provider integrations, and dogfood deployment required to
 register this repository with a running AEP control plane. See
