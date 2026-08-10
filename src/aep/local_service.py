@@ -161,14 +161,16 @@ class LocalServiceRuntime:
             raise LocalServiceConfigurationError(
                 "event-controller requires a GitHub webhook secret"
             )
+        if config.resource_revision is not None:
+            verify_resource_checkout(
+                config.repository_root,
+                config.resource_revision,
+                require_detached=config.execution_environment == "dogfood",
+            )
         resources = ResourceLoader(
             config.repository_root,
             schema_root=config.resource_schema_root,
         ).load()
-        if config.resource_revision is not None:
-            _verify_resource_revision(
-                config.repository_root, config.resource_revision
-            )
         workspace = resources.workspace
         repository = workspace.data["spec"]["repository"]
         expected = (
@@ -339,7 +341,12 @@ def _write_ingress_evidence(evidence: Mapping[str, Any]) -> None:
     print(json.dumps(evidence, sort_keys=True), flush=True)
 
 
-def _verify_resource_revision(repository_root: Path, expected: str) -> None:
+def verify_resource_checkout(
+    repository_root: Path,
+    expected: str,
+    *,
+    require_detached: bool,
+) -> None:
     if len(expected) != 40 or any(
         character not in "0123456789abcdef" for character in expected
     ):
@@ -347,20 +354,24 @@ def _verify_resource_revision(repository_root: Path, expected: str) -> None:
             "AEP_RESOURCE_REVISION must be a lowercase 40-character Git commit"
         )
     try:
+        command = [
+            "git",
+            "-c",
+            f"safe.directory={repository_root}",
+            "-C",
+            str(repository_root),
+        ]
         completed = subprocess.run(
-            [
-                "git",
-                "-c",
-                f"safe.directory={repository_root}",
-                "-C",
-                str(repository_root),
-                "rev-parse",
-                "HEAD",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=10,
+            [*command, "rev-parse", "HEAD"], check=True,
+            capture_output=True, text=True, timeout=10,
+        )
+        status = subprocess.run(
+            [*command, "status", "--porcelain=v1", "--untracked-files=all"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        symbolic = subprocess.run(
+            [*command, "symbolic-ref", "-q", "HEAD"],
+            check=False, capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
         raise LocalServiceConfigurationError(
@@ -371,6 +382,18 @@ def _verify_resource_revision(repository_root: Path, expected: str) -> None:
         raise LocalServiceConfigurationError(
             "the Resource checkout does not match AEP_RESOURCE_REVISION: "
             f"configured={expected}, loaded={actual}"
+        )
+    if status.stdout:
+        raise LocalServiceConfigurationError(
+            "the Resource checkout must be clean before Resources are loaded"
+        )
+    if require_detached and symbolic.returncode == 0:
+        raise LocalServiceConfigurationError(
+            "the dogfood Resource checkout must be detached at its pinned revision"
+        )
+    if symbolic.returncode not in {0, 1}:
+        raise LocalServiceConfigurationError(
+            "the Resource checkout attachment state could not be verified"
         )
 
 

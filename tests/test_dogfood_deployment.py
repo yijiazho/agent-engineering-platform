@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -10,7 +11,11 @@ from aep.dogfood_deployment import (
     emergency_publication_guard,
     verify_dogfood_environment,
 )
-from aep.local_service import LocalServiceConfig, LocalServiceRuntime
+from aep.local_service import (
+    LocalServiceConfig,
+    LocalServiceConfigurationError,
+    LocalServiceRuntime,
+)
 
 
 ROOT = Path(__file__).parents[1]
@@ -28,7 +33,7 @@ def test_dogfood_environment_binds_pinned_release_resources_and_providers(
         "imageDigest": "sha256:" + "a" * 64,
         "modelProvider": "openai",
         "repository": "github:yijiazho/agent-engineering-platform",
-        "resourceRevision": git_head(),
+        "resourceRevision": environment["AEP_RESOURCE_REVISION"],
         "status": "READY",
         "workspace": "agent-engineering-platform:1.0.0",
     }
@@ -89,7 +94,7 @@ def test_self_hosting_compose_is_pinned_read_only_durable_and_least_privilege() 
     assert "read_only: true" in compose
     assert "no-new-privileges:true" in compose
     assert "AEP_EMERGENCY_DISABLE_FILE: /var/lib/aep/control/EMERGENCY_DISABLE" in compose
-    assert compose.count("/var/run/docker.sock") == 2
+    assert compose.count("/var/run/docker.sock") == 4
     assert compose.count("github_webhook_secret]") == 1
     assert compose.count("openai_api_key]") == 2
     assert compose.count("github_app_private_key") >= 3
@@ -103,6 +108,29 @@ def test_self_hosting_compose_is_pinned_read_only_durable_and_least_privilege() 
         "evaluation-engine",
     ):
         assert f"  {service}:" in compose
+    dockerfile = (ROOT / "deploy/local/Dockerfile").read_text(encoding="utf-8")
+    assert "docker.io git" in dockerfile
+
+
+def test_dogfood_rejects_dirty_resources_before_loading_them(tmp_path: Path) -> None:
+    environment = dogfood_environment(tmp_path)
+    workspace = Path(environment["AEP_REPOSITORY_ROOT"]) / ".ai/workspace.yaml"
+    workspace.write_text("not valid resource data", encoding="utf-8")
+
+    with pytest.raises(
+        LocalServiceConfigurationError,
+        match="must be clean before Resources are loaded",
+    ):
+        verify_dogfood_environment(environment)
+
+
+def test_dogfood_rejects_an_attached_resource_checkout(tmp_path: Path) -> None:
+    environment = dogfood_environment(tmp_path)
+    repository = Path(environment["AEP_REPOSITORY_ROOT"])
+    git(repository, "switch", "main")
+
+    with pytest.raises(LocalServiceConfigurationError, match="must be detached"):
+        verify_dogfood_environment(environment)
 
 
 def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") -> dict[str, str]:
@@ -115,10 +143,19 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
     }
     for path in secrets.values():
         path.write_text("test-secret", encoding="utf-8")
+    resource_root = tmp_path / "resources"
+    shutil.copytree(ROOT / ".ai", resource_root / ".ai")
+    git(resource_root, "init", "-b", "main")
+    git(resource_root, "config", "user.name", "AEP Test")
+    git(resource_root, "config", "user.email", "aep@example.test")
+    git(resource_root, "add", ".ai")
+    git(resource_root, "commit", "-m", "Pin Resources")
+    revision = git_head(resource_root)
+    git(resource_root, "checkout", "--detach", revision)
     return {
         "AEP_SERVICE_NAME": service,
         "AEP_SERVICE_PORT": "0",
-        "AEP_REPOSITORY_ROOT": str(ROOT),
+        "AEP_REPOSITORY_ROOT": str(resource_root),
         "AEP_RESOURCE_SCHEMA_ROOT": str(ROOT / "schemas/resources/v1"),
         "AEP_REPOSITORY_PROVIDER": "github",
         "AEP_REPOSITORY_OWNER": "yijiazho",
@@ -128,7 +165,7 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
         "AEP_WORKSPACE_VERSION": "1.0.0",
         "AEP_EXECUTION_ENVIRONMENT": "dogfood",
         "AEP_STATE_ROOT": str(tmp_path / "state"),
-        "AEP_RESOURCE_REVISION": git_head(),
+        "AEP_RESOURCE_REVISION": revision,
         "AEP_IMAGE_DIGEST": "a" * 64,
         "AEP_EMERGENCY_DISABLE_FILE": str(
             tmp_path / "state/control/EMERGENCY_DISABLE"
@@ -138,10 +175,20 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
     }
 
 
-def git_head() -> str:
+def git_head(repository: Path) -> str:
     return subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=ROOT,
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def git(repository: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", *arguments],
+        cwd=repository,
         check=True,
         capture_output=True,
         text=True,

@@ -8,8 +8,10 @@ from datetime import UTC, datetime
 from enum import Enum
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 from time import monotonic, sleep
 from typing import Any, Protocol
 from uuid import uuid4
@@ -300,6 +302,71 @@ class InMemoryGitCommandLogStore:
 
     def get(self, reference: str) -> str:
         return self._records[reference]
+
+
+class FilesystemGitCommandLogStore:
+    """Durable content-addressed storage for redacted Git command logs."""
+
+    def __init__(self, root: Path | str) -> None:
+        self._root = Path(root).resolve()
+        self._root.mkdir(parents=True, exist_ok=True)
+
+    def put(self, *, key: str, content: str) -> str:
+        digest = sha256(content.encode("utf-8")).hexdigest()
+        path = self._root / digest[:2] / digest[2:]
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        return f"sha256:{digest}"
+
+
+class SubprocessGitSandbox:
+    """Process boundary used inside the dedicated workflow worker container."""
+
+    def __init__(self, disabled_hooks_path: Path | str) -> None:
+        self._disabled_hooks_path = Path(disabled_hooks_path).resolve()
+        self._disabled_hooks_path.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def disabled_hooks_path(self) -> str:
+        return str(self._disabled_hooks_path)
+
+    @property
+    def null_device_path(self) -> str:
+        return os.devnull
+
+    def run(
+        self,
+        *,
+        repository: Path,
+        arguments: Sequence[str],
+        environment: Mapping[str, str],
+        timeout_ms: int,
+        stdin: bytes | None = None,
+    ) -> GitSandboxCommandResult:
+        try:
+            result = subprocess.run(
+                ["git", *arguments],
+                cwd=repository,
+                env=dict(environment),
+                input=stdin,
+                capture_output=True,
+                check=False,
+                timeout=timeout_ms / 1000,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise GitSandboxTimeout(
+                stdout=error.stdout or b"", stderr=error.stderr or b""
+            ) from None
+        except OSError:
+            return GitSandboxCommandResult(
+                exit_code=127, stderr=b"git process could not be started"
+            )
+        return GitSandboxCommandResult(
+            exit_code=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
 
 
 @dataclass(frozen=True)

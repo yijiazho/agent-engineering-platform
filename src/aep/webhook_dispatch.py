@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import sqlite3
@@ -46,6 +47,17 @@ class SQLiteReconciliationDispatcher:
                     deduplication_key TEXT PRIMARY KEY,
                     event_id TEXT NOT NULL UNIQUE,
                     event_json TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reconciliation_failures (
+                    event_id TEXT PRIMARY KEY,
+                    failure_class TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    failed_at TEXT NOT NULL,
+                    FOREIGN KEY (event_id) REFERENCES github_webhook_events(event_id)
                 )
                 """
             )
@@ -125,6 +137,48 @@ class SQLiteReconciliationDispatcher:
             )
             if cursor.rowcount != 1:
                 raise KeyError(f"reconciliation request {event_id!r} was not found")
+
+    def mark_failed(
+        self, event_id: str, *, failure_class: str, message: str
+    ) -> None:
+        """Persist one safe terminal failure and retire its outbox request."""
+
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (event_id, failure_class, message)
+        ):
+            raise ValueError("failure identity, class, and message are required")
+        failed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT 1 FROM reconciliation_outbox WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"reconciliation request {event_id!r} was not found")
+            connection.execute(
+                "INSERT OR IGNORE INTO reconciliation_failures "
+                "(event_id, failure_class, message, failed_at) VALUES (?, ?, ?, ?)",
+                (event_id, failure_class, message, failed_at),
+            )
+            connection.execute(
+                "UPDATE reconciliation_outbox SET status = 'COMPLETED' "
+                "WHERE event_id = ?",
+                (event_id,),
+            )
+            connection.commit()
+
+    def failure(self, event_id: str) -> Mapping[str, str] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT failure_class, message, failed_at "
+                "FROM reconciliation_failures WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"failureClass": row[0], "message": row[1], "failedAt": row[2]}
 
     def outbox_count(self) -> int:
         """Return the number of durable reconciliation identities."""

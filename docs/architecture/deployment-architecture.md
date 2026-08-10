@@ -636,6 +636,19 @@ durable host directory, and injects provider credentials through service-scoped
 secret files. Its public Event Controller sits behind trusted HTTPS ingress;
 all other service ports bind to loopback.
 
+The dogfood Workflow Runtime is the single MVP reconciliation consumer. It
+polls the transactional webhook outbox, resolves the bound default branch
+through the GitHub App, creates the deterministic WorkflowExecution, provisions
+the revision-bound checkout, scans repository knowledge, and composes the
+scheduler with all six existing production handlers. Runtime objects are
+atomically checkpointed to durable JSON and GeneratedArtifact bodies use a
+filesystem content-addressed store. A row becomes completed only after the
+WorkflowExecution has terminal evidence; safe configuration failures are
+persisted separately. Logical Agent, Context, Tool, and Evaluation boundaries
+remain provider-neutral even though the MVP consumer invokes them in one
+process. Workflow Runtime therefore mounts the Docker socket for its Docker
+Tool boundary; the separately addressable Tool Runtime retains its own mount.
+
 ---
 
 # 21. Repository Registration And Self-Hosting
@@ -778,6 +791,11 @@ CreatePullRequest handler checks an injected publication guard before local
 commit and again immediately before Git push and pull-request creation. Health
 becomes non-ready while disabled. This layered gate does not replace revoking
 or suspending the GitHub App when provider-level isolation is required.
+
+Before any Resource bytes are loaded, every service verifies that the mounted
+checkout is at the configured 40-character commit, has no modified or untracked
+files, and is detached. The service image includes Git for this verification
+and for the bounded checkout and publication adapters.
 
 ---
 

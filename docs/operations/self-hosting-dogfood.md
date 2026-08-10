@@ -11,7 +11,9 @@ unmerged pull request; AEP has no merge or deployment capability.
 Use a dedicated host with Docker Compose v2, Git, HTTPS ingress, enough disk for
 the repository cache plus concurrent validation worktrees, and a backup target
 outside the AEP state directory. Protect the Docker socket as root-equivalent
-host access and allow only the Tool Runtime container to mount it.
+host access. Workflow Runtime mounts it for the monolithic MVP reconciliation
+worker's Docker validation boundary; Tool Runtime mounts it for its separately
+addressable service responsibility. No other service receives the socket.
 
 Create a detached, read-only Resource checkout at the release commit. Do not
 run the control plane from a branch checkout.
@@ -30,6 +32,10 @@ the Resource checkout and state directory non-overlapping. The image is pulled
 by digest, runs with a read-only root filesystem, and mounts the pinned Resource
 checkout read-only. Durable ingress, checkout ownership, source cache,
 worktrees, evidence, and credential leases live under `AEP_STATE_DIRECTORY`.
+Startup verifies the checkout is detached and completely clean before loading
+`.ai/`; a modified or untracked file fails every service. The deployment also
+passes `AEP_STATE_DIRECTORY` as the host-visible Docker state root so nested
+validation binds the execution worktree rather than a container-only path.
 
 ## Configure GitHub And Secrets
 
@@ -72,6 +78,13 @@ overlapping mutable and immutable storage. Confirm the Resource inventory
 contains one Event, one Workflow, six Tasks, four Agents, and all referenced
 Prompts, Models, Tools, Policies, Evaluations, and KnowledgeBases.
 
+Workflow Runtime must also remain running after its first poll. It consumes the
+shared outbox, resolves the live default-branch SHA through the bound GitHub
+App, provisions the execution checkout, and invokes the six handlers through
+the deterministic scheduler. Runtime checkpoints are stored under
+`runtime/objects.json`; GeneratedArtifact bodies, Docker logs, and redacted Git
+logs are stored under their respective content-addressed state directories.
+
 Verify the live GitHub installation from Workflow Runtime before enabling the
 webhook. The result must name only this repository and report `READY`; it must
 not contain credentials. Run the deterministic allowed and blocked harness
@@ -94,7 +107,8 @@ The first response must be `202 accepted`; an identical replay must be
 `200 duplicate` with the same Event ID. A bad signature, another repository,
 an action other than `opened`, and an oversized request must be rejected.
 Inspect `shared/github-webhook.sqlite3` and confirm exactly one Event and one
-outbox identity for the replayed delivery.
+outbox identity for the replayed delivery. The row may remain pending while the
+workflow runs, but must become completed only after terminal runtime evidence.
 
 Before a live publication, run a blocked path using a denied
 `github.create_pr` policy or intentionally failing validation. Persist the

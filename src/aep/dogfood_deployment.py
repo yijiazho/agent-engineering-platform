@@ -114,6 +114,8 @@ def verify_dogfood_environment(
         "tool-runtime": ("AEP_GITHUB_APP_PRIVATE_KEY_FILE",),
     }
     secret_names = secret_names_by_service.get(service_name, ())
+    if service_name == "workflow-runtime":
+        required("AEP_DOCKER_HOST_STATE_DIRECTORY")
     if require_secrets:
         for name in secret_names:
             path = Path(required(name))
@@ -155,7 +157,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "start-service":
         verify_dogfood_environment()
-        local_main(["serve"])
+        consumer = None
+        if os.environ.get("AEP_SERVICE_NAME") == "workflow-runtime":
+            from aep.dogfood_runtime import DogfoodReconciliationConsumer
+
+            consumer = DogfoodReconciliationConsumer.from_environment(os.environ)
+            consumer.start()
+        try:
+            local_main(["serve"])
+        finally:
+            if consumer is not None:
+                consumer.close()
         return
     print(
         json.dumps(

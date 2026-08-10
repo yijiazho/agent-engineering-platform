@@ -76,7 +76,8 @@ Create the self-hosting deployment and operator runbook that:
 
 The digest-pinned, repository-bound Compose profile, startup drift checks,
 service-scoped secret mounts, durable storage layout, emergency publication
-guard, deployment contract tests, and complete operator runbook are implemented.
+guard, durable reconciliation consumer, six-handler production composition,
+deployment contract tests, and complete operator runbook are implemented.
 
 Completion remains gated on the controlled external pilot. An authorized
 operator must install the GitHub App, supply live GitHub and Model credentials,

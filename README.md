@@ -109,8 +109,12 @@ the local topology smoke test, it requires a digest-pinned published image, an
 exact detached Resource commit, durable host storage, the repository-scoped
 GitHub App, webhook HMAC secret, and live OpenAI credential. It runs the image
 and Resource checkout read-only, confines generated changes to durable
-execution worktrees, mounts the Docker boundary only into Tool Runtime, and
-fails startup on identity or revision drift.
+execution worktrees, and fails startup on identity, revision, attachment, or
+working-tree drift. Workflow Runtime consumes the durable webhook outbox and
+composes the checkout manager, scheduler, six production Task handlers, live
+providers, and Docker validation boundary. Both Workflow Runtime and the
+separately addressable Tool Runtime mount the Docker socket; only Workflow
+Runtime performs the MVP end-to-end reconciliation.
 
 ```powershell
 Copy-Item deploy/self-hosting/.env.example deploy/self-hosting/.env
@@ -480,8 +484,11 @@ Before enabling a real webhook, verify the deployment in this order:
 
 The deterministic harness, authenticated webhook ingress, execution checkout,
 GitHub App integration, live Model adapter, and pinned dogfood deployment
-profile are implemented. AEP-043 remains in progress until an authorized
-operator completes and records the credentialed live pilot.
+profile and reconciliation consumer are implemented. Runtime objects are
+atomically checkpointed under `AEP_STATE_ROOT/runtime`, artifact bodies use a
+filesystem content-addressed store, and accepted outbox rows are retired only
+after terminal workflow evidence. AEP-043 remains in progress until an
+authorized operator completes and records the credentialed live pilot.
 
 ## Key Documents
 
