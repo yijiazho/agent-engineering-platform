@@ -1,6 +1,6 @@
 # AEP-043: Deploy Self-Hosting Dogfood Pilot
 
-**Status:** Not Started
+**Status:** In Progress
 
 ## Context
 
@@ -71,3 +71,16 @@ Create the self-hosting deployment and operator runbook that:
 * The runbook documents installation, GitHub configuration, smoke validation,
   monitoring, backup/recovery, secret rotation, upgrades, rollback, shutdown,
   and removal of the repository registration.
+
+## Implementation Status
+
+The digest-pinned, repository-bound Compose profile, startup drift checks,
+service-scoped secret mounts, durable storage layout, emergency publication
+guard, deployment contract tests, and complete operator runbook are implemented.
+
+Completion remains gated on the controlled external pilot. An authorized
+operator must install the GitHub App, supply live GitHub and Model credentials,
+enable authenticated ingress, run one labeled issue through all six Tasks, and
+record exactly one open, unmerged pull request plus the complete correlated
+runtime and publication evidence described by the runbook. Repository tests
+cannot satisfy that live acceptance criterion.

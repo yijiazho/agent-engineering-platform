@@ -1,6 +1,6 @@
 # ADR-004: Self-Hosting Repository Integration
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Authors:** Project Team
 

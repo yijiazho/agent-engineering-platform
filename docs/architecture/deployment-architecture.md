@@ -628,7 +628,13 @@ architectural ownership: Docker supplies independent process and network
 boundaries, and each logical service remains separately addressable. The local
 Resource Controller additionally provides read-only Resource discovery for
 credential-free smoke verification. Production storage services and
-Kubernetes manifests remain future deployment work.
+Kubernetes manifests remain future deployment work. The repository-bound MVP
+dogfood profile is instead an operational Docker Compose deployment under
+`deploy/self-hosting/`: it pulls an immutable image by digest, verifies a
+detached Resource checkout by commit, externalizes mutable state to an explicit
+durable host directory, and injects provider credentials through service-scoped
+secret files. Its public Event Controller sits behind trusted HTTPS ingress;
+all other service ports bind to loopback.
 
 ---
 
@@ -765,6 +771,13 @@ checkout, merge the pull request, or deploy the result. A human-reviewed release
 creates the next pinned control-plane version. AEP-038 through AEP-043 track the
 ingress, checkout, Resource, provider, and pilot work needed to make this
 deployment operational.
+
+The dogfood deployment uses a durable `control/EMERGENCY_DISABLE` marker. Event
+Controller checks it dynamically before admitting a delivery, and the
+CreatePullRequest handler checks an injected publication guard before local
+commit and again immediately before Git push and pull-request creation. Health
+becomes non-ready while disabled. This layered gate does not replace revoking
+or suspending the GitHub App when provider-level isolation is required.
 
 ---
 

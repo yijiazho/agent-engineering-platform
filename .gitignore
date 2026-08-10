@@ -78,6 +78,8 @@ obj/
 .docker/
 docker-compose.override.yml
 deploy/local/secrets/
+deploy/self-hosting/secrets/*
+!deploy/self-hosting/secrets/README.md
 
 # Kubernetes and local cluster output
 .kube/
