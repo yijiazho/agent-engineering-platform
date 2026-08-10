@@ -26,6 +26,7 @@ from aep.docker_validation_tool import (
 )
 from aep.evaluate_acceptance import EvaluateAcceptanceTaskHandler
 from aep.execution_checkout import (
+    CheckoutProvisionError,
     CheckoutRequest,
     ExecutionCheckoutManager,
     GitRepositorySource,
@@ -172,8 +173,14 @@ class DogfoodWorkflowRunner:
         if workflow is None:
             raise DogfoodReconciliationError("resolved Workflow is unavailable")
         event_resource = self._event_resource(workflow)
-        revision = self._github.client.resolve_default_branch_revision()
         execution_id = _workflow_execution_id(str(event["id"]), workflow)
+        revision = _reconciliation_revision(
+            self._store,
+            execution_id,
+            self._github.client.resolve_default_branch_revision,
+        )
+        if revision is None:
+            return execution_id
         checkout_manager = ExecutionCheckoutManager(
             source=GitRepositorySource(
                 "https://github.com/yijiazho/agent-engineering-platform.git"
@@ -477,6 +484,17 @@ class DogfoodReconciliationConsumer:
             try:
                 self._runner.run(request)
             except Exception as error:
+                if isinstance(error, CheckoutProvisionError):
+                    classification = str(
+                        getattr(error.classification, "value", error.classification)
+                    )
+                    if classification == "CONFIGURATION":
+                        self._dispatcher.mark_failed(
+                            event_id,
+                            failure_class=classification,
+                            message="dogfood checkout provisioning failed configuration checks",
+                        )
+                    continue
                 classification = (
                     "CONFIGURATION"
                     if isinstance(error, (DogfoodReconciliationError, ValueError))
@@ -509,6 +527,25 @@ class DogfoodReconciliationConsumer:
         while not self._stop.is_set():
             self.run_once()
             self._stop.wait(self._poll_seconds)
+
+
+def _reconciliation_revision(
+    store: DurableJsonRuntimeObjectStore,
+    execution_id: str,
+    resolve_revision: Callable[[], str],
+) -> str | None:
+    """Reuse immutable execution inputs across retries and restarts."""
+    existing = store.get(execution_id)
+    if existing is None:
+        return resolve_revision()
+    if existing.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+        return None
+    revision = existing.get("repositoryRevision")
+    if not isinstance(revision, str) or not revision:
+        raise DogfoodReconciliationError(
+            "existing WorkflowExecution has no repositoryRevision"
+        )
+    return revision
 
 
 def _workflow_execution_id(event_id: str, workflow: Resource) -> str:
