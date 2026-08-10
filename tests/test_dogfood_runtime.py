@@ -105,3 +105,22 @@ def test_checkout_configuration_failure_is_terminal(tmp_path: Path) -> None:
     assert dispatcher.failure("event-dogfood")["message"] == (
         "dogfood checkout provisioning failed configuration checks"
     )
+
+
+def test_polling_failure_does_not_kill_consumer_and_is_visible(tmp_path: Path) -> None:
+    dispatcher = SQLiteReconciliationDispatcher(tmp_path / "webhook.sqlite3")
+    consumer = DogfoodReconciliationConsumer(dispatcher, RecordingRunner(), poll_seconds=0)
+    calls = 0
+
+    def failing_poll() -> None:
+        nonlocal calls
+        calls += 1
+        consumer._stop.set()
+        raise OSError("database is locked")
+
+    consumer.run_once = failing_poll  # type: ignore[method-assign]
+    consumer._run()
+
+    assert calls == 1
+    assert consumer.liveness()["status"] == "degraded"
+    assert "database is locked" in consumer.liveness()["lastPollError"]

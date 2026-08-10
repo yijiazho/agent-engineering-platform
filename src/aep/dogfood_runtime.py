@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+import logging
 from pathlib import Path
 import subprocess
 from threading import Event, Thread
@@ -464,6 +465,9 @@ class DogfoodReconciliationConsumer:
         self._poll_seconds = poll_seconds
         self._stop = Event()
         self._thread: Thread | None = None
+        self._last_poll_error: str | None = None
+        self._last_poll_at: datetime | None = None
+        self._logger = logging.getLogger(__name__)
 
     @classmethod
     def from_environment(
@@ -523,9 +527,24 @@ class DogfoodReconciliationConsumer:
             self._thread.join(timeout=max(5.0, self._poll_seconds * 2))
             self._thread = None
 
+    def liveness(self) -> Mapping[str, Any]:
+        """Expose the polling state for service diagnostics and health checks."""
+        return {
+            "status": "degraded" if self._last_poll_error else "healthy",
+            "lastPollAt": self._last_poll_at.isoformat() if self._last_poll_at else None,
+            "lastPollError": self._last_poll_error,
+        }
+
     def _run(self) -> None:
         while not self._stop.is_set():
-            self.run_once()
+            try:
+                self.run_once()
+            except Exception as error:
+                self._last_poll_error = f"{type(error).__name__}: {error}"
+                self._logger.exception("dogfood reconciliation polling failed; retrying")
+            else:
+                self._last_poll_error = None
+            self._last_poll_at = datetime.now(UTC)
             self._stop.wait(self._poll_seconds)
 
 

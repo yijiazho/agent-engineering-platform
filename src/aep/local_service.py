@@ -274,7 +274,8 @@ class LocalServiceHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
         if self.path == "/healthz":
-            self._send_json(200, self.server.runtime.health())
+            health = self.server.runtime.health()
+            self._send_json(503 if health["status"] != "ready" else 200, health)
             return
         if (
             self.path == "/v1/resources"
