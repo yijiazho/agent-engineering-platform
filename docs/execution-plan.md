@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 37 |
+| Completed | 42 |
 | In Progress | 0 |
-| Not Started | 6 |
+| Not Started | 1 |
 | Blocked | 0 |
 | Total | 43 |
 
@@ -70,6 +70,10 @@ immutable execution, Resource, revision, status, timing, and failure evidence.
 AgentInvocation coordination now binds immutable ResolvedAgent and
 ContextPackage inputs, assembles bounded model requests, persists provider
 evidence, and validates structured output without exposing repository retrieval.
+The live OpenAI Model adapter now selects the provider from the immutable Model
+Resource, enforces its model, parameters, output-token, timeout, structured
+output, and retry bounds, injects runtime-only credentials, and records safe
+provider identity, usage, latency, finish, and failure evidence.
 The AnalyzeIssue Task handler now composes those boundaries to create issue
 context, invoke the versioned Issue Analyzer, run deterministic schema
 Evaluation, publish an `ISSUE_ANALYSIS` GeneratedArtifact, and attach the
@@ -163,7 +167,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 39 | [AEP-039: Provision Revision-Bound Execution Checkouts](tasks/AEP-039-provision-revision-bound-execution-checkouts.md) | Completed |
 | 40 | [AEP-040: Create Self-Hosting Resource Bundle](tasks/AEP-040-create-self-hosting-resource-bundle.md) | Completed |
 | 41 | [AEP-041: Implement GitHub App Provider Integration](tasks/AEP-041-implement-github-app-provider-integration.md) | Completed |
-| 42 | [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md) | Not Started |
+| 42 | [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md) | Completed |
 | 43 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | Not Started |
 
 ---
@@ -213,7 +217,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-039 | AEP-015, AEP-021, AEP-022, AEP-035, AEP-036 | Completed |
 | AEP-040 | AEP-003, AEP-017, AEP-020, AEP-025, AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
 | AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Completed |
-| AEP-042 | AEP-013, AEP-014, AEP-036 | Not Started |
+| AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
 | AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Not Started |
 
 ---

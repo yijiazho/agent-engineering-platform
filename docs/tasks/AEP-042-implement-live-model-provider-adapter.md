@@ -1,6 +1,6 @@
 # AEP-042: Implement Live Model Provider Adapter
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -56,3 +56,53 @@ Implement one live MVP Model provider adapter, selected from the explicit
   missing credentials, and redaction without network access.
 * README and deployment documentation describe provider selection, secret
   injection, supported configuration, and a credential-free verification mode.
+
+## Implementation Notes
+
+`aep.openai_model_provider` implements a dependency-free OpenAI Responses API
+adapter behind the existing `ModelAdapter` interface. It translates only the
+assembled model input, requests strict JSON Schema output, enforces the Model
+Resource model, parameters, output-token limit, one overall timeout, and retry
+policy, and normalizes request identity, model identity, usage, latency, finish
+state, attempts, and safe failures. Runtime-only configuration reads the API
+key from `AEP_OPENAI_API_KEY_FILE` and an optional clean HTTPS endpoint from
+`AEP_OPENAI_API_URL`; unsupported providers and missing or invalid credentials
+fail before invocation.
+
+ResolvedAgent and ModelInvocation evidence now retain the exact effective
+Model configuration in addition to the immutable Model reference. Provider
+and transport bodies never enter fixed failure messages or exception chains.
+Provider-controlled request IDs become deterministic redacted hashes before
+persistence or logging. Invocation-time configuration failures are normalized
+as permanent Model failures so the coordinator terminalizes both invocation
+records.
+The adapter permits only finite, stateless generation parameters and rejects
+provider conversation handles such as `previous_response_id` and
+`conversation`. It records the configured alias and provider-resolved snapshot
+separately, allowing normal OpenAI alias resolution without weakening model
+identity evidence. Configuration rejects non-finite numeric parameters before
+runtime mutation, while serialization failures are also normalized as
+permanent terminal failures.
+The live OpenAI adapter also requires an explicit Resource `timeoutMs`; it does
+not apply an unrecorded provider default, so persisted effective configuration
+always contains the deadline used for a request.
+Provider translation maps the versioned Prompt system, formatting, and examples
+to the Responses API instruction channel while sending only the ContextPackage
+as user input. Adversarial issue or repository text therefore cannot occupy the
+same provider-priority channel as the self-hosting guardrails.
+Incomplete results caused by content filtering or the configured output-token
+bound are permanent because an unchanged retry cannot succeed; unknown
+incomplete reasons remain recoverable within Resource bounds. Deeply nested
+provider or output JSON and invalid non-finite retry hints are normalized
+without leaving runtime evidence nonterminal. Provider schema projection also
+preserves property names that happen to match unsupported schema keywords.
+The urllib transport enforces the remaining Model deadline across connection
+and incremental response reads through a cancellable worker, preventing slow
+streams from extending the invocation indefinitely. Redirect handling is
+disabled, so credentials are never forwarded to a different or downgraded
+origin.
+Offline scripted-transport tests cover structured success, bounds and usage,
+timeouts, transient retry, rate limiting, refusal, malformed output, alias
+resolution, stateless configuration enforcement, and redaction. The operator
+guide documents secret injection and a credential-free, network-free
+verification path.

@@ -426,6 +426,7 @@ def _model_configuration(model: Resource) -> ModelConfiguration:
         parameters=dict(spec.get("parameters", {})),
         token_limit=spec.get("tokenLimit"),
         timeout_ms=spec.get("timeoutMs"),
+        retry_policy=dict(spec.get("retryPolicy", {})),
     )
 
 

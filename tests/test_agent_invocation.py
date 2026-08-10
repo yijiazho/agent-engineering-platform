@@ -21,6 +21,11 @@ from aep.model_invocation import (
     ModelUsage,
 )
 from aep.observability import StructuredLifecycleLogger
+from aep.openai_model_provider import (
+    OpenAIModelAdapter,
+    OpenAIProviderConfig,
+    ProviderHttpResponse,
+)
 from aep.runtime_store import InMemoryRuntimeObjectStore
 
 
@@ -63,6 +68,7 @@ def test_success_persists_model_evidence_and_deterministically_assembled_input()
     assert model["latencyMs"] == 19
     assert model["cost"] == 0.0125
     assert model["providerMetadata"] == {"requestId": "fake-request-1", "finishReason": "stop"}
+    assert model["modelConfiguration"] == model_configuration().as_record()
     assert model["schemaValidation"] == "PASSED"
     assert model["inputAddress"].startswith("sha256:")
     assert model["outputAddress"].startswith("sha256:")
@@ -126,6 +132,99 @@ def test_provider_failure_persists_both_failed_records_with_classification() -> 
         "requestId": "fake-failed-1",
         "errorCode": "unavailable",
     }
+
+
+def test_adapter_configuration_failure_terminalizes_both_invocations() -> None:
+    store = InMemoryRuntimeObjectStore()
+    configuration = ModelConfiguration(
+        model_ref={"kind": "Model", "name": "test-model", "version": "1.0.0"},
+        provider="openai",
+        model="gpt-5",
+        parameters={"previous_response_id": "must-not-use-provider-state"},
+    )
+    agent = resolved_agent()
+    agent["modelParameters"] = dict(configuration.parameters)
+    agent["modelConfiguration"] = configuration.as_record()
+    logs = []
+
+    result = invoke_agent(
+        store=store,
+        invocation_id=AGENT_ID,
+        model_invocation_id=MODEL_ID,
+        resolved_agent=agent,
+        context_package=context_package(),
+        prompt=prompt(),
+        model_configuration=configuration,
+        adapter=OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="sk-must-not-leak"),
+            transport=NoCallTransport(),
+        ),
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+        lifecycle_logger=StructuredLifecycleLogger(logs.append),
+    )
+
+    model = store.get(MODEL_ID)
+    assert result["status"] == "FAILED"
+    assert result["failure"] == {
+        "class": "PERMANENT",
+        "message": "model provider configuration contains unsupported parameters",
+        "retryable": False,
+    }
+    assert model is not None and model["status"] == "FAILED"
+    assert model["failure"] == result["failure"]
+    assert model["providerMetadata"] == {"errorCode": "invalid_configuration"}
+    assert "sk-must-not-leak" not in repr(logs)
+    assert [entry["eventName"] for entry in logs] == [
+        "AgentInvocationStarted",
+        "ModelInvocationStarted",
+        "ModelInvocationFailed",
+        "AgentInvocationFailed",
+    ]
+
+
+def test_deep_provider_json_terminalizes_both_invocations_as_malformed() -> None:
+    class DeepResponseTransport:
+        def request(self, **_request):
+            return ProviderHttpResponse(
+                status=200,
+                headers={},
+                body=("[" * 2000 + "]" * 2000).encode(),
+            )
+
+    store = InMemoryRuntimeObjectStore()
+    configuration = ModelConfiguration(
+        model_ref={"kind": "Model", "name": "test-model", "version": "1.0.0"},
+        provider="openai",
+        model="gpt-5",
+        parameters={"temperature": 0},
+        timeout_ms=1_000,
+    )
+    agent = resolved_agent()
+    agent["modelParameters"] = dict(configuration.parameters)
+    agent["modelConfiguration"] = configuration.as_record()
+
+    result = invoke_agent(
+        store=store,
+        invocation_id=AGENT_ID,
+        model_invocation_id=MODEL_ID,
+        resolved_agent=agent,
+        context_package=context_package(),
+        prompt=prompt(),
+        model_configuration=configuration,
+        adapter=OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="sk-must-not-leak"),
+            transport=DeepResponseTransport(),
+        ),
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+    )
+
+    model = store.get(MODEL_ID)
+    assert result["status"] == "FAILED"
+    assert result["failure"]["class"] == "PERMANENT"
+    assert model is not None and model["status"] == "FAILED"
+    assert model["providerMetadata"]["errorCode"] == "malformed_response"
 
 
 def test_invalid_structured_output_fails_agent_but_records_successful_model_call() -> None:
@@ -300,6 +399,11 @@ class BlockingModelAdapter(ModelAdapter):
         )
 
 
+class NoCallTransport:
+    def request(self, **_request):
+        raise AssertionError("invalid configuration reached provider transport")
+
+
 def invoke(*, adapter, store, logger=None):
     return invoke_agent(
         store=store,
@@ -352,6 +456,7 @@ def resolved_agent():
         "toolRefs": [],
         "policyRefs": [],
         "modelParameters": {"temperature": 0},
+        "modelConfiguration": model_configuration().as_record(),
         "outputSchema": output_schema(),
         "resolvedAt": "2026-08-06T11:59:58Z",
     }

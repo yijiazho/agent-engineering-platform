@@ -655,6 +655,35 @@ fetch, choose revisions, or retrieve repository knowledge directly. GitHub App
 and Model provider credentials enter only through runtime secret and injected
 provider boundaries.
 
+The live MVP Model boundary selects the OpenAI adapter from the immutable
+`Model.spec.provider`. The adapter translates the already assembled Prompt,
+ContextPackage, and output schema to one strict structured Responses API
+request. Model Resource parameters, output-token limit, timeout, and retry
+policy remain the effective invocation bounds and are recorded on
+ResolvedAgent and ModelInvocation evidence. The API key is read from
+`AEP_OPENAI_API_KEY_FILE`; endpoint configuration comes from
+`AEP_OPENAI_API_URL`, never from a Resource. Fixed failure diagnostics and
+content addresses keep credentials and request/output bodies out of lifecycle
+logs. Local selection and endpoint verification requires neither credentials
+nor network access; live startup fails closed when the secret is missing.
+The provider transport applies one remaining deadline to connection, headers,
+and bounded incremental response reads, and cancels the caller-visible
+operation when that deadline expires. It never follows HTTP redirects, which
+prevents the Authorization header from crossing origins or an HTTPS-to-HTTP
+downgrade.
+Only finite, stateless generation parameters cross this provider boundary;
+provider conversation handles are rejected. Evidence records the Model
+Resource's requested identity separately from the bounded provider-resolved
+identity so aliases can resolve to snapshots without changing the request.
+The adapter maps the versioned Prompt system and formatting content to the
+provider instruction channel, while the ContextPackage remains user content.
+This preserves provider-level priority for self-hosting guardrails over
+potentially adversarial issue and repository text.
+Content-filtered and output-token-exhausted incomplete results are terminal for
+an unchanged bounded request. Decoder recursion limits and non-finite retry
+hints are normalized, and structural schema projection distinguishes schema
+keywords from identically named fields in property maps.
+
 The GitHub provider resolves the installation from the bound owner/name and
 uses a repository-restricted, short-lived installation token. Token refresh is
 single-flight under concurrency and occurs before expiry. The provider adapts

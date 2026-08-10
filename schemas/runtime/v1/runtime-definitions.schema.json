@@ -300,6 +300,7 @@
             "toolRefs": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/toolRefList" },
             "policyRefs": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/policyRefList" },
             "modelParameters": { "$ref": "#/$defs/jsonObject" },
+            "modelConfiguration": { "$ref": "#/$defs/jsonObject" },
             "outputSchema": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/jsonSchema" },
             "resolvedAt": { "$ref": "#/$defs/timestamp" }
           },
@@ -343,6 +344,7 @@
             "kind": { "const": "ModelInvocation" },
             "agentInvocationId": { "$ref": "#/$defs/runtimeId" },
             "modelRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/modelRef" },
+            "modelConfiguration": { "$ref": "#/$defs/jsonObject" },
             "status": { "$ref": "#/$defs/status" },
             "inputAddress": { "$ref": "#/$defs/contentAddress" },
             "outputAddress": { "$ref": "#/$defs/contentAddress" },
