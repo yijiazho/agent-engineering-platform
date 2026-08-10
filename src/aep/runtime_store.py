@@ -6,6 +6,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
 from threading import RLock
 from types import MappingProxyType
 from typing import Any, Final
@@ -273,6 +276,115 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         task_execution_id = _task_execution_id(value)
         if task_execution_id is not None:
             self._task_execution_index.setdefault(task_execution_id, []).append(value["id"])
+
+
+class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
+    """Single-process durable runtime store for the MVP dogfood worker.
+
+    Every mutation is atomically checkpointed as JSON. The deployment runs one
+    workflow consumer, so the stronger multi-worker boundary remains the
+    provider-neutral ``RuntimeObjectStore`` interface rather than this adapter.
+    """
+
+    def __init__(self, path: Path | str) -> None:
+        super().__init__()
+        self._path = Path(path).resolve()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        if self._path.exists():
+            self._restore()
+
+    def create(
+        self, runtime_object: RuntimeObject, *, deterministic_key: str
+    ) -> RuntimeObject:
+        with self._lock:
+            result = super().create(
+                runtime_object, deterministic_key=deterministic_key
+            )
+            self._checkpoint()
+            return result
+
+    def claim(
+        self, deterministic_key: str, value: RuntimeObject
+    ) -> tuple[bool, RuntimeObject]:
+        with self._lock:
+            result = super().claim(deterministic_key, value)
+            self._checkpoint()
+            return result
+
+    def update_status(
+        self,
+        object_id: str,
+        status: str,
+        *,
+        expected_status: str | None = None,
+        updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        with self._lock:
+            result = super().update_status(
+                object_id,
+                status,
+                expected_status=expected_status,
+                updated_at=updated_at,
+                changes=changes,
+            )
+            self._checkpoint()
+            return result
+
+    def append_task_execution_id(
+        self,
+        workflow_execution_id: str,
+        task_execution_id: str,
+        *,
+        updated_at: str | None = None,
+    ) -> RuntimeObject:
+        with self._lock:
+            result = super().append_task_execution_id(
+                workflow_execution_id,
+                task_execution_id,
+                updated_at=updated_at,
+            )
+            self._checkpoint()
+            return result
+
+    def _restore(self) -> None:
+        try:
+            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            objects = payload["objects"]
+            deterministic_keys = payload["deterministicKeys"]
+            claims = payload["claims"]
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            raise RuntimeStoreError("durable runtime checkpoint is invalid") from None
+        if not all(isinstance(item, dict) for item in (objects, deterministic_keys, claims)):
+            raise RuntimeStoreError("durable runtime checkpoint is invalid")
+        self._objects = {
+            str(key): _copy_and_validate(value) for key, value in objects.items()
+        }
+        self._deterministic_keys = {
+            str(key): str(value) for key, value in deterministic_keys.items()
+        }
+        self._claims = {
+            str(key): deepcopy(value) for key, value in claims.items()
+        }
+        self._workflow_index.clear()
+        self._task_execution_index.clear()
+        for value in self._objects.values():
+            self._index(value)
+
+    def _checkpoint(self) -> None:
+        payload = {
+            "objects": self._objects,
+            "deterministicKeys": self._deterministic_keys,
+            "claims": self._claims,
+        }
+        temporary = self._path.with_suffix(self._path.suffix + ".tmp")
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        try:
+            temporary.write_text(encoded, encoding="utf-8")
+            os.replace(temporary, self._path)
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeStoreError("durable runtime checkpoint could not be written") from None
 
 
 def _copy_and_validate(runtime_object: RuntimeObject) -> dict[str, Any]:

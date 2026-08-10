@@ -102,6 +102,36 @@ package location.
 `docker compose ... down` keeps the local state volume. To intentionally reset
 that recoverable local state, run the same command with `--volumes`.
 
+## Self-Hosting Dogfood Deployment
+
+The repository-bound dogfood profile is under `deploy/self-hosting/`. Unlike
+the local topology smoke test, it requires a digest-pinned published image, an
+exact detached Resource commit, durable host storage, the repository-scoped
+GitHub App, webhook HMAC secret, and live OpenAI credential. It runs the image
+and Resource checkout read-only, confines generated changes to durable
+execution worktrees, and fails startup on identity, revision, attachment, or
+working-tree drift. Workflow Runtime consumes the durable webhook outbox and
+composes the checkout manager, scheduler, six production Task handlers, live
+providers, and Docker validation boundary. Both Workflow Runtime and the
+separately addressable Tool Runtime mount the Docker socket; only Workflow
+Runtime performs the MVP end-to-end reconciliation.
+
+```powershell
+Copy-Item deploy/self-hosting/.env.example deploy/self-hosting/.env
+docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml config --quiet
+docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml pull
+docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml up -d
+```
+
+Do not expose webhook ingress until the readiness, replay, blocked-publication,
+backup, and provider checks in the
+[self-hosting dogfood runbook](docs/operations/self-hosting-dogfood.md) pass.
+Creating the durable emergency-disable marker rejects new deliveries and is
+also rechecked at the CreatePullRequest boundary before remote mutation. The
+repository implementation does not claim the controlled live pilot complete;
+that requires the operator record for one real labeled issue and exactly one
+open, unmerged pull request.
+
 ## Integrating A GitHub Repository
 
 The MVP integration model is repository-bound. One AEP deployment processes
@@ -119,9 +149,10 @@ and the repository's versioned `.ai/` Resources.
 > `BuildImplementationPlan`, `GeneratePatch`, `RunValidation`, and
 > `EvaluateAcceptance`, and `CreatePullRequest` Task handlers and this
 > repository's complete self-hosting Resource bundle. The deterministic
-> end-to-end harness is available for local and CI verification. The current
-> Compose stack remains a credential-free
-> service-topology smoke test, not yet a deployable issue-to-PR integration.
+> end-to-end harness is available for local and CI verification. The local
+> Compose stack remains a credential-free service-topology smoke test. The
+> separate self-hosting profile and runbook enforce the pinned operational
+> boundary; the credentialed, controlled live pilot remains an operator gate.
 
 ### 1. Add Repository-Local Resources
 
@@ -452,9 +483,12 @@ Before enabling a real webhook, verify the deployment in this order:
    request is created.
 
 The deterministic harness, authenticated webhook ingress, execution checkout,
-GitHub App integration, and live Model adapter are implemented. The local
-Compose topology remains a credential-free smoke test until AEP-043 supplies
-and verifies the pinned dogfood deployment.
+GitHub App integration, live Model adapter, and pinned dogfood deployment
+profile and reconciliation consumer are implemented. Runtime objects are
+atomically checkpointed under `AEP_STATE_ROOT/runtime`, artifact bodies use a
+filesystem content-addressed store, and accepted outbox rows are retired only
+after terminal workflow evidence. AEP-043 remains in progress until an
+authorized operator completes and records the credentialed live pilot.
 
 ## Key Documents
 
@@ -553,8 +587,8 @@ Implemented foundations currently include:
   credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work is the dogfood deployment required to register this
-repository with a running AEP control plane. See
+The remaining work is operator activation and the controlled live dogfood pilot
+required to prove this repository registration against GitHub. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

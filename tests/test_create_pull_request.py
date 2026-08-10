@@ -274,6 +274,35 @@ def test_success_publishes_after_all_three_policy_gates() -> None:
     assert description["policyDecisionIds"] == execution["policyDecisionIds"]
 
 
+def test_emergency_disable_prevents_commit_push_and_pull_request() -> None:
+    store, handler, task, _artifacts, git, github = setup_handler(
+        publication_guard=lambda: False
+    )
+
+    result = handler.execute(task, store.get(CREATE_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.POLICY
+    assert "emergency-disabled" in (result.message or "")
+    assert git.calls == []
+    assert github.calls == []
+
+
+def test_deployment_emergency_marker_is_the_default_publication_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker = tmp_path / "EMERGENCY_DISABLE"
+    marker.write_text("disabled", encoding="utf-8")
+    monkeypatch.setenv("AEP_EMERGENCY_DISABLE_FILE", str(marker))
+    store, handler, task, _artifacts, git, github = setup_handler()
+
+    result = handler.execute(task, store.get(CREATE_ID))
+
+    assert result.failure_class is FailureClass.POLICY
+    assert git.calls == []
+    assert github.calls == []
+
+
 def test_checkout_bound_working_branch_drives_commit_push_and_pull_request(
     tmp_path: Path,
 ) -> None:
@@ -523,6 +552,7 @@ def setup_handler(
     git_failure: ToolFailureClass | None = None,
     github_outcome: Mapping[str, Any] | Exception | None = None,
     fail_description_once: bool = False,
+    publication_guard=None,
 ):
     store, acceptance_handler, acceptance_task, base_artifacts = setup_acceptance()
     acceptance_result = acceptance_handler.execute(
@@ -650,6 +680,7 @@ def setup_handler(
         github_adapter=GitHubToolAdapter(github),
         event_resolver=lambda event_id: event if event_id == "event-34" else None,
         clock=lambda: TIMESTAMP,
+        publication_guard=publication_guard,
     )
     return store, handler, task, artifacts, git, github
 

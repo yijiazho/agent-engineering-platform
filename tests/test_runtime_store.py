@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from aep.runtime_store import (
+    DurableJsonRuntimeObjectStore,
     ImmutableRuntimeObjectError,
     InMemoryRuntimeObjectStore,
     RuntimeObjectAlreadyExistsError,
@@ -269,3 +270,23 @@ def test_concurrent_terminal_status_updates_have_one_winner() -> None:
     winners = [result for result in results if result != "CONFLICT"]
     assert len(winners) == 1
     assert store.get(object_id)["status"] == winners[0]  # type: ignore[index]
+
+
+def test_durable_json_store_restores_objects_claims_and_indexes(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    value = runtime_object("taskexecution-durable", status="RUNNING")
+    store.create(value, deterministic_key="durable-task")
+    store.claim("event:delivery", {"id": "event-durable"})
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+
+    assert restarted.get("taskexecution-durable")["status"] == "RUNNING"
+    assert restarted.list_by_workflow_execution(WORKFLOW_ID)[0]["id"] == (
+        "taskexecution-durable"
+    )
+    accepted, prior = restarted.claim(
+        "event:delivery", {"id": "event-replacement"}
+    )
+    assert accepted is False
+    assert prior["id"] == "event-durable"

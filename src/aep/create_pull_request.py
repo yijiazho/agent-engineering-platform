@@ -6,6 +6,8 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from hashlib import sha256
 import json
+import os
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -89,6 +91,7 @@ class CreatePullRequestTaskHandler:
         github_adapter: GitHubToolAdapter,
         event_resolver: EventResolver,
         clock: Clock,
+        publication_guard: Callable[[], bool] | None = None,
     ) -> None:
         if not isinstance(resources, ResourceCollection):
             raise TypeError("resources must be a ResourceCollection")
@@ -107,6 +110,9 @@ class CreatePullRequestTaskHandler:
         self._github_adapter = github_adapter
         self._event_resolver = event_resolver
         self._clock = clock
+        if publication_guard is not None and not callable(publication_guard):
+            raise TypeError("publication_guard must be callable")
+        self._publication_guard = publication_guard or _environment_publication_guard
         self._publication_policy = PublicationPolicy(runtime_store)
         self._capability_policy = PreExecutionCapabilityPolicy(runtime_store)
 
@@ -114,6 +120,11 @@ class CreatePullRequestTaskHandler:
         self, task: Resource, task_execution: RuntimeObject
     ) -> TaskExecutionResult:
         try:
+            if not self._publication_guard():
+                return TaskExecutionResult.failure(
+                    FailureClass.POLICY,
+                    "publication is emergency-disabled by the operator",
+                )
             workflow = self._validate_inputs(task, task_execution)
             configuration = self._configuration(task, task_execution, workflow)
             evidence = self._accepted_evidence(task_execution, workflow)
@@ -234,6 +245,12 @@ class CreatePullRequestTaskHandler:
                     f"Publication Policy {publication['decision']}: {publication['reason']}",
                 )
 
+            if not self._publication_guard():
+                return TaskExecutionResult.failure(
+                    FailureClass.POLICY,
+                    "publication became emergency-disabled before Git push",
+                )
+
             push_request = ToolRequest(
                 tool_ref=_ref_record(configuration["gitTool"].ref),
                 input={
@@ -292,6 +309,12 @@ class CreatePullRequestTaskHandler:
                 return TaskExecutionResult.failure(
                     FailureClass.POLICY,
                     f"github.create_pr {github_policy['decision']}: {github_policy['reason']}",
+                )
+
+            if not self._publication_guard():
+                return TaskExecutionResult.failure(
+                    FailureClass.POLICY,
+                    "publication became emergency-disabled before pull-request creation",
                 )
 
             github_request = ToolRequest(
@@ -1268,6 +1291,11 @@ def _runtime_failure_class(failure: ToolFailureClass) -> str:
         ToolFailureClass.NOT_FOUND: "PERMANENT",
         ToolFailureClass.IO: "PERMANENT",
     }[failure]
+
+
+def _environment_publication_guard() -> bool:
+    marker = os.environ.get("AEP_EMERGENCY_DISABLE_FILE", "").strip()
+    return not marker or not Path(marker).exists()
 
 
 def _tool_failure(label: str, result: ToolResult) -> TaskExecutionResult:

@@ -15,6 +15,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import re
 from threading import Condition
 from time import monotonic
 from typing import Any, Protocol
@@ -428,6 +429,23 @@ class GitHubAppClient:
             lambda deadline, _mark: self._read_issue(issue_number, deadline),
             clock=self._clock,
         )
+
+    def resolve_default_branch_revision(self, *, timeout_ms: int = 10_000) -> str:
+        """Resolve the bound default branch to an immutable commit SHA."""
+
+        if timeout_ms < 1:
+            raise GitHubAppConfigurationError("revision timeout must be positive")
+        deadline = self._clock() + timeout_ms / 1000
+        branch = quote(self.config.base_branch, safe="")
+        response = self._api("GET", f"/git/ref/heads/{branch}", None, deadline)
+        value = _json_object(response.body)
+        target = value.get("object")
+        revision = target.get("sha") if isinstance(target, Mapping) else None
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise GitHubAppValidationError(
+                "GitHub default-branch revision response was invalid"
+            )
+        return revision
 
     def start_create_pull_request(self, repository: str, *, head: str, base: str, title: str, body: str) -> GitHubProviderOperation:
         self._require_repository(repository)

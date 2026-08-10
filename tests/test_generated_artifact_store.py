@@ -6,6 +6,7 @@ import pytest
 
 from aep.generated_artifact_store import (
     ContentIntegrityError,
+    FilesystemContentAddressedStore,
     GeneratedArtifactValidationError,
     ImmutableGeneratedArtifactError,
     InMemoryContentAddressedStore,
@@ -249,3 +250,12 @@ def test_publish_rejects_metadata_that_violates_runtime_schema(
 
     assert content_store.object_count == 0
     assert runtime_store.get("generatedartifact-123456789abc") is None
+
+
+def test_filesystem_content_store_survives_restart(tmp_path) -> None:
+    first = FilesystemContentAddressedStore(tmp_path / "artifacts")
+    address = first.put(b"durable evidence")
+
+    restarted = FilesystemContentAddressedStore(tmp_path / "artifacts")
+
+    assert restarted.get(address) == b"durable evidence"

@@ -4,10 +4,12 @@ import json
 import hashlib
 import hmac
 import os
+from dataclasses import replace
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import pytest
@@ -58,6 +60,19 @@ def test_smoke_starts_all_services_and_resolves_basic_resources(tmp_path: Path) 
     assert (tmp_path / "checkout-manager/registry.sqlite3").is_file()
     assert (tmp_path / "repository-cache").is_dir()
     assert (tmp_path / "execution-worktrees").is_dir()
+
+
+def test_emergency_disable_makes_healthz_non_ready(tmp_path: Path) -> None:
+    configs = [service_config(name, tmp_path, port=0) for name in MVP_SERVICE_PORTS]
+    marker = tmp_path / "control" / "EMERGENCY_DISABLE"
+    configs[0] = replace(configs[0], emergency_disable_file=marker)
+    marker.parent.mkdir(parents=True)
+    marker.write_text("operator disabled\n", encoding="utf-8")
+
+    with LocalMvpComposition(configs) as composition:
+        with pytest.raises(HTTPError) as error:
+            urlopen(f"{composition.addresses['event-controller']}/healthz", timeout=2)
+        assert error.value.code == 503
 
 
 def test_configuration_requires_every_explicit_boundary() -> None:

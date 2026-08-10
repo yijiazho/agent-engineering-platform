@@ -107,6 +107,54 @@ class InMemoryContentAddressedStore(ContentAddressedStore):
             return len(self._content)
 
 
+class FilesystemContentAddressedStore(ContentAddressedStore):
+    """Durable immutable content storage rooted outside execution worktrees."""
+
+    def __init__(self, root: Path | str) -> None:
+        self._root = Path(root).resolve()
+        self._root.mkdir(parents=True, exist_ok=True)
+        self._lock = RLock()
+
+    def put(self, content: bytes, *, expected_address: str | None = None) -> str:
+        if not isinstance(content, bytes):
+            raise TypeError("content must be bytes")
+        address = _content_address(content)
+        if expected_address is not None and expected_address != address:
+            raise ContentIntegrityError(
+                f"content digest {address!r} does not match "
+                f"expected address {expected_address!r}"
+            )
+        digest = address.removeprefix("sha256:")
+        target = self._root / digest[:2] / digest[2:]
+        with self._lock:
+            if target.exists():
+                existing = target.read_bytes()
+                if existing != content:
+                    raise ContentIntegrityError(
+                        f"stored content at {address!r} does not match its digest"
+                    )
+                return address
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_suffix(".tmp")
+            temporary.write_bytes(content)
+            temporary.replace(target)
+        return address
+
+    def get(self, content_address: str) -> bytes | None:
+        _validate_content_address(content_address)
+        digest = content_address.removeprefix("sha256:")
+        target = self._root / digest[:2] / digest[2:]
+        try:
+            content = target.read_bytes()
+        except FileNotFoundError:
+            return None
+        if _content_address(content) != content_address:
+            raise ContentIntegrityError(
+                f"stored content does not match address {content_address!r}"
+            )
+        return content
+
+
 class GeneratedArtifactStore(ABC):
     """Persistence boundary separating artifact metadata from content."""
 
@@ -323,6 +371,11 @@ def _encode_content(content: ArtifactContent) -> bytes:
 
 def _content_address(content: bytes) -> str:
     return f"sha256:{sha256(content).hexdigest()}"
+
+
+def _validate_content_address(value: str) -> None:
+    if not isinstance(value, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+        raise ContentIntegrityError("content address must be a lowercase SHA-256 address")
 
 
 def _snapshot(value: ArtifactMetadata) -> ArtifactMetadata:

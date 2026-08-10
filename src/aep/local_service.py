@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import subprocess
 from threading import Thread
 from types import MappingProxyType
 from typing import Any, Final
@@ -58,6 +59,8 @@ class LocalServiceConfig:
     state_root: Path
     github_webhook_secret: bytes | None = field(default=None, repr=False)
     github_webhook_max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
+    resource_revision: str | None = None
+    emergency_disable_file: Path | None = None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> "LocalServiceConfig":
@@ -135,6 +138,14 @@ class LocalServiceConfig:
             state_root=Path(required("AEP_STATE_ROOT")).resolve(),
             github_webhook_secret=webhook_secret,
             github_webhook_max_body_bytes=max_body_bytes,
+            resource_revision=(
+                values.get("AEP_RESOURCE_REVISION", "").strip() or None
+            ),
+            emergency_disable_file=(
+                Path(values["AEP_EMERGENCY_DISABLE_FILE"]).resolve()
+                if values.get("AEP_EMERGENCY_DISABLE_FILE", "").strip()
+                else None
+            ),
         )
 
 
@@ -149,6 +160,12 @@ class LocalServiceRuntime:
         if config.service_name == "event-controller" and not config.github_webhook_secret:
             raise LocalServiceConfigurationError(
                 "event-controller requires a GitHub webhook secret"
+            )
+        if config.resource_revision is not None:
+            verify_resource_checkout(
+                config.repository_root,
+                config.resource_revision,
+                require_detached=config.execution_environment == "dogfood",
             )
         resources = ResourceLoader(
             config.repository_root,
@@ -218,8 +235,10 @@ class LocalServiceRuntime:
 
     def health(self) -> dict[str, Any]:
         workspace = self.resources.workspace
-        return {
-            "status": "ready",
+        health = {
+            "status": (
+                "disabled" if self.emergency_disabled() else "ready"
+            ),
             "service": self.config.service_name,
             "environment": self.config.execution_environment,
             "repository": (
@@ -229,6 +248,13 @@ class LocalServiceRuntime:
             "workspace": f"{workspace.name}:{workspace.version}",
             "persistence": "local-directory",
         }
+        if self.config.resource_revision is not None:
+            health["resourceRevision"] = self.config.resource_revision
+        return health
+
+    def emergency_disabled(self) -> bool:
+        marker = self.config.emergency_disable_file
+        return marker is not None and marker.exists()
 
     def resolved_configuration(self) -> dict[str, Any]:
         return {
@@ -248,7 +274,8 @@ class LocalServiceHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
         if self.path == "/healthz":
-            self._send_json(200, self.server.runtime.health())
+            health = self.server.runtime.health()
+            self._send_json(503 if health["status"] != "ready" else 200, health)
             return
         if (
             self.path == "/v1/resources"
@@ -262,6 +289,11 @@ class LocalServiceHandler(BaseHTTPRequestHandler):
         ingress = self.server.runtime.github_webhook_ingress
         if self.path != WEBHOOK_PATH or ingress is None:
             self._send_json(404, {"error": "not_found"})
+            return
+        if self.server.runtime.emergency_disabled():
+            self._send_json(
+                503, {"status": "rejected", "code": "emergency_disabled"}
+            )
             return
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
@@ -308,6 +340,62 @@ def create_server(config: LocalServiceConfig) -> LocalServiceServer:
 
 def _write_ingress_evidence(evidence: Mapping[str, Any]) -> None:
     print(json.dumps(evidence, sort_keys=True), flush=True)
+
+
+def verify_resource_checkout(
+    repository_root: Path,
+    expected: str,
+    *,
+    require_detached: bool,
+) -> None:
+    if len(expected) != 40 or any(
+        character not in "0123456789abcdef" for character in expected
+    ):
+        raise LocalServiceConfigurationError(
+            "AEP_RESOURCE_REVISION must be a lowercase 40-character Git commit"
+        )
+    try:
+        command = [
+            "git",
+            "-c",
+            f"safe.directory={repository_root}",
+            "-C",
+            str(repository_root),
+        ]
+        completed = subprocess.run(
+            [*command, "rev-parse", "HEAD"], check=True,
+            capture_output=True, text=True, timeout=10,
+        )
+        status = subprocess.run(
+            [*command, "status", "--porcelain=v1", "--untracked-files=all"],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+        symbolic = subprocess.run(
+            [*command, "symbolic-ref", "-q", "HEAD"],
+            check=False, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise LocalServiceConfigurationError(
+            "the Resource checkout revision could not be verified"
+        ) from None
+    actual = completed.stdout.strip().lower()
+    if actual != expected:
+        raise LocalServiceConfigurationError(
+            "the Resource checkout does not match AEP_RESOURCE_REVISION: "
+            f"configured={expected}, loaded={actual}"
+        )
+    if status.stdout:
+        raise LocalServiceConfigurationError(
+            "the Resource checkout must be clean before Resources are loaded"
+        )
+    if require_detached and symbolic.returncode == 0:
+        raise LocalServiceConfigurationError(
+            "the dogfood Resource checkout must be detached at its pinned revision"
+        )
+    if symbolic.returncode not in {0, 1}:
+        raise LocalServiceConfigurationError(
+            "the Resource checkout attachment state could not be verified"
+        )
 
 
 class LocalMvpComposition:

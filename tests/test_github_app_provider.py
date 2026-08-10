@@ -183,6 +183,21 @@ def test_issue_read_uses_existing_tool_client_interface() -> None:
     assert result.output["metadata"]["providerRequestId"] == "issue-request"
 
 
+def test_default_branch_revision_is_resolved_through_bound_app() -> None:
+    revision = "a" * 40
+    transport = ScriptedTransport([
+        response(200, {"id": 137}),
+        token_response(),
+        response(200, {"object": {"type": "commit", "sha": revision}}),
+    ])
+    client = GitHubAppClient(config(), tokens=tokens(transport), transport=transport)
+
+    assert client.resolve_default_branch_revision() == revision
+    assert transport.requests[-1]["url"].endswith(
+        "/repos/acme/widgets/git/ref/heads/main"
+    )
+
+
 def test_pr_creation_reconciles_existing_duplicate_without_posting() -> None:
     transport = ScriptedTransport([
         response(200, {"id": 137}), token_response(),

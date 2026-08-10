@@ -1,0 +1,142 @@
+x-aep-common: &aep-common
+  image: "${AEP_IMAGE_REPOSITORY:?set AEP_IMAGE_REPOSITORY}@sha256:${AEP_IMAGE_DIGEST:?set AEP_IMAGE_DIGEST}"
+  pull_policy: always
+  restart: unless-stopped
+  read_only: true
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  command: ["python", "-m", "aep.dogfood_deployment", "start-service"]
+  environment: &aep-environment
+    AEP_REPOSITORY_ROOT: /srv/aep/resources
+    AEP_RESOURCE_SCHEMA_ROOT: /opt/aep/schemas/resources/v1
+    AEP_REPOSITORY_PROVIDER: github
+    AEP_REPOSITORY_OWNER: yijiazho
+    AEP_REPOSITORY_NAME: agent-engineering-platform
+    AEP_REPOSITORY_DEFAULT_BRANCH: main
+    AEP_WORKSPACE_NAME: agent-engineering-platform
+    AEP_WORKSPACE_VERSION: 1.0.0
+    AEP_EXECUTION_ENVIRONMENT: dogfood
+    AEP_STATE_ROOT: /var/lib/aep
+    AEP_DOCKER_HOST_STATE_DIRECTORY: ${AEP_STATE_DIRECTORY:?set AEP_STATE_DIRECTORY}
+    AEP_RESOURCE_REVISION: ${AEP_RESOURCE_REVISION:?set AEP_RESOURCE_REVISION}
+    AEP_IMAGE_DIGEST: ${AEP_IMAGE_DIGEST:?set AEP_IMAGE_DIGEST}
+    AEP_EMERGENCY_DISABLE_FILE: /var/lib/aep/control/EMERGENCY_DISABLE
+    AEP_GITHUB_APP_ID: ${AEP_GITHUB_APP_ID:?set AEP_GITHUB_APP_ID}
+    AEP_GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_private_key
+    AEP_GITHUB_AUTHORIZED_BRANCH_PREFIX: aep/execution/
+    AEP_GITHUB_API_URL: ${AEP_GITHUB_API_URL:-https://api.github.com}
+    AEP_OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+    AEP_OPENAI_API_URL: ${AEP_OPENAI_API_URL:-https://api.openai.com/v1}
+  volumes:
+    - ${AEP_RESOURCE_CHECKOUT:?set AEP_RESOURCE_CHECKOUT}:/srv/aep/resources:ro
+    - ${AEP_STATE_DIRECTORY:?set AEP_STATE_DIRECTORY}:/var/lib/aep
+
+x-aep-healthcheck: &aep-healthcheck
+  interval: 10s
+  timeout: 3s
+  retries: 12
+  start_period: 10s
+
+services:
+  event-controller:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: event-controller
+      AEP_SERVICE_PORT: "8081"
+      AEP_GITHUB_WEBHOOK_SECRET_FILE: /run/secrets/github_webhook_secret
+      AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES: ${AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES:-1048576}
+    secrets: [github_webhook_secret]
+    ports:
+      - "${AEP_WEBHOOK_BIND_ADDRESS:-127.0.0.1}:8081:8081"
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8081/healthz"]
+
+  resource-controller:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: resource-controller
+      AEP_SERVICE_PORT: "8082"
+    ports: ["127.0.0.1:8082:8082"]
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8082/healthz"]
+
+  workflow-runtime:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: workflow-runtime
+      AEP_SERVICE_PORT: "8083"
+    secrets: [github_app_private_key, openai_api_key]
+    volumes:
+      - ${AEP_RESOURCE_CHECKOUT:?set AEP_RESOURCE_CHECKOUT}:/srv/aep/resources:ro
+      - ${AEP_STATE_DIRECTORY:?set AEP_STATE_DIRECTORY}:/var/lib/aep
+      - ${AEP_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    ports: ["127.0.0.1:8083:8083"]
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8083/healthz"]
+
+  agent-resolver:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: agent-resolver
+      AEP_SERVICE_PORT: "8084"
+    secrets: [openai_api_key]
+    ports: ["127.0.0.1:8084:8084"]
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8084/healthz"]
+
+  context-builder:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: context-builder
+      AEP_SERVICE_PORT: "8085"
+    ports: ["127.0.0.1:8085:8085"]
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8085/healthz"]
+
+  tool-runtime:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: tool-runtime
+      AEP_SERVICE_PORT: "8086"
+    secrets: [github_app_private_key]
+    volumes:
+      - ${AEP_RESOURCE_CHECKOUT:?set AEP_RESOURCE_CHECKOUT}:/srv/aep/resources:ro
+      - ${AEP_STATE_DIRECTORY:?set AEP_STATE_DIRECTORY}:/var/lib/aep
+      - ${AEP_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    ports: ["127.0.0.1:8086:8086"]
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8086/healthz"]
+
+  evaluation-engine:
+    <<: *aep-common
+    environment:
+      <<: *aep-environment
+      AEP_SERVICE_NAME: evaluation-engine
+      AEP_SERVICE_PORT: "8087"
+    ports: ["127.0.0.1:8087:8087"]
+    healthcheck:
+      <<: *aep-healthcheck
+      test: ["CMD", "python", "-m", "aep.local_service", "check-health", "--url", "http://127.0.0.1:8087/healthz"]
+
+secrets:
+  github_webhook_secret:
+    file: ${AEP_GITHUB_WEBHOOK_SECRET_FILE:?set AEP_GITHUB_WEBHOOK_SECRET_FILE}
+  github_app_private_key:
+    file: ${AEP_GITHUB_APP_PRIVATE_KEY_FILE:?set AEP_GITHUB_APP_PRIVATE_KEY_FILE}
+  openai_api_key:
+    file: ${AEP_OPENAI_API_KEY_FILE:?set AEP_OPENAI_API_KEY_FILE}
