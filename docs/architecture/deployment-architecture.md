@@ -679,6 +679,10 @@ The adapter maps the versioned Prompt system and formatting content to the
 provider instruction channel, while the ContextPackage remains user content.
 This preserves provider-level priority for self-hosting guardrails over
 potentially adversarial issue and repository text.
+Content-filtered and output-token-exhausted incomplete results are terminal for
+an unchanged bounded request. Decoder recursion limits and non-finite retry
+hints are normalized, and structural schema projection distinguishes schema
+keywords from identically named fields in property maps.
 
 The GitHub provider resolves the installation from the bound owner/name and
 uses a repository-restricted, short-lived installation token. Token refresh is

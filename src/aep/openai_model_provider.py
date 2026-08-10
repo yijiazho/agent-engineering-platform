@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 import json
+from math import isfinite
 import os
 from pathlib import Path
 import re
@@ -35,6 +36,12 @@ _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
 _ALLOWED_PARAMETERS = frozenset({"temperature", "top_p"})
 _PROVIDER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
+    {"minLength", "maxLength", "uniqueItems"}
+)
+_SCHEMA_MAP_KEYWORDS = frozenset(
+    {"$defs", "definitions", "dependentSchemas", "patternProperties", "properties"}
+)
 
 
 class ModelProviderConfigurationError(ValueError):
@@ -265,7 +272,7 @@ class OpenAIModelAdapter(ModelAdapter):
             encoded = json.dumps(
                 payload, separators=(",", ":"), allow_nan=False
             ).encode("utf-8")
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, RecursionError, TypeError, ValueError):
             raise ModelInvocationError(
                 "model provider configuration cannot be serialized safely",
                 classification=ModelErrorClass.PERMANENT,
@@ -402,7 +409,7 @@ def _successful_response(
 ) -> ModelResponse:
     try:
         document = json.loads(response.body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
         raise _malformed() from None
     if not isinstance(document, Mapping):
         raise _malformed()
@@ -432,6 +439,13 @@ def _successful_response(
                 requested_model, provider_model, request_id, finish_reason="failed"
             ),
         )
+    if status == "incomplete":
+        raise _incomplete_failure(
+            document,
+            requested_model=requested_model,
+            provider_model=provider_model,
+            request_id=request_id,
+        )
     if status != "completed":
         raise ModelInvocationError(
             "model provider returned an incomplete response",
@@ -444,7 +458,7 @@ def _successful_response(
     output_text = _output_text(document)
     try:
         output = json.loads(output_text)
-    except (TypeError, json.JSONDecodeError):
+    except (TypeError, json.JSONDecodeError, RecursionError):
         raise _malformed(request_id=request_id, model=requested_model) from None
     usage = document.get("usage")
     if not isinstance(usage, Mapping):
@@ -527,6 +541,49 @@ def _failure(code: str, *, recoverable: bool) -> ModelInvocationError:
     )
 
 
+def _incomplete_failure(
+    document: Mapping[str, Any],
+    *,
+    requested_model: str,
+    provider_model: str,
+    request_id: str | None,
+) -> ModelInvocationError:
+    details = document.get("incomplete_details")
+    reason = details.get("reason") if isinstance(details, Mapping) else None
+    if reason == "content_filter":
+        return ModelInvocationError(
+            "model provider filtered the structured response",
+            classification=ModelErrorClass.PERMANENT,
+            code="safety_refusal",
+            provider_metadata=_response_metadata(
+                requested_model,
+                provider_model,
+                request_id,
+                finish_reason="content_filter",
+            ),
+        )
+    if reason == "max_output_tokens":
+        return ModelInvocationError(
+            "model provider exhausted the configured output token limit",
+            classification=ModelErrorClass.PERMANENT,
+            code="output_token_limit",
+            provider_metadata=_response_metadata(
+                requested_model,
+                provider_model,
+                request_id,
+                finish_reason="max_output_tokens",
+            ),
+        )
+    return ModelInvocationError(
+        "model provider returned an incomplete response",
+        classification=ModelErrorClass.RECOVERABLE,
+        code="incomplete_response",
+        provider_metadata=_response_metadata(
+            requested_model, provider_model, request_id, finish_reason="incomplete"
+        ),
+    )
+
+
 def _malformed(*, request_id: str | None = None, model: str | None = None) -> ModelInvocationError:
     metadata = {"provider": "openai", "requestId": request_id}
     if model is not None:
@@ -573,8 +630,11 @@ def _retry_after_ms(headers: Mapping[str, str]) -> int:
     for key, value in headers.items():
         if key.casefold() == "retry-after":
             try:
-                return max(0, min(60_000, round(float(value) * 1000)))
-            except (TypeError, ValueError):
+                seconds = float(value)
+                if not isfinite(seconds):
+                    return 0
+                return max(0, round(min(60.0, seconds) * 1000))
+            except (OverflowError, TypeError, ValueError):
                 return 0
     return 0
 
@@ -603,12 +663,18 @@ def _provider_schema(value: Any) -> Any:
     """
 
     if isinstance(value, Mapping):
-        unsupported = {"minLength", "maxLength", "uniqueItems"}
-        return {
-            str(key): _provider_schema(item)
-            for key, item in value.items()
-            if key not in unsupported
-        }
+        projected: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in _UNSUPPORTED_SCHEMA_KEYWORDS:
+                continue
+            if key in _SCHEMA_MAP_KEYWORDS and isinstance(item, Mapping):
+                projected[str(key)] = {
+                    str(name): _provider_schema(schema)
+                    for name, schema in item.items()
+                }
+            else:
+                projected[str(key)] = _provider_schema(item)
+        return projected
     if isinstance(value, (list, tuple)):
         return [_provider_schema(item) for item in value]
     return value

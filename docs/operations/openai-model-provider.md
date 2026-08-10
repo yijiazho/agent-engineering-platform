@@ -123,8 +123,19 @@ terminal failure path.
 
 Timeouts, rate limits, incomplete responses, and retryable provider or
 transport failures are recoverable only within the Resource retry/deadline
-bounds. Authentication failures, unsupported configuration, safety refusals,
-rejected requests, and malformed structured output are permanent. Provider
-error bodies and transport exception text are reduced
-to fixed diagnostics so credentials, prompts, ContextPackage bodies, and
-model output bodies do not enter exceptions or lifecycle logs.
+bounds. An incomplete response caused by `content_filter` is a permanent safety
+failure, and `max_output_tokens` exhaustion is a permanent configured-bound
+failure because retrying the unchanged request cannot succeed. Unknown
+incomplete reasons remain recoverable within the Resource bounds.
+Authentication failures, unsupported configuration, safety refusals, rejected
+requests, decoder nesting-limit failures, and malformed structured output are
+permanent. Non-finite or overflowing `Retry-After` values are ignored instead
+of escaping normalized failure handling. Provider error bodies and transport
+exception text are reduced to fixed diagnostics so credentials, prompts,
+ContextPackage bodies, and model output bodies do not enter exceptions or
+lifecycle logs.
+
+Provider schema projection removes unsupported `minLength`, `maxLength`, and
+`uniqueItems` keywords only from schema objects. Identically named fields under
+`properties` and other schema maps are preserved, including their `required`
+entries.

@@ -90,6 +90,12 @@ Provider translation maps the versioned Prompt system, formatting, and examples
 to the Responses API instruction channel while sending only the ContextPackage
 as user input. Adversarial issue or repository text therefore cannot occupy the
 same provider-priority channel as the self-hosting guardrails.
+Incomplete results caused by content filtering or the configured output-token
+bound are permanent because an unchanged retry cannot succeed; unknown
+incomplete reasons remain recoverable within Resource bounds. Deeply nested
+provider or output JSON and invalid non-finite retry hints are normalized
+without leaving runtime evidence nonterminal. Provider schema projection also
+preserves property names that happen to match unsupported schema keywords.
 The urllib transport enforces the remaining Model deadline across connection
 and incremental response reads through a cancellable worker, preventing slow
 streams from extending the invocation indefinitely. Redirect handling is

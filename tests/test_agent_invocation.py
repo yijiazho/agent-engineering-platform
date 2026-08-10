@@ -21,7 +21,11 @@ from aep.model_invocation import (
     ModelUsage,
 )
 from aep.observability import StructuredLifecycleLogger
-from aep.openai_model_provider import OpenAIModelAdapter, OpenAIProviderConfig
+from aep.openai_model_provider import (
+    OpenAIModelAdapter,
+    OpenAIProviderConfig,
+    ProviderHttpResponse,
+)
 from aep.runtime_store import InMemoryRuntimeObjectStore
 
 
@@ -177,6 +181,50 @@ def test_adapter_configuration_failure_terminalizes_both_invocations() -> None:
         "ModelInvocationFailed",
         "AgentInvocationFailed",
     ]
+
+
+def test_deep_provider_json_terminalizes_both_invocations_as_malformed() -> None:
+    class DeepResponseTransport:
+        def request(self, **_request):
+            return ProviderHttpResponse(
+                status=200,
+                headers={},
+                body=("[" * 2000 + "]" * 2000).encode(),
+            )
+
+    store = InMemoryRuntimeObjectStore()
+    configuration = ModelConfiguration(
+        model_ref={"kind": "Model", "name": "test-model", "version": "1.0.0"},
+        provider="openai",
+        model="gpt-5",
+        parameters={"temperature": 0},
+        timeout_ms=1_000,
+    )
+    agent = resolved_agent()
+    agent["modelParameters"] = dict(configuration.parameters)
+    agent["modelConfiguration"] = configuration.as_record()
+
+    result = invoke_agent(
+        store=store,
+        invocation_id=AGENT_ID,
+        model_invocation_id=MODEL_ID,
+        resolved_agent=agent,
+        context_package=context_package(),
+        prompt=prompt(),
+        model_configuration=configuration,
+        adapter=OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="sk-must-not-leak"),
+            transport=DeepResponseTransport(),
+        ),
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+    )
+
+    model = store.get(MODEL_ID)
+    assert result["status"] == "FAILED"
+    assert result["failure"]["class"] == "PERMANENT"
+    assert model is not None and model["status"] == "FAILED"
+    assert model["providerMetadata"]["errorCode"] == "malformed_response"
 
 
 def test_invalid_structured_output_fails_agent_but_records_successful_model_call() -> None:

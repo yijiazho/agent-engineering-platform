@@ -160,6 +160,18 @@ def success(*, output='{"answer":42}', request_id="resp_123", model="gpt-5"):
     )
 
 
+def incomplete(reason):
+    return response(
+        200,
+        {
+            "id": "resp_incomplete",
+            "model": "gpt-5",
+            "status": "incomplete",
+            "incomplete_details": {"reason": reason},
+        },
+    )
+
+
 def adapter(transport):
     return OpenAIModelAdapter(
         OpenAIProviderConfig(api_key="sk-runtime-secret"),
@@ -282,6 +294,38 @@ def test_transient_and_rate_limit_failures_retry_only_to_resource_bound():
     assert len(transport.requests) == 3
 
 
+@pytest.mark.parametrize(
+    ("reason", "code"),
+    [
+        ("content_filter", "safety_refusal"),
+        ("max_output_tokens", "output_token_limit"),
+    ],
+)
+def test_unchanged_request_cannot_retry_terminal_incomplete_reason(reason, code):
+    transport = ScriptedTransport([incomplete(reason), success()])
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(
+            model_request(retry_policy={"maxAttempts": 2, "backoffMs": 0})
+        )
+
+    assert raised.value.code == code
+    assert raised.value.recoverable is False
+    assert raised.value.provider_metadata["finishReason"] == reason
+    assert len(transport.requests) == 1
+
+
+def test_unknown_incomplete_reason_can_retry_within_resource_bound():
+    transport = ScriptedTransport([incomplete("provider_transient"), success()])
+
+    result = adapter(transport).invoke(
+        model_request(retry_policy={"maxAttempts": 2, "backoffMs": 0})
+    )
+
+    assert result.output == {"answer": 42}
+    assert len(transport.requests) == 2
+
+
 def test_timeout_is_recoverable_and_stops_at_max_attempts():
     transport = ScriptedTransport([TimeoutError("secret timeout"), TimeoutError("again")])
 
@@ -307,6 +351,20 @@ def test_rate_limit_exhaustion_has_explicit_safe_classification():
     assert raised.value.code == "rate_limit"
     assert raised.value.recoverable is True
     assert raised.value.provider_metadata["requestId"] == normalized_id("req_rate")
+
+
+@pytest.mark.parametrize("retry_after", ["1e309", "Infinity", "-Infinity", "NaN"])
+def test_nonfinite_retry_after_is_ignored_without_escaping_normalization(retry_after):
+    transport = ScriptedTransport(
+        [response(429, {}, headers={"Retry-After": retry_after}), success()]
+    )
+
+    result = adapter(transport).invoke(
+        model_request(retry_policy={"maxAttempts": 2, "backoffMs": 0})
+    )
+
+    assert result.output == {"answer": 42}
+    assert len(transport.requests) == 2
 
 
 def test_safety_refusal_is_permanent_and_contains_no_output_body():
@@ -335,6 +393,8 @@ def test_safety_refusal_is_permanent_and_contains_no_output_body():
         ProviderHttpResponse(200, {}, b"not-json secret output"),
         success(output="not-json secret output"),
         success(model="secret model identity"),
+        ProviderHttpResponse(200, {}, ("[" * 2000 + "]" * 2000).encode()),
+        success(output="[" * 2000 + "0" + "]" * 2000),
     ],
 )
 def test_malformed_success_is_permanent(provider_response):
@@ -484,3 +544,30 @@ def test_every_self_hosting_agent_schema_projects_to_supported_provider_subset()
         assert projected["type"] == "object"
         assert projected["additionalProperties"] is False
         assert set(projected["required"]) == set(projected["properties"])
+
+
+def test_schema_projection_preserves_property_names_that_match_removed_keywords():
+    declared = {
+        "type": "object",
+        "required": ["minLength", "maxLength", "uniqueItems"],
+        "properties": {
+            "minLength": {"type": "string", "minLength": 2},
+            "maxLength": {"type": "string", "maxLength": 8},
+            "uniqueItems": {
+                "type": "array",
+                "uniqueItems": True,
+                "items": {"type": "string"},
+            },
+        },
+        "additionalProperties": False,
+    }
+
+    projected = _provider_schema(declared)
+
+    assert set(projected["properties"]) == set(projected["required"])
+    assert projected["properties"]["minLength"] == {"type": "string"}
+    assert projected["properties"]["maxLength"] == {"type": "string"}
+    assert projected["properties"]["uniqueItems"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
