@@ -138,12 +138,12 @@ def test_dogfood_rejects_an_attached_resource_checkout(tmp_path: Path) -> None:
 def test_dogfood_accepts_clean_windows_crlf_resource_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    environment = dogfood_environment(tmp_path)
-    repository = Path(environment["AEP_REPOSITORY_ROOT"])
-    environment["AEP_RESOURCE_GIT_AUTOCRLF"] = "true"
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "missing-gitconfig"))
-    convert_tracked_files_to_crlf(repository)
+    environment = dogfood_environment(tmp_path, resource_git_autocrlf="true")
+    repository = Path(environment["AEP_REPOSITORY_ROOT"])
+
+    assert b"\r\n" in (repository / ".ai/workspace.yaml").read_bytes()
 
     assert verify_dogfood_environment(environment)["status"] == "READY"
 
@@ -189,7 +189,12 @@ def test_resource_verification_disables_optional_git_locks(
     assert timeouts == [60, 60, 60]
 
 
-def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") -> dict[str, str]:
+def dogfood_environment(
+    tmp_path: Path,
+    *,
+    service: str = "event-controller",
+    resource_git_autocrlf: str | None = None,
+) -> dict[str, str]:
     secret_root = tmp_path / "secrets"
     secret_root.mkdir()
     secrets = {
@@ -204,11 +209,15 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
     git(resource_root, "init", "-b", "main")
     git(resource_root, "config", "user.name", "AEP Test")
     git(resource_root, "config", "user.email", "aep@example.test")
+    if resource_git_autocrlf is not None:
+        git(resource_root, "config", "core.autocrlf", resource_git_autocrlf)
     git(resource_root, "add", ".ai")
     git(resource_root, "commit", "-m", "Pin Resources")
     revision = git_head(resource_root)
     git(resource_root, "checkout", "--detach", revision)
-    return {
+    if resource_git_autocrlf == "true":
+        git(resource_root, "checkout-index", "--force", "--all")
+    environment = {
         "AEP_SERVICE_NAME": service,
         "AEP_SERVICE_PORT": "0",
         "AEP_REPOSITORY_ROOT": str(resource_root),
@@ -229,6 +238,9 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
         "AEP_OPENAI_API_URL": "https://api.openai.com/v1",
         **{name: str(path) for name, path in secrets.items()},
     }
+    if resource_git_autocrlf is not None:
+        environment["AEP_RESOURCE_GIT_AUTOCRLF"] = resource_git_autocrlf
+    return environment
 
 
 def git_head(repository: Path) -> str:
@@ -239,15 +251,6 @@ def git_head(repository: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
-
-
-def convert_tracked_files_to_crlf(repository: Path) -> None:
-    tracked = git(repository, "ls-files", "-z").split("\0")
-    for relative in filter(None, tracked):
-        path = repository / relative
-        content = path.read_bytes()
-        if b"\0" not in content:
-            path.write_bytes(content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
 
 
 def git(repository: Path, *arguments: str) -> str:
