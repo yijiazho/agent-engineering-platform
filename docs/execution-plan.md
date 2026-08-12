@@ -169,7 +169,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 41 | [AEP-041: Implement GitHub App Provider Integration](tasks/AEP-041-implement-github-app-provider-integration.md) | Completed |
 | 42 | [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md) | Completed |
 | 43 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
-| 44 | [AEP-044: Stabilize Self-Hosting Dogfood Startup](tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md) | Not Started |
+| 44 | [AEP-044: Stabilize Self-Hosting Dogfood Startup](tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md) | Completed |
 
 ---
 
@@ -220,7 +220,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Completed |
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
 | AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | In Progress |
-| AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Not Started |
+| AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
 
 ---
 

@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+import aep.local_service as local_service
 from aep.dogfood_deployment import (
     DogfoodDeploymentConfigurationError,
     emergency_publication_guard,
@@ -110,6 +111,7 @@ def test_self_hosting_compose_is_pinned_read_only_durable_and_least_privilege() 
         assert f"  {service}:" in compose
     dockerfile = (ROOT / "deploy/local/Dockerfile").read_text(encoding="utf-8")
     assert "docker.io git" in dockerfile
+    assert "PYTHONPATH=/opt/aep/src" in dockerfile
 
 
 def test_dogfood_rejects_dirty_resources_before_loading_them(tmp_path: Path) -> None:
@@ -131,6 +133,60 @@ def test_dogfood_rejects_an_attached_resource_checkout(tmp_path: Path) -> None:
 
     with pytest.raises(LocalServiceConfigurationError, match="must be detached"):
         verify_dogfood_environment(environment)
+
+
+def test_dogfood_accepts_clean_windows_crlf_resource_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = dogfood_environment(tmp_path)
+    repository = Path(environment["AEP_REPOSITORY_ROOT"])
+    environment["AEP_RESOURCE_GIT_AUTOCRLF"] = "true"
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "missing-gitconfig"))
+    convert_tracked_files_to_crlf(repository)
+
+    assert verify_dogfood_environment(environment)["status"] == "READY"
+
+    workspace = repository / ".ai/workspace.yaml"
+    workspace.write_bytes(workspace.read_bytes() + b"# actual change\r\n")
+    with pytest.raises(
+        LocalServiceConfigurationError,
+        match="must be clean before Resources are loaded",
+    ):
+        verify_dogfood_environment(environment)
+
+
+def test_dogfood_rejects_invalid_resource_git_autocrlf(tmp_path: Path) -> None:
+    environment = dogfood_environment(tmp_path)
+    environment["AEP_RESOURCE_GIT_AUTOCRLF"] = "sometimes"
+
+    with pytest.raises(
+        LocalServiceConfigurationError,
+        match="AEP_RESOURCE_GIT_AUTOCRLF must be false, input, or true",
+    ):
+        verify_dogfood_environment(environment)
+
+
+def test_resource_verification_disables_optional_git_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = dogfood_environment(tmp_path)
+    commands: list[list[str]] = []
+    timeouts: list[object] = []
+    real_run = local_service.subprocess.run
+
+    def recording_run(command: list[str], *args: object, **kwargs: object):
+        commands.append(command)
+        timeouts.append(kwargs.get("timeout"))
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(local_service.subprocess, "run", recording_run)
+
+    verify_dogfood_environment(environment)
+
+    assert len(commands) == 3
+    assert all(command[:2] == ["git", "--no-optional-locks"] for command in commands)
+    assert timeouts == [60, 60, 60]
 
 
 def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") -> dict[str, str]:
@@ -183,6 +239,15 @@ def git_head(repository: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def convert_tracked_files_to_crlf(repository: Path) -> None:
+    tracked = git(repository, "ls-files", "-z").split("\0")
+    for relative in filter(None, tracked):
+        path = repository / relative
+        content = path.read_bytes()
+        if b"\0" not in content:
+            path.write_bytes(content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
 
 
 def git(repository: Path, *arguments: str) -> str:

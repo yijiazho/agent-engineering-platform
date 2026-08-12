@@ -36,6 +36,15 @@ Startup verifies the checkout is detached and completely clean before loading
 `.ai/`; a modified or untracked file fails every service. The deployment also
 passes `AEP_STATE_DIRECTORY` as the host-visible Docker state root so nested
 validation binds the execution worktree rather than a container-only path.
+Because this profile mounts a checkout prepared by Windows Git into Linux
+containers, it explicitly verifies cleanliness with `core.autocrlf=true`.
+This matches the host's CRLF worktree normalization while still rejecting
+content changes and untracked files. Verification also disables Git's optional
+index locks and allows up to 60 seconds per bounded Git probe so all seven
+read-only startup checks can safely run concurrently on the Windows bind mount.
+Recreate the checkout with Windows Git if
+it was prepared with a different line-ending policy; do not bypass the clean
+checkout check.
 
 ## Configure GitHub And Secrets
 
@@ -84,6 +93,9 @@ App, provisions the execution checkout, and invokes the six handlers through
 the deterministic scheduler. Runtime checkpoints are stored under
 `runtime/objects.json`; GeneratedArtifact bodies, Docker logs, and redacted Git
 logs are stored under their respective content-addressed state directories.
+The shared image keeps `/opt/aep/src` on `PYTHONPATH` so runtime validators load
+the schemas copied to `/opt/aep/schemas`; removing that image binding causes
+reconciliation to fail before the first WorkflowExecution checkpoint.
 
 Verify the live GitHub installation from Workflow Runtime before enabling the
 webhook. The result must name only this repository and report `READY`; it must
@@ -109,6 +121,45 @@ an action other than `opened`, and an oversized request must be rejected.
 Inspect `shared/github-webhook.sqlite3` and confirm exactly one Event and one
 outbox identity for the replayed delivery. The row may remain pending while the
 workflow runs, but must become completed only after terminal runtime evidence.
+
+The following Windows PowerShell 5-compatible procedure reads the configured
+secret file without printing the secret, signature, or request body. Run it
+from the repository root and use a new fixed delivery ID for each intentional
+test. Do not enable transcript logging for this session.
+
+```powershell
+$envLines = Get-Content .\deploy\self-hosting\.env
+$entry = $envLines | Where-Object { $_ -like 'AEP_GITHUB_WEBHOOK_SECRET_FILE=*' } | Select-Object -First 1
+$configuredPath = ($entry -split '=', 2)[1]
+$secretPath = if ([IO.Path]::IsPathRooted($configuredPath)) {
+    $configuredPath
+} else {
+    Join-Path (Resolve-Path .\deploy\self-hosting).Path $configuredPath
+}
+$secret = [IO.File]::ReadAllBytes($secretPath)
+while ($secret.Length -gt 0 -and $secret[-1] -in 10, 13) {
+    $secret = $secret[0..($secret.Length - 2)]
+}
+$payload = Get-Content -Raw .\fixtures\github\issue-created.json | ConvertFrom-Json
+$payload.repository.name = 'agent-engineering-platform'
+$payload.repository.full_name = 'yijiazho/agent-engineering-platform'
+$payload.repository.owner.login = 'yijiazho'
+$payload.repository.html_url = 'https://github.com/yijiazho/agent-engineering-platform'
+$payload.repository.url = 'https://api.github.com/repos/yijiazho/agent-engineering-platform'
+$bodyBytes = [Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 20 -Compress))
+$hmac = [Security.Cryptography.HMACSHA256]::new($secret)
+$digest = ([BitConverter]::ToString($hmac.ComputeHash($bodyBytes))).Replace('-', '').ToLowerInvariant()
+$headers = @{
+    'X-Hub-Signature-256' = "sha256=$digest"
+    'X-GitHub-Event' = 'issues'
+    'X-GitHub-Delivery' = 'replace-with-fixed-test-delivery-id'
+}
+$first = Invoke-RestMethod http://127.0.0.1:8081/v1/webhooks/github -Method Post -Headers $headers -ContentType application/json -Body $bodyBytes
+$replay = Invoke-RestMethod http://127.0.0.1:8081/v1/webhooks/github -Method Post -Headers $headers -ContentType application/json -Body $bodyBytes
+$first | Select-Object status, eventId
+$replay | Select-Object status, eventId
+$hmac.Dispose()
+```
 
 Before a live publication, run a blocked path using a denied
 `github.create_pr` policy or intentionally failing validation. Persist the
@@ -146,6 +197,10 @@ Monitor container health/restarts, webhook rejection rate, pending outbox age,
 Workflow and Task terminal status, provider timeout/rate-limit failures, disk
 capacity, checkout lease expiry, retained dirty worktrees, validation duration,
 and publication decisions. Correlate by trace ID and WorkflowExecution ID.
+Recoverable reconciliation warnings expose only the Event ID, failure class,
+stable failure code, and exception type; provider messages and request data are
+intentionally omitted. Use the first such warning as the next diagnostic
+boundary when an outbox row remains pending.
 
 ```powershell
 docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml ps

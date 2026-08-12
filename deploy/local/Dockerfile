@@ -10,5 +10,6 @@ COPY src/ src/
 COPY schemas/ schemas/
 RUN python -m pip install --no-cache-dir .
 
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/aep/src
 CMD ["python", "-m", "aep.local_service", "serve"]
