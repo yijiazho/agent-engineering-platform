@@ -423,6 +423,15 @@ limit, timeout, and retry policy come only from the immutable Model Resource.
 See the [OpenAI Model provider operator guide](docs/operations/openai-model-provider.md)
 for supported configuration, safe evidence, and credential-free verification.
 
+On the Windows self-hosting profile, Resource checkout verification uses the
+host checkout's CRLF normalization and read-only, lock-free Git probes with a
+bounded 60-second timeout. This avoids false dirty or transient startup
+failures under concurrent container checks without allowing actual tracked or
+untracked changes.
+The shared container image runs the copied `/opt/aep/src` tree so its
+source-relative runtime validators resolve the matching `/opt/aep/schemas`
+bundle included in the same immutable image.
+
 The concrete repository-bound provider uses GitHub App installation tokens for
 both API calls and ephemeral Git askpass leases. It performs duplicate-PR
 reconciliation before creation, caches tokens only until their refresh window,
@@ -504,7 +513,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 42 of the 44 implementation tasks are complete.
+contracts are established, and 43 of the 44 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 

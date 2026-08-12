@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+import aep.local_service as local_service
 from aep.dogfood_deployment import (
     DogfoodDeploymentConfigurationError,
     emergency_publication_guard,
@@ -110,6 +111,7 @@ def test_self_hosting_compose_is_pinned_read_only_durable_and_least_privilege() 
         assert f"  {service}:" in compose
     dockerfile = (ROOT / "deploy/local/Dockerfile").read_text(encoding="utf-8")
     assert "docker.io git" in dockerfile
+    assert "PYTHONPATH=/opt/aep/src" in dockerfile
 
 
 def test_dogfood_rejects_dirty_resources_before_loading_them(tmp_path: Path) -> None:
@@ -133,7 +135,66 @@ def test_dogfood_rejects_an_attached_resource_checkout(tmp_path: Path) -> None:
         verify_dogfood_environment(environment)
 
 
-def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") -> dict[str, str]:
+def test_dogfood_accepts_clean_windows_crlf_resource_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "missing-gitconfig"))
+    environment = dogfood_environment(tmp_path, resource_git_autocrlf="true")
+    repository = Path(environment["AEP_REPOSITORY_ROOT"])
+
+    assert b"\r\n" in (repository / ".ai/workspace.yaml").read_bytes()
+
+    assert verify_dogfood_environment(environment)["status"] == "READY"
+
+    workspace = repository / ".ai/workspace.yaml"
+    workspace.write_bytes(workspace.read_bytes() + b"# actual change\r\n")
+    with pytest.raises(
+        LocalServiceConfigurationError,
+        match="must be clean before Resources are loaded",
+    ):
+        verify_dogfood_environment(environment)
+
+
+def test_dogfood_rejects_invalid_resource_git_autocrlf(tmp_path: Path) -> None:
+    environment = dogfood_environment(tmp_path)
+    environment["AEP_RESOURCE_GIT_AUTOCRLF"] = "sometimes"
+
+    with pytest.raises(
+        LocalServiceConfigurationError,
+        match="AEP_RESOURCE_GIT_AUTOCRLF must be false, input, or true",
+    ):
+        verify_dogfood_environment(environment)
+
+
+def test_resource_verification_disables_optional_git_locks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = dogfood_environment(tmp_path)
+    commands: list[list[str]] = []
+    timeouts: list[object] = []
+    real_run = local_service.subprocess.run
+
+    def recording_run(command: list[str], *args: object, **kwargs: object):
+        commands.append(command)
+        timeouts.append(kwargs.get("timeout"))
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(local_service.subprocess, "run", recording_run)
+
+    verify_dogfood_environment(environment)
+
+    assert len(commands) == 3
+    assert all(command[:2] == ["git", "--no-optional-locks"] for command in commands)
+    assert timeouts == [60, 60, 60]
+
+
+def dogfood_environment(
+    tmp_path: Path,
+    *,
+    service: str = "event-controller",
+    resource_git_autocrlf: str | None = None,
+) -> dict[str, str]:
     secret_root = tmp_path / "secrets"
     secret_root.mkdir()
     secrets = {
@@ -148,11 +209,15 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
     git(resource_root, "init", "-b", "main")
     git(resource_root, "config", "user.name", "AEP Test")
     git(resource_root, "config", "user.email", "aep@example.test")
+    if resource_git_autocrlf is not None:
+        git(resource_root, "config", "core.autocrlf", resource_git_autocrlf)
     git(resource_root, "add", ".ai")
     git(resource_root, "commit", "-m", "Pin Resources")
     revision = git_head(resource_root)
     git(resource_root, "checkout", "--detach", revision)
-    return {
+    if resource_git_autocrlf == "true":
+        git(resource_root, "checkout-index", "--force", "--all")
+    environment = {
         "AEP_SERVICE_NAME": service,
         "AEP_SERVICE_PORT": "0",
         "AEP_REPOSITORY_ROOT": str(resource_root),
@@ -173,6 +238,9 @@ def dogfood_environment(tmp_path: Path, *, service: str = "event-controller") ->
         "AEP_OPENAI_API_URL": "https://api.openai.com/v1",
         **{name: str(path) for name, path in secrets.items()},
     }
+    if resource_git_autocrlf is not None:
+        environment["AEP_RESOURCE_GIT_AUTOCRLF"] = resource_git_autocrlf
+    return environment
 
 
 def git_head(repository: Path) -> str:

@@ -36,6 +36,7 @@ MVP_SERVICE_PORTS: Final = MappingProxyType(
         "evaluation-engine": 8087,
     }
 )
+_RESOURCE_GIT_TIMEOUT_SECONDS: Final = 60
 
 
 class LocalServiceConfigurationError(ValueError):
@@ -60,6 +61,7 @@ class LocalServiceConfig:
     github_webhook_secret: bytes | None = field(default=None, repr=False)
     github_webhook_max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
     resource_revision: str | None = None
+    resource_git_autocrlf: str | None = None
     emergency_disable_file: Path | None = None
 
     @classmethod
@@ -124,6 +126,14 @@ class LocalServiceConfig:
                     "AEP_GITHUB_WEBHOOK_MAX_BODY_BYTES must be positive"
                 )
 
+        resource_git_autocrlf = (
+            values.get("AEP_RESOURCE_GIT_AUTOCRLF", "").strip().lower() or None
+        )
+        if resource_git_autocrlf not in {None, "false", "input", "true"}:
+            raise LocalServiceConfigurationError(
+                "AEP_RESOURCE_GIT_AUTOCRLF must be false, input, or true"
+            )
+
         return cls(
             service_name=service_name,
             port=port,
@@ -141,6 +151,7 @@ class LocalServiceConfig:
             resource_revision=(
                 values.get("AEP_RESOURCE_REVISION", "").strip() or None
             ),
+            resource_git_autocrlf=resource_git_autocrlf,
             emergency_disable_file=(
                 Path(values["AEP_EMERGENCY_DISABLE_FILE"]).resolve()
                 if values.get("AEP_EMERGENCY_DISABLE_FILE", "").strip()
@@ -166,6 +177,7 @@ class LocalServiceRuntime:
                 config.repository_root,
                 config.resource_revision,
                 require_detached=config.execution_environment == "dogfood",
+                autocrlf=config.resource_git_autocrlf,
             )
         resources = ResourceLoader(
             config.repository_root,
@@ -347,7 +359,12 @@ def verify_resource_checkout(
     expected: str,
     *,
     require_detached: bool,
+    autocrlf: str | None = None,
 ) -> None:
+    if autocrlf not in {None, "false", "input", "true"}:
+        raise LocalServiceConfigurationError(
+            "AEP_RESOURCE_GIT_AUTOCRLF must be false, input, or true"
+        )
     if len(expected) != 40 or any(
         character not in "0123456789abcdef" for character in expected
     ):
@@ -357,22 +374,26 @@ def verify_resource_checkout(
     try:
         command = [
             "git",
+            "--no-optional-locks",
             "-c",
             f"safe.directory={repository_root}",
+            *(["-c", f"core.autocrlf={autocrlf}"] if autocrlf else []),
             "-C",
             str(repository_root),
         ]
         completed = subprocess.run(
             [*command, "rev-parse", "HEAD"], check=True,
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=_RESOURCE_GIT_TIMEOUT_SECONDS,
         )
         status = subprocess.run(
             [*command, "status", "--porcelain=v1", "--untracked-files=all"],
-            check=True, capture_output=True, text=True, timeout=10,
+            check=True, capture_output=True, text=True,
+            timeout=_RESOURCE_GIT_TIMEOUT_SECONDS,
         )
         symbolic = subprocess.run(
             [*command, "symbolic-ref", "-q", "HEAD"],
-            check=False, capture_output=True, text=True, timeout=10,
+            check=False, capture_output=True, text=True,
+            timeout=_RESOURCE_GIT_TIMEOUT_SECONDS,
         )
     except (OSError, subprocess.SubprocessError):
         raise LocalServiceConfigurationError(

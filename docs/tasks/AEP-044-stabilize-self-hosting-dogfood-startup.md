@@ -1,6 +1,6 @@
 # AEP-044: Stabilize Self-Hosting Dogfood Startup
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -168,3 +168,24 @@ next blocking failure.
 * `README.md`, `docs/operations/self-hosting-dogfood.md`, deployment examples,
   and task/execution-plan status remain synchronized with any corrected
   behavior or commands.
+
+## Implementation Evidence
+
+Completed on 2026-08-12 against Resource revision
+`a5653fe45529a00b205cf114bca6b3f5c3c3f91b` and published candidate
+`ghcr.io/yijiazho/agent-engineering-platform@sha256:bb4ee0fd8fbcc6a3d09bf3d766fe352d3e073cb2ce97d3b1b0c3f6f1b23d7e39`.
+The confirmed blockers were Windows CRLF normalization during Linux-container
+checkout verification, concurrent read-only Git probe contention and timeout,
+the Workflow Runtime's second verification omitting the same normalization,
+silent recoverable reconciliation failures, and installed-package runtime
+schema lookup outside the image's copied schema bundle.
+
+The final pulled digest cold-started all seven services healthy with zero
+restart growth. A signed fixture delivery returned `202 accepted`, its replay
+returned `200 duplicate` with the same Event identity, the durable
+reconciliation reached a terminal WorkflowExecution and retired its outbox row,
+and no service restarted. A deliberate Compose restart recovered all seven
+services. Local health and Resource discovery reported the pinned repository,
+Workspace, `dogfood` environment, Resource revision, and 35 Resources. Public
+Cloudflare ingress reached AEP and returned its intentional `404` for an
+unsigned GET rather than an origin error.

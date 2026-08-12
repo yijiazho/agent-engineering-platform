@@ -144,6 +144,12 @@ class DogfoodWorkflowRunner:
             repository_root,
             self._required("AEP_RESOURCE_REVISION"),
             require_detached=True,
+            autocrlf=(
+                self._environment.get("AEP_RESOURCE_GIT_AUTOCRLF", "")
+                .strip()
+                .lower()
+                or None
+            ),
         )
         self._resources = ResourceLoader(
             repository_root,
@@ -468,6 +474,7 @@ class DogfoodReconciliationConsumer:
         self._last_poll_error: str | None = None
         self._last_poll_at: datetime | None = None
         self._logger = logging.getLogger(__name__)
+        self._reported_failures: dict[str, tuple[str, str, str]] = {}
 
     @classmethod
     def from_environment(
@@ -483,7 +490,14 @@ class DogfoodReconciliationConsumer:
 
     def run_once(self) -> int:
         processed = 0
-        for request in self._dispatcher.pending_requests():
+        requests = self._dispatcher.pending_requests()
+        pending_event_ids = {str(request.get("eventId", "")) for request in requests}
+        self._reported_failures = {
+            event_id: signature
+            for event_id, signature in self._reported_failures.items()
+            if event_id in pending_event_ids
+        }
+        for request in requests:
             event_id = str(request.get("eventId", ""))
             try:
                 self._runner.run(request)
@@ -491,6 +505,12 @@ class DogfoodReconciliationConsumer:
                 if isinstance(error, CheckoutProvisionError):
                     classification = str(
                         getattr(error.classification, "value", error.classification)
+                    )
+                    self._log_safe_failure(
+                        event_id,
+                        classification=classification,
+                        code=error.code,
+                        error=error,
                     )
                     if classification == "CONFIGURATION":
                         self._dispatcher.mark_failed(
@@ -504,6 +524,12 @@ class DogfoodReconciliationConsumer:
                     if isinstance(error, (DogfoodReconciliationError, ValueError))
                     else "RECOVERABLE"
                 )
+                self._log_safe_failure(
+                    event_id,
+                    classification=classification,
+                    code="reconciliation_failed",
+                    error=error,
+                )
                 if classification == "CONFIGURATION":
                     self._dispatcher.mark_failed(
                         event_id,
@@ -512,8 +538,30 @@ class DogfoodReconciliationConsumer:
                     )
                 continue
             self._dispatcher.mark_completed(event_id)
+            self._reported_failures.pop(event_id, None)
             processed += 1
         return processed
+
+    def _log_safe_failure(
+        self,
+        event_id: str,
+        *,
+        classification: str,
+        code: str,
+        error: Exception,
+    ) -> None:
+        signature = (classification, code, type(error).__name__)
+        if self._reported_failures.get(event_id) == signature:
+            return
+        self._reported_failures[event_id] = signature
+        self._logger.warning(
+            "dogfood reconciliation deferred event_id=%s failure_class=%s "
+            "failure_code=%s exception_type=%s",
+            event_id,
+            classification,
+            code,
+            type(error).__name__,
+        )
 
     def start(self) -> None:
         if self._thread is not None:
