@@ -199,8 +199,11 @@ capacity, checkout lease expiry, retained dirty worktrees, validation duration,
 and publication decisions. Correlate by trace ID and WorkflowExecution ID.
 Recoverable reconciliation warnings expose only the Event ID, failure class,
 stable failure code, and exception type; provider messages and request data are
-intentionally omitted. Use the first such warning as the next diagnostic
-boundary when an outbox row remains pending.
+intentionally omitted. The consumer logs only the first occurrence of an
+Event's current failure signature and logs again when that safe signature
+changes. Repeated two-second retries do not repeat an identical warning. Use
+each transition warning as the next diagnostic boundary while an outbox row
+remains pending.
 
 ```powershell
 docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml ps

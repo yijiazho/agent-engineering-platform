@@ -474,6 +474,7 @@ class DogfoodReconciliationConsumer:
         self._last_poll_error: str | None = None
         self._last_poll_at: datetime | None = None
         self._logger = logging.getLogger(__name__)
+        self._reported_failures: dict[str, tuple[str, str, str]] = {}
 
     @classmethod
     def from_environment(
@@ -489,7 +490,14 @@ class DogfoodReconciliationConsumer:
 
     def run_once(self) -> int:
         processed = 0
-        for request in self._dispatcher.pending_requests():
+        requests = self._dispatcher.pending_requests()
+        pending_event_ids = {str(request.get("eventId", "")) for request in requests}
+        self._reported_failures = {
+            event_id: signature
+            for event_id, signature in self._reported_failures.items()
+            if event_id in pending_event_ids
+        }
+        for request in requests:
             event_id = str(request.get("eventId", ""))
             try:
                 self._runner.run(request)
@@ -530,6 +538,7 @@ class DogfoodReconciliationConsumer:
                     )
                 continue
             self._dispatcher.mark_completed(event_id)
+            self._reported_failures.pop(event_id, None)
             processed += 1
         return processed
 
@@ -541,6 +550,10 @@ class DogfoodReconciliationConsumer:
         code: str,
         error: Exception,
     ) -> None:
+        signature = (classification, code, type(error).__name__)
+        if self._reported_failures.get(event_id) == signature:
+            return
+        self._reported_failures[event_id] = signature
         self._logger.warning(
             "dogfood reconciliation deferred event_id=%s failure_class=%s "
             "failure_code=%s exception_type=%s",

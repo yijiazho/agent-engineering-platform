@@ -119,6 +119,46 @@ def test_recoverable_failure_logs_only_safe_diagnostic_fields(
     assert "provider-secret-must-not-appear" not in caplog.text
 
 
+def test_recoverable_failure_logs_only_first_occurrence_and_transitions(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    dispatcher = SQLiteReconciliationDispatcher(tmp_path / "webhook.sqlite3")
+    dispatcher.submit(event(), trace_id="trace-dogfood")
+    runner = RecordingRunner(RuntimeError("first unsafe provider detail"))
+    consumer = DogfoodReconciliationConsumer(dispatcher, runner)
+
+    with caplog.at_level(logging.WARNING, logger="aep.dogfood_runtime"):
+        assert consumer.run_once() == 0
+        assert consumer.run_once() == 0
+        runner.failure = OSError("second unsafe provider detail")
+        assert consumer.run_once() == 0
+        assert consumer.run_once() == 0
+
+    assert len(caplog.messages) == 2
+    assert "exception_type=RuntimeError" in caplog.messages[0]
+    assert "exception_type=OSError" in caplog.messages[1]
+    assert "unsafe provider detail" not in caplog.text
+    assert len(runner.requests) == 4
+
+
+def test_reported_failure_state_is_cleared_when_event_leaves_pending_outbox(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    dispatcher = SQLiteReconciliationDispatcher(tmp_path / "webhook.sqlite3")
+    dispatcher.submit(event(), trace_id="trace-dogfood")
+    runner = RecordingRunner(RuntimeError("unsafe details"))
+    consumer = DogfoodReconciliationConsumer(dispatcher, runner)
+
+    with caplog.at_level(logging.WARNING, logger="aep.dogfood_runtime"):
+        assert consumer.run_once() == 0
+        runner.failure = None
+        assert consumer.run_once() == 1
+        assert consumer.run_once() == 0
+
+    assert len(caplog.messages) == 1
+    assert consumer._reported_failures == {}
+
+
 def test_reconciliation_reuses_recorded_revision_and_skips_terminal_execution(
     tmp_path: Path,
 ) -> None:
