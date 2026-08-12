@@ -57,3 +57,4 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-041: Implement GitHub App Provider Integration](tasks/AEP-041-implement-github-app-provider-integration.md)
 * [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md)
 * [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md)
+* [AEP-044: Stabilize Self-Hosting Dogfood Startup](tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md)
