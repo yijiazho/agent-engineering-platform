@@ -420,7 +420,8 @@ Compression should preserve provenance.
 Every cognitive Task defines `spec.inputContextTokenBudget` as a positive
 integer no greater than 1,000,000. `spec.optionalContext` declares the
 lower-priority categories that may be pruned. These fields are immutable Task
-configuration; callers do not choose a handler-local budget.
+configuration; the Task schema requires the budget whenever `agentRef` is
+present, and callers do not choose a handler-local budget.
 
 Example:
 
@@ -646,7 +647,9 @@ The same repository identity is a repository revision, knowledge snapshot,
 path, and optional line/symbol slice. Identities selected through multiple
 categories are emitted once before token accounting. The survivor retains all
 sorted `selectionReasons`, traversal paths, Resource references, and immutable
-revision/snapshot provenance.
+revision/snapshot provenance. Optional duplicate metadata is merged only when
+its incremental token cost fits; otherwise the mandatory representation stays
+unchanged and the optional contribution is recorded as discarded.
 
 Mandatory elements are assembled before optional candidates. Optional
 candidates are selected in stable provider order while budget remains and are

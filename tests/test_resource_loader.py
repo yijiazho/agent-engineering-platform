@@ -53,6 +53,7 @@ def test_loads_valid_resources_in_stable_order(tmp_path: Path) -> None:
     write_resource(tmp_path, "tasks/analyze-issue.yaml", resource("Task", "analyze-issue", "1.0.0", {
         "objective": "Analyze issue.",
         "agentRef": ref("Agent", "issue-analyzer"),
+        "inputContextTokenBudget": 32_000,
         "outputs": {"type": "object"},
         "evaluations": [ref("Evaluation", "issue-analysis-schema")],
     }))
@@ -102,10 +103,23 @@ def test_rejects_missing_references(tmp_path: Path) -> None:
     write_resource(tmp_path, "tasks/analyze-issue.yaml", resource("Task", "analyze-issue", "1.0.0", {
         "objective": "Analyze issue.",
         "agentRef": ref("Agent", "missing-agent"),
+        "inputContextTokenBudget": 32_000,
         "outputs": {"type": "object"},
     }))
 
     with pytest.raises(MissingResourceReferenceError):
+        ResourceLoader(tmp_path).load()
+
+
+def test_rejects_cognitive_task_without_input_context_budget(tmp_path: Path) -> None:
+    write_valid_workspace(tmp_path, default_policies=[])
+    write_resource(tmp_path, "tasks/analyze-issue.yaml", resource("Task", "analyze-issue", "1.0.0", {
+        "objective": "Analyze issue.",
+        "agentRef": ref("Agent", "issue-analyzer"),
+        "outputs": {"type": "object"},
+    }))
+
+    with pytest.raises(ResourceValidationError, match="inputContextTokenBudget"):
         ResourceLoader(tmp_path).load()
 
 

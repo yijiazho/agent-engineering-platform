@@ -10,7 +10,7 @@
       {"taskRef": {"kind": "Task", "name": "generate-patch", "version": "1.0.2"}, "dependsOn": [{"kind": "Task", "name": "build-implementation-plan", "version": "1.0.2"}]},
       {"taskRef": {"kind": "Task", "name": "run-validation", "version": "1.0.0"}, "dependsOn": [{"kind": "Task", "name": "generate-patch", "version": "1.0.2"}]},
       {"taskRef": {"kind": "Task", "name": "evaluate-acceptance", "version": "1.0.0"}, "dependsOn": [{"kind": "Task", "name": "run-validation", "version": "1.0.0"}]},
-      {"taskRef": {"kind": "Task", "name": "create-pull-request", "version": "1.0.1"}, "dependsOn": [{"kind": "Task", "name": "evaluate-acceptance", "version": "1.0.0"}]}
+      {"taskRef": {"kind": "Task", "name": "create-pull-request", "version": "1.0.2"}, "dependsOn": [{"kind": "Task", "name": "evaluate-acceptance", "version": "1.0.0"}]}
     ],
     "parallelism": 1
   }

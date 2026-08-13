@@ -15,6 +15,12 @@ EXPECTED_TASKS = (
 )
 
 
+def test_json_task_fixtures_are_utf8_without_a_byte_order_mark() -> None:
+    for name in ("analyze-issue", "build-implementation-plan", "generate-patch"):
+        payload = (FIXTURE / ".ai" / "tasks" / f"{name}.yaml").read_bytes()
+        assert not payload.startswith(b"\xef\xbb\xbf")
+
+
 def test_fixture_issue_runs_the_complete_mvp_dag_deterministically() -> None:
     result = run_mvp_harness(FIXTURE)
 

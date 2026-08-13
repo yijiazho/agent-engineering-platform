@@ -318,9 +318,41 @@ class ContextBuilder:
         elements = [element for _, element in prepared_mandatory]
         selected_names = [name for name, _ in mandatory]
         selected_categories = [name for name, _ in prepared_mandatory]
+        mandatory_identity_indices = {
+            identity: index
+            for index, element in enumerate(elements)
+            if (identity := _repository_identity(element)) is not None
+        }
         discarded: list[dict[str, Any]] = []
         token_count = mandatory_tokens
         for name, element in optional_candidates:
+            identity = _repository_identity(element)
+            if identity is not None and identity in mandatory_identity_indices:
+                index = mandatory_identity_indices[identity]
+                merged = _with_token_metadata(
+                    _merge_duplicate(_without_token_metadata(elements[index]), element)
+                )
+                incremental_tokens = max(
+                    0, merged["tokenCount"] - elements[index]["tokenCount"]
+                )
+                if token_count + incremental_tokens <= token_budget:
+                    elements[index] = merged
+                    selected_names.extend(
+                        reason
+                        for reason in _selection_reasons(element, name)
+                        if reason in optional
+                    )
+                    token_count += incremental_tokens
+                else:
+                    discarded.append(
+                        {
+                            "context": name,
+                            "reason": "TOKEN_BUDGET",
+                            "estimatedTokens": incremental_tokens,
+                            "selectionReasons": _selection_reasons(element, name),
+                        }
+                    )
+                continue
             prepared = _with_token_metadata(element)
             if token_count + prepared["tokenCount"] <= token_budget:
                 elements.append(prepared)
@@ -784,7 +816,7 @@ def _deduplicate_context_candidates(
     mandatory: list[tuple[str, dict[str, Any]]],
     optional: list[tuple[str, dict[str, Any]]],
 ) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]:
-    """Merge the same revision-bound source slice before token accounting."""
+    """Merge duplicate source slices within each priority class."""
 
     selected_mandatory: list[tuple[str, dict[str, Any]]] = []
     selected_optional: list[tuple[str, dict[str, Any]]] = []
@@ -806,11 +838,6 @@ def _deduplicate_context_candidates(
     for name, element in optional:
         prepared = _with_selection_reason(element, name)
         identity = _repository_identity(prepared)
-        if identity is not None and identity in mandatory_index:
-            index = mandatory_index[identity]
-            prior_name, prior = selected_mandatory[index]
-            selected_mandatory[index] = (prior_name, _merge_duplicate(prior, prepared))
-            continue
         if identity is not None and identity in optional_index:
             index = optional_index[identity]
             prior_name, prior = selected_optional[index]
@@ -885,6 +912,13 @@ def _merge_duplicate(
     }
     merged["provenance"]["resourceRefs"] = [refs[key] for key in sorted(refs)]
     return merged
+
+
+def _without_token_metadata(element: JsonMapping) -> dict[str, Any]:
+    value = _json_copy(element)
+    value.pop("tokenCount", None)
+    value.pop("truncated", None)
+    return value
 
 
 def _selection_reasons(element: JsonMapping, fallback: str) -> list[str]:

@@ -81,6 +81,7 @@ def test_context_and_agent_boundaries_are_explicit(
         tasks["analyze-issue"]["optionalContext"]
     )
     assert tasks["analyze-issue"]["inputContextTokenBudget"] == 32_000
+    assert tasks["create-pull-request"]["inputContextTokenBudget"] == 32_000
     assert {"issue", "candidate-files", "prior-artifacts"} <= set(
         tasks["build-implementation-plan"]["requiredContext"]
     )

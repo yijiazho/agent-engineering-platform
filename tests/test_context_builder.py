@@ -13,6 +13,7 @@ from aep.context_builder import (
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.observability import StructuredLifecycleLogger
 from aep.repository_knowledge import (
+    CandidateFileQuery,
     DependencyManifest,
     InMemoryRepositoryKnowledgeProvider,
     RepositoryFile,
@@ -560,6 +561,55 @@ def test_optional_context_is_pruned_and_selection_is_explained() -> None:
     assert all(
         discarded["reason"] == "TOKEN_BUDGET"
         for discarded in context["selection"]["discarded"]
+    )
+
+
+class InventorySuppressingKnowledgeProvider(InMemoryRepositoryKnowledgeProvider):
+    def search_candidate_files(self, query: CandidateFileQuery):
+        if not query.terms:
+            return ()
+        return super().search_candidate_files(query)
+
+
+def test_optional_duplicate_metadata_is_discarded_before_budget_failure() -> None:
+    task_resource = task("analyze-issue", ["candidate-files"])
+    task_resource["spec"]["optionalContext"] = ["repository-inventory"]
+    task_resource["spec"]["inputContextTokenBudget"] = 9_999
+    snapshot = knowledge_provider()._snapshot
+    mandatory_only_provider = InventorySuppressingKnowledgeProvider(snapshot)
+
+    for _ in range(5):
+        mandatory = builder(provider=mandatory_only_provider).build(
+            task=task_resource,
+            task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(),
+            event=event(),
+            created_at=CREATED_AT,
+        )
+        if mandatory["tokenCount"] == task_resource["spec"]["inputContextTokenBudget"]:
+            break
+        task_resource["spec"]["inputContextTokenBudget"] = mandatory["tokenCount"]
+
+    assert mandatory["tokenCount"] == task_resource["spec"]["inputContextTokenBudget"]
+    context = builder().build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=event(),
+        created_at=CREATED_AT,
+    )
+
+    assert context["tokenCount"] == context["tokenBudget"]
+    assert context["truncation"] == "PRUNED"
+    assert any(
+        "repository-inventory" in discarded["selectionReasons"]
+        for discarded in context["selection"]["discarded"]
+    )
+    assert all(
+        "repository-inventory"
+        not in element.get("content", {}).get("selectionReasons", ())
+        for element in context["elements"]
+        if element["type"] in {"repository", "knowledge"}
     )
 
 

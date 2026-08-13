@@ -13,6 +13,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["objective", "outputs"],
+      "allOf": [
+        {
+          "if": { "required": ["agentRef"] },
+          "then": { "required": ["inputContextTokenBudget"] }
+        }
+      ],
       "properties": {
         "objective": { "type": "string", "minLength": 1 },
         "agentRef": { "$ref": "./resource-definitions.schema.json#/$defs/agentRef" },
