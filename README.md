@@ -448,8 +448,10 @@ For an accepted event, the controllers perform the following bounded flow:
    Task DAG.
 2. Create one idempotent `WorkflowExecution` bound to the Event, repository
    revision, knowledge snapshot, and trace.
-3. Build provenance-rich `ContextPackages`; Agents receive these packages and
-   cannot query the repository directly.
+3. Build provenance-rich `ContextPackages` from each Task's explicit input
+   budget and optional-context policy; bounded relevance queries and
+   cross-category deduplication keep repository evidence compact. Agents
+   receive these packages and cannot query the repository directly.
 4. Analyze the issue and persist a schema-valid `ISSUE_ANALYSIS` artifact.
 5. Build and persist a schema-valid `IMPLEMENTATION_PLAN` artifact.
 6. Authorize scoped Filesystem and Git capabilities, generate changes in the
@@ -513,7 +515,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 44 implementation tasks are complete.
+contracts are established, and 43 of the 45 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -580,8 +582,10 @@ Implemented foundations currently include:
   provider mutations, and persists the PR description, URL, provider identity,
   and trace evidence.
 * Immutable GeneratedArtifact metadata with content-addressed content storage.
-* Deterministic, budget-aware ContextPackage construction with provenance for
-  repository knowledge, Resources, events, policies, and prior artifacts.
+* Deterministic, budget-aware ContextPackage construction with Task-level input
+  limits, bounded relevance retrieval, cross-category source-slice
+  deduplication, safe category accounting, and provenance for repository
+  knowledge, Resources, events, policies, and prior artifacts.
 * Authenticated, repository-bound GitHub issue webhook ingress with shared-store
   deduplication, an atomic durable reconciliation outbox, restart-safe replay,
   and redacted lifecycle evidence.
@@ -596,8 +600,9 @@ Implemented foundations currently include:
   credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work is operator activation and the controlled live dogfood pilot
-required to prove this repository registration against GitHub. See
+The remaining work is operator activation and resumption of the controlled live
+dogfood pilot, including MTP-09/MTP-10 verification of the bounded AnalyzeIssue
+package against the existing authorized issue. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

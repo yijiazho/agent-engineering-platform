@@ -1,6 +1,6 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
-  "metadata": {"name": "build-implementation-plan", "version": "1.0.1"},
+  "metadata": {"name": "build-implementation-plan", "version": "1.0.2"},
   "spec": {
     "objective": "Turn the evaluated issue analysis into an actionable, repository-scoped implementation plan.",
     "agentRef": {"kind": "Agent", "name": "planner", "version": "1.0.1"},
@@ -15,8 +15,10 @@
         "implementationSteps": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
       }
     },
-    "requiredContext": ["issue", "repository-inventory", "documentation", "candidate-files", "dependency-manifests", "test-hints", "knowledge", "prior-artifacts"],
-    "knowledgeBases": [{"kind": "KnowledgeBase", "name": "aep-repository", "version": "1.0.0"}],
+    "requiredContext": ["issue", "candidate-files", "dependency-manifests", "test-hints", "prior-artifacts"],
+    "optionalContext": ["repository-inventory", "documentation", "knowledge"],
+    "inputContextTokenBudget": 32000,
+    "knowledgeBases": [{"kind": "KnowledgeBase", "name": "aep-repository", "version": "1.1.0"}],
     "evaluations": [{"kind": "Evaluation", "name": "implementation-plan-schema", "version": "1.0.0"}]
   }
 }

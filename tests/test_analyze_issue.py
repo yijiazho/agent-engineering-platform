@@ -80,6 +80,7 @@ def test_success_composes_boundaries_and_attaches_complete_task_evidence() -> No
     assert result.succeeded is True
     assert len(adapter.requests) == 1
     request = adapter.requests[0]
+    assert request.configuration.token_limit == 4_096
     assert request.input["contextPackage"]["elements"][1]["content"]["issue"]["title"] == (
         "Add AnalyzeIssue handling"
     )
@@ -87,6 +88,7 @@ def test_success_composes_boundaries_and_attaches_complete_task_evidence() -> No
     execution = store.get(TASK_EXECUTION_ID)
     assert execution["status"] == "RUNNING"
     assert execution["contextPackageId"].startswith("contextpackage-")
+    assert store.get(execution["contextPackageId"])["tokenBudget"] == 32_000
     assert execution["resolvedAgentId"].startswith("resolvedagent-")
     assert len(execution["agentInvocationIds"]) == 1
     assert len(execution["evaluationResultIds"]) == 1
@@ -281,6 +283,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             "agentRef": ref("Agent", "issue-analyzer"),
             "outputs": ISSUE_ANALYSIS_SCHEMA,
             "requiredContext": ["issue"],
+            "inputContextTokenBudget": 32_000,
             "evaluations": [ref("Evaluation", "issue-analysis-schema")],
         },
     )

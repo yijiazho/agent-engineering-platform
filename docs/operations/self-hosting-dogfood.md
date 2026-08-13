@@ -459,10 +459,12 @@ store = DurableJsonRuntimeObjectStore(path)
 related = store.list_by_workflow_execution(workflow['id'])
 counts = collections.Counter((value.get('kind'), value.get('status', '')) for value in related)
 tasks = [value for value in related if value.get('kind') == 'TaskExecution']
+contexts = [value for value in related if value.get('kind') == 'ContextPackage']
 prs = [value for value in related if value.get('kind') == 'GeneratedArtifact' and value.get('artifactType') == 'PULL_REQUEST_DESCRIPTION']
 print({'workflowExecutionId': workflow['id'], 'traceId': workflow.get('traceId'), 'status': workflow.get('status'), 'repositoryRevision': workflow.get('repositoryRevision')})
 print({'kindStatusCounts': sorted((kind, status, count) for (kind, status), count in counts.items())})
 print({'tasks': [(value.get('taskRef', {}).get('name'), value.get('attempt'), value.get('status'), value.get('workingBranch')) for value in tasks]})
+print({'contexts': [(value.get('taskRef', {}).get('name'), value.get('tokenBudget'), value.get('tokenCount'), value.get('truncation'), value.get('tokenEstimate', {}).get('breakdown')) for value in contexts]})
 print({'pullRequests': [(value.get('pullRequestNumber'), value.get('pullRequestUrl'), value.get('headRevision')) for value in prs]})
 '@
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c $runtimeAudit
@@ -482,6 +484,13 @@ For the same WorkflowExecution and trace, require ContextPackages,
 ResolvedAgents, AgentInvocations, successful ModelInvocations, ToolInvocations,
 GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
 
+* `analyze-issue:1.1.0` produces one ContextPackage at or below its declarative
+  32,000 input-token budget, with category-only count evidence; the package
+  must not fail near 121,421 tokens or contain the complete repository inventory;
+* the bounded package includes repository evidence for the issue's allowed
+  paths and retains revision/snapshot provenance and merged selection reasons;
+* `aep-repository:1.1.0` uses explicit per-source limits, while Model
+  `tokenLimit` remains the independent OpenAI `max_output_tokens` value;
 * issue analysis and implementation plan artifacts passed schema evaluation;
 * patch provenance and changed paths match the plan and base revision;
 * Docker build and test commands both completed successfully with networking

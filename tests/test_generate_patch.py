@@ -394,6 +394,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             "agentRef": ref("Agent", "code-generator"),
             "outputs": CHANGE_SCHEMA,
             "requiredContext": ["prior-artifacts", "repository-inventory", "policies"],
+            "inputContextTokenBudget": 32_000,
             "evaluations": [ref("Evaluation", "patch-safety")],
             "policies": [ref("Policy", "workspace-write")],
         },

@@ -24,11 +24,11 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 42 |
+| Completed | 43 |
 | In Progress | 1 |
 | Not Started | 1 |
 | Blocked | 0 |
-| Total | 44 |
+| Total | 45 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -170,6 +170,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 42 | [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md) | Completed |
 | 43 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 | 44 | [AEP-044: Stabilize Self-Hosting Dogfood Startup](tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md) | Completed |
+| 45 | [AEP-045: Optimize Context Token Efficiency](tasks/AEP-045-optimize-context-token-efficiency.md) | In Progress |
 
 ---
 
@@ -221,6 +222,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
 | AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | In Progress |
 | AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
+| AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | In Progress |
 
 ---
 
@@ -231,7 +233,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Foundation Contracts | AEP-001, AEP-002, AEP-003, AEP-004 | Completed |
 | Event And Control | AEP-005, AEP-006, AEP-007, AEP-008 | Completed |
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Completed |
-| Repository Context | AEP-015, AEP-016, AEP-017, AEP-018 | Completed |
+| Repository Context | AEP-015, AEP-016, AEP-017, AEP-018, AEP-045 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | Completed |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Completed |
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |

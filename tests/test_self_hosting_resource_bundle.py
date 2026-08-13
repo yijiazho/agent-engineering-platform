@@ -58,7 +58,7 @@ def test_normalized_issue_selects_only_six_task_workflow_in_order(
     )
     resolution = resolve_workflow_for_event(event, resources)
     assert resolution.workflow_refs == (
-        ResourceRef("Workflow", "issue-to-pr", "1.0.1"),
+        ResourceRef("Workflow", "issue-to-pr", "1.0.2"),
     )
 
     workflow = resources.get(resolution.workflow_refs[0])
@@ -74,10 +74,14 @@ def test_context_and_agent_boundaries_are_explicit(
     resources: ResourceCollection,
 ) -> None:
     tasks = {item.name: item.data["spec"] for item in resources.by_kind("Task")}
-    assert {"issue", "repository-inventory"} <= set(
+    assert {"event", "issue", "candidate-files"} <= set(
         tasks["analyze-issue"]["requiredContext"]
     )
-    assert {"issue", "repository-inventory", "prior-artifacts"} <= set(
+    assert {"repository-inventory", "documentation", "knowledge"} == set(
+        tasks["analyze-issue"]["optionalContext"]
+    )
+    assert tasks["analyze-issue"]["inputContextTokenBudget"] == 32_000
+    assert {"issue", "candidate-files", "prior-artifacts"} <= set(
         tasks["build-implementation-plan"]["requiredContext"]
     )
     assert {"prior-artifacts", "policies"} <= set(
@@ -162,6 +166,8 @@ def test_knowledge_and_validation_are_repository_bound_and_bounded(
     resources: ResourceCollection,
 ) -> None:
     knowledge = resources.by_kind("KnowledgeBase")[0].data["spec"]
+    assert resources.by_kind("KnowledgeBase")[0].version == "1.1.0"
+    assert all(1 <= source["limit"] <= 8 for source in knowledge["sources"])
     paths = {source["path"] for source in knowledge["sources"]}
     assert {
         "README.md",

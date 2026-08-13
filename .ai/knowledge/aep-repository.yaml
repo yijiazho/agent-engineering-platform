@@ -1,15 +1,15 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "KnowledgeBase",
-  "metadata": {"name": "aep-repository", "version": "1.0.0", "description": "Maintained and derived knowledge for this repository at the WorkflowExecution revision."},
+  "metadata": {"name": "aep-repository", "version": "1.1.0", "description": "Maintained and derived knowledge for this repository at the WorkflowExecution revision."},
   "spec": {
     "sources": [
-      {"type": "docs", "path": "README.md"},
-      {"type": "docs", "path": "docs/architecture/"},
-      {"type": "adr", "path": "docs/adr/"},
-      {"type": "docs", "path": "docs/tasks/"},
-      {"type": "repository", "path": "schemas/"},
-      {"type": "repository", "path": "src/"},
-      {"type": "repository", "path": "tests/"}
+      {"type": "docs", "path": "README.md", "limit": 1},
+      {"type": "docs", "path": "docs/architecture/", "limit": 4},
+      {"type": "adr", "path": "docs/adr/", "limit": 4},
+      {"type": "docs", "path": "docs/tasks/", "limit": 4},
+      {"type": "repository", "path": "schemas/", "limit": 4},
+      {"type": "repository", "path": "src/", "limit": 8},
+      {"type": "repository", "path": "tests/", "limit": 8}
     ],
     "indexing": {"strategy": "hybrid"},
     "refreshPolicy": "on-change", "visibility": "workspace"

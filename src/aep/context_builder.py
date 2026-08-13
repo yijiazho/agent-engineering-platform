@@ -48,6 +48,11 @@ SUPPORTED_CONTEXT: Final = frozenset(
         "prior-artifacts",
     }
 )
+MAX_INPUT_CONTEXT_TOKENS: Final = 1_000_000
+REPOSITORY_INVENTORY_LIMIT: Final = 20
+CANDIDATE_FILE_LIMIT: Final = 20
+DOCUMENTATION_LIMIT: Final = 8
+KNOWLEDGE_SOURCE_LIMIT: Final = 8
 
 
 class ContextBuilderError(Exception):
@@ -104,8 +109,8 @@ class ContextBuilder:
         knowledge_bases: Sequence[Resource | JsonMapping] = (),
         policies: Sequence[Resource | JsonMapping] = (),
         prior_task_execution_ids: Sequence[str] = (),
-        optional_context: Sequence[str] = (),
-        token_budget: int = 32_000,
+        optional_context: Sequence[str] | None = None,
+        token_budget: int | None = None,
         created_at: str,
     ) -> JsonMapping:
         """Construct and optionally persist one immutable ContextPackage."""
@@ -127,7 +132,31 @@ class ContextBuilder:
             task_data.get("spec", {}).get("requiredContext", ()),
             field="task.spec.requiredContext",
         )
-        optional = _context_names(optional_context, field="optional_context")
+        task_spec = task_data.get("spec", {})
+        declared_optional = task_spec.get("optionalContext", ())
+        optional = _context_names(
+            declared_optional if optional_context is None else optional_context,
+            field=(
+                "task.spec.optionalContext"
+                if optional_context is None
+                else "optional_context"
+            ),
+        )
+        if optional_context is not None and "optionalContext" in task_spec:
+            configured = _context_names(
+                declared_optional, field="task.spec.optionalContext"
+            )
+            if optional != configured:
+                raise ContextInputValidationError(
+                    "optional_context does not match Task.spec.optionalContext"
+                )
+        configured_budget = task_spec.get("inputContextTokenBudget")
+        if token_budget is None:
+            token_budget = configured_budget
+        elif configured_budget is not None and token_budget != configured_budget:
+            raise ContextInputValidationError(
+                "token_budget does not match Task.spec.inputContextTokenBudget"
+            )
         if required.intersection(optional):
             overlap = sorted(required.intersection(optional))
             raise ContextInputValidationError(
@@ -204,7 +233,7 @@ class ContextBuilder:
 
         for knowledge_base in sorted(knowledge_data, key=_resource_sort_key):
             ref = _resource_ref(knowledge_base)
-            results = self._query_knowledge_base(knowledge_base)
+            results = self._query_knowledge_base(knowledge_base, terms)
             _require_result_binding(
                 results, repository_revision, knowledge_graph_version
             )
@@ -273,16 +302,22 @@ class ContextBuilder:
             resolved_names,
         )
 
-        prepared_mandatory = [_with_token_metadata(element) for _, element in mandatory]
-        mandatory_tokens = sum(element["tokenCount"] for element in prepared_mandatory)
+        mandatory, optional_candidates = _deduplicate_context_candidates(
+            mandatory, optional_candidates
+        )
+        prepared_mandatory = [
+            (name, _with_token_metadata(element)) for name, element in mandatory
+        ]
+        mandatory_tokens = sum(element["tokenCount"] for _, element in prepared_mandatory)
         if mandatory_tokens > token_budget:
             raise ContextBudgetExceededError(
                 f"mandatory context requires approximately {mandatory_tokens} tokens, "
                 f"exceeding budget {token_budget}"
             )
 
-        elements = list(prepared_mandatory)
+        elements = [element for _, element in prepared_mandatory]
         selected_names = [name for name, _ in mandatory]
+        selected_categories = [name for name, _ in prepared_mandatory]
         discarded: list[dict[str, Any]] = []
         token_count = mandatory_tokens
         for name, element in optional_candidates:
@@ -290,6 +325,7 @@ class ContextBuilder:
             if token_count + prepared["tokenCount"] <= token_budget:
                 elements.append(prepared)
                 selected_names.append(name)
+                selected_categories.append(name)
                 token_count += prepared["tokenCount"]
             else:
                 discarded.append(
@@ -297,6 +333,7 @@ class ContextBuilder:
                         "context": name,
                         "reason": "TOKEN_BUDGET",
                         "estimatedTokens": prepared["tokenCount"],
+                        "selectionReasons": _selection_reasons(prepared, name),
                     }
                 )
 
@@ -306,6 +343,7 @@ class ContextBuilder:
             "selected": selected_names,
             "discarded": discarded,
         }
+        breakdown = _token_breakdown(selected_categories, elements)
         package_seed = {
             "createdAt": created_at,
             "traceId": trace_id,
@@ -338,6 +376,7 @@ class ContextBuilder:
             "tokenEstimate": {
                 "algorithm": "utf8-bytes-ceiling-divided-by-4",
                 "count": token_count,
+                "breakdown": breakdown,
             },
             "truncation": "PRUNED" if discarded else "NONE",
             "selection": selection,
@@ -415,15 +454,15 @@ class ContextBuilder:
     ) -> tuple[KnowledgeResult, ...]:
         if requirement == "repository-inventory":
             return self._repository_knowledge.search_candidate_files(
-                CandidateFileQuery(limit=None)
+                CandidateFileQuery(limit=REPOSITORY_INVENTORY_LIMIT)
             )
         if requirement == "candidate-files":
             return self._repository_knowledge.search_candidate_files(
-                CandidateFileQuery(terms=terms, limit=20)
+                CandidateFileQuery(terms=terms, limit=CANDIDATE_FILE_LIMIT)
             )
         if requirement == "documentation":
             return self._repository_knowledge.lookup_documentation(
-                DocumentationQuery(limit=20)
+                DocumentationQuery(terms=terms, limit=DOCUMENTATION_LIMIT)
             )
         if requirement == "dependency-manifests":
             return self._repository_knowledge.lookup_dependency_manifests(
@@ -434,19 +473,20 @@ class ContextBuilder:
         raise AssertionError(f"unsupported repository requirement {requirement!r}")
 
     def _query_knowledge_base(
-        self, knowledge_base: dict[str, Any]
+        self, knowledge_base: dict[str, Any], terms: tuple[str, ...]
     ) -> tuple[KnowledgeResult, ...]:
         results: dict[str, KnowledgeResult] = {}
         for source in knowledge_base["spec"]["sources"]:
             source_type = source.get("type")
             path = str(source.get("path", "")).rstrip("/")
+            limit = source.get("limit", KNOWLEDGE_SOURCE_LIMIT)
             if source_type in {"docs", "adr", "runbook"}:
                 selected = self._repository_knowledge.lookup_documentation(
-                    DocumentationQuery(path_prefix=path)
+                    DocumentationQuery(terms=terms, path_prefix=path, limit=limit)
                 )
             elif source_type == "repository":
                 selected = self._repository_knowledge.search_candidate_files(
-                    CandidateFileQuery(path_prefix=path, limit=None)
+                    CandidateFileQuery(terms=terms, path_prefix=path, limit=limit)
                 )
             else:
                 raise ContextInputValidationError(
@@ -558,8 +598,14 @@ def _validate_inputs(
         require_issue="issue" in required_context,
     )
     _unique_nonempty(prior_task_execution_ids)
-    if not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget < 1:
-        raise ContextInputValidationError("token_budget must be a positive integer")
+    if (
+        not isinstance(token_budget, int)
+        or isinstance(token_budget, bool)
+        or not 1 <= token_budget <= MAX_INPUT_CONTEXT_TOKENS
+    ):
+        raise ContextInputValidationError(
+            f"token_budget must be an integer from 1 through {MAX_INPUT_CONTEXT_TOKENS}"
+        )
     if not isinstance(created_at, str) or not created_at:
         raise ContextInputValidationError("created_at must be a non-empty timestamp")
 
@@ -732,6 +778,133 @@ def _knowledge_element(
             "resourceRefs": resource_refs,
         },
     }
+
+
+def _deduplicate_context_candidates(
+    mandatory: list[tuple[str, dict[str, Any]]],
+    optional: list[tuple[str, dict[str, Any]]],
+) -> tuple[list[tuple[str, dict[str, Any]]], list[tuple[str, dict[str, Any]]]]:
+    """Merge the same revision-bound source slice before token accounting."""
+
+    selected_mandatory: list[tuple[str, dict[str, Any]]] = []
+    selected_optional: list[tuple[str, dict[str, Any]]] = []
+    mandatory_index: dict[tuple[Any, ...], int] = {}
+    optional_index: dict[tuple[Any, ...], int] = {}
+
+    for name, element in mandatory:
+        prepared = _with_selection_reason(element, name)
+        identity = _repository_identity(prepared)
+        if identity is not None and identity in mandatory_index:
+            index = mandatory_index[identity]
+            prior_name, prior = selected_mandatory[index]
+            selected_mandatory[index] = (prior_name, _merge_duplicate(prior, prepared))
+            continue
+        if identity is not None:
+            mandatory_index[identity] = len(selected_mandatory)
+        selected_mandatory.append((name, prepared))
+
+    for name, element in optional:
+        prepared = _with_selection_reason(element, name)
+        identity = _repository_identity(prepared)
+        if identity is not None and identity in mandatory_index:
+            index = mandatory_index[identity]
+            prior_name, prior = selected_mandatory[index]
+            selected_mandatory[index] = (prior_name, _merge_duplicate(prior, prepared))
+            continue
+        if identity is not None and identity in optional_index:
+            index = optional_index[identity]
+            prior_name, prior = selected_optional[index]
+            selected_optional[index] = (prior_name, _merge_duplicate(prior, prepared))
+            continue
+        if identity is not None:
+            optional_index[identity] = len(selected_optional)
+        selected_optional.append((name, prepared))
+    return selected_mandatory, selected_optional
+
+
+def _repository_identity(element: JsonMapping) -> tuple[Any, ...] | None:
+    if element.get("type") not in {"repository", "knowledge"}:
+        return None
+    content = element.get("content")
+    provenance = element.get("provenance")
+    if not isinstance(content, Mapping) or not isinstance(provenance, Mapping):
+        return None
+    source = content.get("source")
+    retrieval = content.get("retrieval")
+    if not isinstance(source, Mapping) or not isinstance(retrieval, Mapping):
+        return None
+    return (
+        provenance.get("repositoryRevision"),
+        retrieval.get("snapshotVersion"),
+        source.get("path"),
+        source.get("startLine"),
+        source.get("endLine"),
+        source.get("symbol"),
+    )
+
+
+def _with_selection_reason(element: dict[str, Any], name: str) -> dict[str, Any]:
+    value = deepcopy(element)
+    content = value.get("content")
+    if value.get("type") in {"repository", "knowledge"} and isinstance(content, dict):
+        content["selectionReasons"] = [name]
+        retrieval = content.get("retrieval")
+        if isinstance(retrieval, dict) and isinstance(retrieval.get("traversalPath"), list):
+            retrieval["selectionTraversalPaths"] = [retrieval["traversalPath"]]
+    return value
+
+
+def _merge_duplicate(
+    surviving: dict[str, Any], duplicate: dict[str, Any]
+) -> dict[str, Any]:
+    merged = deepcopy(surviving)
+    merged_content = merged["content"]
+    duplicate_content = duplicate["content"]
+    merged_content["selectionReasons"] = sorted(
+        set(merged_content.get("selectionReasons", ()))
+        | set(duplicate_content.get("selectionReasons", ()))
+    )
+    merged_retrieval = merged_content.get("retrieval", {})
+    duplicate_retrieval = duplicate_content.get("retrieval", {})
+    traversal_paths = {
+        tuple(path)
+        for path in (
+            *merged_retrieval.get("selectionTraversalPaths", ()),
+            *duplicate_retrieval.get("selectionTraversalPaths", ()),
+        )
+    }
+    merged_retrieval["selectionTraversalPaths"] = [
+        list(path) for path in sorted(traversal_paths)
+    ]
+    refs = {
+        _ref_key(ref): _json_copy(ref)
+        for ref in (
+            *merged.get("provenance", {}).get("resourceRefs", ()),
+            *duplicate.get("provenance", {}).get("resourceRefs", ()),
+        )
+    }
+    merged["provenance"]["resourceRefs"] = [refs[key] for key in sorted(refs)]
+    return merged
+
+
+def _selection_reasons(element: JsonMapping, fallback: str) -> list[str]:
+    content = element.get("content")
+    if isinstance(content, Mapping):
+        reasons = content.get("selectionReasons")
+        if isinstance(reasons, Sequence) and not isinstance(reasons, (str, bytes)):
+            return sorted(str(reason) for reason in reasons)
+    return [fallback]
+
+
+def _token_breakdown(
+    categories: Sequence[str], elements: Sequence[JsonMapping]
+) -> dict[str, dict[str, int]]:
+    breakdown: dict[str, dict[str, int]] = {}
+    for category, element in zip(categories, elements, strict=True):
+        entry = breakdown.setdefault(category, {"elementCount": 0, "tokenCount": 0})
+        entry["elementCount"] += 1
+        entry["tokenCount"] += int(element["tokenCount"])
+    return {category: breakdown[category] for category in sorted(breakdown)}
 
 
 def _require_result_binding(

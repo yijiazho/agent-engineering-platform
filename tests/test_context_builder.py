@@ -106,6 +106,7 @@ def task(name: str, required_context: list[str]) -> dict:
             "objective": f"Execute {name} for context builder tests.",
             "outputs": {"type": "object"},
             "requiredContext": required_context,
+            "inputContextTokenBudget": 32_000,
         },
     }
     if "knowledge" in required_context:
@@ -329,7 +330,16 @@ def test_builds_context_for_every_mvp_task_type_from_deterministic_fixture() -> 
         )
 
         element_types = {element["type"] for element in context["elements"]}
-        assert set(definition["expectedTypes"]).issubset(element_types)
+        expected_types = set(definition["expectedTypes"])
+        # Cross-category repository identities are represented once; their
+        # complete selection reasons remain on the surviving element.
+        if "knowledge" in expected_types and "knowledge" not in element_types:
+            assert any(
+                "knowledge" in element.get("content", {}).get("selectionReasons", ())
+                for element in context["elements"]
+            )
+            expected_types.remove("knowledge")
+        assert expected_types.issubset(element_types)
         assert context["selection"]["requiredContext"] == tuple(sorted(required))
         assert context["tokenEstimate"]["count"] == context["tokenCount"]
         assert context["tokenCount"] <= context["tokenBudget"]
@@ -532,20 +542,18 @@ def test_rejects_repository_snapshot_other_than_workflow_binding() -> None:
 
 def test_required_context_cannot_be_pruned_to_fit_budget() -> None:
     task_resource = task("analyze-issue", ["repository-inventory"])
+    task_resource["spec"]["inputContextTokenBudget"] = 1
 
     with pytest.raises(ContextBudgetExceededError, match="mandatory context"):
-        build(task_resource, token_budget=1)
+        build(task_resource)
 
 
 def test_optional_context_is_pruned_and_selection_is_explained() -> None:
     task_resource = task("analyze-issue", ["issue"])
-    baseline = build(task_resource)
+    task_resource["spec"]["optionalContext"] = ["repository-inventory"]
+    task_resource["spec"]["inputContextTokenBudget"] = 300
 
-    context = build(
-        task_resource,
-        optional_context=("repository-inventory",),
-        token_budget=baseline["tokenCount"],
-    )
+    context = build(task_resource)
 
     assert context["truncation"] == "PRUNED"
     assert context["selection"]["discarded"]
@@ -553,6 +561,125 @@ def test_optional_context_is_pruned_and_selection_is_explained() -> None:
         discarded["reason"] == "TOKEN_BUDGET"
         for discarded in context["selection"]["discarded"]
     )
+
+
+def test_controlled_issue_context_is_relevant_bounded_and_deduplicated() -> None:
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/context-builder/analyze-issue-token-efficiency.json"
+        ).read_text(encoding="utf-8")
+    )
+    padding = "x" * fixture["metadataPaddingBytes"]
+    generated_paths = [
+        f"src/zmodule_{index:03d}.py"
+        for index in range(fixture["repositoryFileCount"] - 2)
+    ]
+    paths = [*fixture["allowedPaths"], *generated_paths]
+    files = tuple(
+        RepositoryFile(
+            path,
+            f"Python-{padding}",
+            index % 10 == 0,
+            source(path),
+        )
+        for index, path in enumerate(paths)
+    )
+    assert sum((len(file.language.encode("utf-8")) + 3) // 4 for file in files) > 120_000
+    provider = InMemoryRepositoryKnowledgeProvider(
+        RepositoryKnowledgeSnapshot(
+            api_version="aep.dev/repository-knowledge/v1",
+            snapshot_version="snapshot-context-v1",
+            repository_revision=REVISION,
+            created_at=CREATED_AT,
+            scanner_version="mvp-scanner/1.0.0",
+            files=files,
+            documentation=tuple(file for file in files if file.is_documentation),
+            dependency_manifests=(),
+            test_command_hints=(),
+        )
+    )
+    task_resource = task("analyze-issue", ["event", "issue", "candidate-files"])
+    task_resource["metadata"]["version"] = "1.1.0"
+    task_resource["spec"].update(
+        {
+            "optionalContext": [
+                "repository-inventory",
+                "documentation",
+                "knowledge",
+            ],
+            "inputContextTokenBudget": fixture["inputContextTokenBudget"],
+            "knowledgeBases": [
+                {
+                    "kind": "KnowledgeBase",
+                    "name": "repository-docs",
+                    "version": "1.1.0",
+                }
+            ],
+        }
+    )
+    kb = knowledge_base()
+    kb["metadata"]["version"] = "1.1.0"
+    kb["spec"]["sources"] = [
+        {"type": "repository", "path": "src/", "limit": 8},
+        {"type": "repository", "path": "tests/", "limit": 8},
+    ]
+    issue_event = event()
+    issue_event["issue"].update(fixture["issue"])
+
+    context = builder(provider=provider).build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=issue_event,
+        knowledge_bases=(kb,),
+        created_at=CREATED_AT,
+    )
+
+    paths_in_context = [
+        element["content"]["source"]["path"]
+        for element in context["elements"]
+        if element["type"] in {"repository", "knowledge"}
+    ]
+    identities = [
+        (
+            element["provenance"]["repositoryRevision"],
+            element["content"]["source"]["path"],
+            element["content"]["source"].get("startLine"),
+            element["content"]["source"].get("endLine"),
+        )
+        for element in context["elements"]
+        if element["type"] in {"repository", "knowledge"}
+    ]
+    assert context["tokenCount"] <= 32_000
+    assert set(fixture["allowedPaths"]) <= set(paths_in_context)
+    assert len(paths_in_context) < fixture["repositoryFileCount"]
+    assert len(identities) == len(set(identities))
+    runtime_store_element = next(
+        element
+        for element in context["elements"]
+        if element["type"] in {"repository", "knowledge"}
+        and element["content"]["source"].get("path")
+        == "src/aep/runtime_store.py"
+    )
+    assert {"candidate-files", "repository-inventory", "knowledge"} <= set(
+        runtime_store_element["content"]["selectionReasons"]
+    )
+    assert runtime_store_element["content"]["retrieval"][
+        "selectionTraversalPaths"
+    ]
+    assert sum(
+        category["tokenCount"]
+        for category in context["tokenEstimate"]["breakdown"].values()
+    ) == context["tokenCount"]
+    assert context["id"] == builder(provider=provider).build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=issue_event,
+        knowledge_bases=(kb,),
+        created_at=CREATED_AT,
+    )["id"]
 
 
 def test_artifact_content_and_content_address_provenance_are_preserved() -> None:

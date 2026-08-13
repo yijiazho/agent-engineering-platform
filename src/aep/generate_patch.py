@@ -124,7 +124,6 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 ),
                 policies=self._resolve_declared(task_spec.get("policies", ()), "Policy"),
                 prior_task_execution_ids=(producer_id,),
-                token_budget=self._token_budget,
                 created_at=self._timestamp(),
             )
             self._attach(task_execution["id"], {"contextPackageId": context_package["id"]})

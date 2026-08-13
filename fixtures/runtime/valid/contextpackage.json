@@ -85,7 +85,11 @@
   "tokenCount": 176,
   "tokenEstimate": {
     "algorithm": "utf8-bytes-ceiling-divided-by-4",
-    "count": 176
+    "count": 176,
+    "breakdown": {
+      "event": {"elementCount": 1, "tokenCount": 48},
+      "task": {"elementCount": 1, "tokenCount": 128}
+    }
   },
   "truncation": "NONE",
   "selection": {

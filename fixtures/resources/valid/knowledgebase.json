@@ -9,7 +9,8 @@
     "sources": [
       {
         "type": "docs",
-        "path": "docs/"
+        "path": "docs/",
+        "limit": 8
       }
     ],
     "indexing": {

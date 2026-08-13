@@ -23,6 +23,16 @@
           "items": { "type": "string", "minLength": 1 },
           "uniqueItems": true
         },
+        "optionalContext": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "inputContextTokenBudget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
         "knowledgeBases": { "$ref": "./resource-definitions.schema.json#/$defs/knowledgeBaseRefList" },
         "evaluations": { "$ref": "./resource-definitions.schema.json#/$defs/evaluationRefList" },
         "policies": { "$ref": "./resource-definitions.schema.json#/$defs/policyRefList" },
