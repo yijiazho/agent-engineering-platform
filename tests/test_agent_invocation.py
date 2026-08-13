@@ -489,7 +489,11 @@ def context_package():
         ],
         "tokenBudget": 100,
         "tokenCount": 10,
-        "tokenEstimate": {"algorithm": "test", "count": 10},
+        "tokenEstimate": {
+            "algorithm": "test",
+            "count": 10,
+            "breakdown": {"task": {"elementCount": 1, "tokenCount": 10}},
+        },
         "truncation": "NONE",
         "selection": {
             "requiredContext": ["repository"],

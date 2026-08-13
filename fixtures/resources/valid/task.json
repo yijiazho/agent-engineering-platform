@@ -40,7 +40,9 @@
         }
       }
     },
-    "requiredContext": ["issue", "repository-inventory"],
+    "requiredContext": ["issue", "candidate-files"],
+    "optionalContext": ["repository-inventory", "documentation"],
+    "inputContextTokenBudget": 32000,
     "evaluations": [
       {
         "kind": "Evaluation",

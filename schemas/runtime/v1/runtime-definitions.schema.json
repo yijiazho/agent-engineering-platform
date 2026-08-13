@@ -250,10 +250,22 @@
             "tokenEstimate": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["algorithm", "count"],
+              "required": ["algorithm", "count", "breakdown"],
               "properties": {
                 "algorithm": { "type": "string", "minLength": 1 },
-                "count": { "type": "integer", "minimum": 0 }
+                "count": { "type": "integer", "minimum": 0 },
+                "breakdown": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["elementCount", "tokenCount"],
+                    "properties": {
+                      "elementCount": { "type": "integer", "minimum": 0 },
+                      "tokenCount": { "type": "integer", "minimum": 0 }
+                    }
+                  }
+                }
               }
             },
             "truncation": { "type": "string", "enum": ["NONE", "SUMMARIZED", "PRUNED"] },
@@ -270,11 +282,12 @@
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["context", "reason", "estimatedTokens"],
+                    "required": ["context", "reason", "estimatedTokens", "selectionReasons"],
                     "properties": {
                       "context": { "type": "string", "minLength": 1 },
                       "reason": { "const": "TOKEN_BUDGET" },
-                      "estimatedTokens": { "type": "integer", "minimum": 0 }
+                      "estimatedTokens": { "type": "integer", "minimum": 0 },
+                      "selectionReasons": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
                     }
                   }
                 }

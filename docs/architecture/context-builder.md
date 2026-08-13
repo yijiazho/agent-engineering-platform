@@ -417,7 +417,11 @@ Compression should preserve provenance.
 
 # 13. Token Budget
 
-Every Task defines a target context budget.
+Every cognitive Task defines `spec.inputContextTokenBudget` as a positive
+integer no greater than 1,000,000. `spec.optionalContext` declares the
+lower-priority categories that may be pruned. These fields are immutable Task
+configuration; the Task schema requires the budget whenever `agentRef` is
+present, and callers do not choose a handler-local budget.
 
 Example:
 
@@ -435,7 +439,10 @@ Budget allocation might be:
 | Event      |    10% |
 | Policies   |     5% |
 
-Budgets are configurable by Task.
+Budgets are configurable by Task and are independent of
+`Model.spec.tokenLimit`, which limits model output. The deterministic
+provider-neutral estimate remains canonical UTF-8 JSON bytes divided by four;
+provider tokenizers do not participate in selection.
 
 ---
 
@@ -607,8 +614,10 @@ By treating context construction as a first-class subsystem rather than a helper
 The MVP implementation is `aep.context_builder.ContextBuilder`. Callers supply
 an explicit Task Resource, its TaskExecution and WorkflowExecution, the
 normalized Event when applicable, explicitly versioned KnowledgeBase and
-Policy Resources, prior producer TaskExecution identifiers, a token budget,
-and a deterministic creation timestamp.
+Policy Resources, prior producer TaskExecution identifiers, and a deterministic
+creation timestamp. The builder consumes `inputContextTokenBudget` and
+`optionalContext` from the Task. A direct caller override is accepted only
+when it exactly matches the declared value.
 
 Repository elements are obtained only through the Repository Knowledge query
 API. Prior GeneratedArtifacts and their verified content are obtained only
@@ -625,11 +634,30 @@ reference; the MVP `github.issue.created` payload is validated before its issue
 context can enter a package. Event input without a WorkflowExecution binding is
 rejected.
 
+Candidate-file retrieval applies issue-derived search terms and a hard limit
+of 20 results. Repository inventory is a stable path-ordered sample limited to
+20 results, so it can still serve Tasks that require structural context even
+when issue terms match no path. Documentation retrieval applies issue terms
+and is limited to 8 results. Every KnowledgeBase source has an explicit
+positive `limit` in the self-hosting bundle; the builder applies its search
+terms and falls back to a bound of 8 for older valid Resources. No
+self-hosting AnalyzeIssue query uses an unbounded limit.
+
+The same repository identity is a repository revision, knowledge snapshot,
+path, and optional line/symbol slice. Identities selected through multiple
+categories are emitted once before token accounting. The survivor retains all
+sorted `selectionReasons`, traversal paths, Resource references, and immutable
+revision/snapshot provenance. Optional duplicate metadata is merged only when
+its incremental token cost fits; otherwise the mandatory representation stays
+unchanged and the optional contribution is recorded as discarded.
+
 Mandatory elements are assembled before optional candidates. Optional
 candidates are selected in stable provider order while budget remains and are
 otherwise recorded as discarded with a `TOKEN_BUDGET` reason. Mandatory
 elements are never truncated; if they exceed the budget, construction fails.
 The package records the estimator algorithm, selected and discarded context,
-element estimates, aggregate token estimate, and provenance. Its identifier is
-derived from canonical construction inputs, and the returned value is
-recursively immutable.
+safe per-category element/token counts, element estimates, aggregate token
+estimate, and provenance. This operational evidence contains counts and
+reasons rather than issue bodies, source bodies, prompts, or credentials. Its
+identifier is derived from canonical construction inputs, and the returned
+value is recursively immutable.

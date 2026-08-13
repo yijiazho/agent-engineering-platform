@@ -226,6 +226,7 @@ def resource_collection(
             "agentRef": ref("Agent", "planner"),
             "outputs": PLAN_SCHEMA,
             "requiredContext": ["prior-artifacts", "repository-inventory"],
+            "inputContextTokenBudget": 32_000,
             "evaluations": [ref("Evaluation", "implementation-plan-schema")],
         },
     )

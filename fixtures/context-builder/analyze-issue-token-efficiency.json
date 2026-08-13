@@ -1,0 +1,13 @@
+{
+  "repositoryFileCount": 350,
+  "metadataPaddingBytes": 1400,
+  "allowedPaths": [
+    "src/aep/runtime_store.py",
+    "tests/test_runtime_store.py"
+  ],
+  "issue": {
+    "title": "Normalize invalid durable runtime checkpoint object failures",
+    "body": "Allowed paths: src/aep/runtime_store.py and tests/test_runtime_store.py"
+  },
+  "inputContextTokenBudget": 32000
+}

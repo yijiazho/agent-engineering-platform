@@ -54,7 +54,6 @@ class AnalyzeIssueTaskHandler:
         model_adapter: ModelAdapter,
         event_resolver: EventResolver,
         clock: Clock,
-        token_budget: int = 32_000,
     ) -> None:
         if not isinstance(resources, ResourceCollection):
             raise TypeError("resources must be a ResourceCollection")
@@ -66,8 +65,6 @@ class AnalyzeIssueTaskHandler:
             raise TypeError("model_adapter must implement ModelAdapter")
         if not callable(event_resolver) or not callable(clock):
             raise TypeError("event_resolver and clock must be callable")
-        if not isinstance(token_budget, int) or isinstance(token_budget, bool) or token_budget < 1:
-            raise ValueError("token_budget must be a positive integer")
         self._resources = resources
         self._runtime_store = runtime_store
         self._context_builder = context_builder
@@ -75,7 +72,6 @@ class AnalyzeIssueTaskHandler:
         self._model_adapter = model_adapter
         self._event_resolver = event_resolver
         self._clock = clock
-        self._token_budget = token_budget
 
     def execute(
         self, task: Resource, task_execution: RuntimeObject
@@ -99,7 +95,6 @@ class AnalyzeIssueTaskHandler:
                 ),
                 policies=self._resolve_declared(task_spec.get("policies", ()), "Policy"),
                 **self._context_arguments(task_execution, workflow),
-                token_budget=self._token_budget,
                 created_at=self._timestamp(),
             )
             self._attach(task_execution["id"], {"contextPackageId": context_package["id"]})
