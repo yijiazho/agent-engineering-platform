@@ -96,6 +96,11 @@ def test_self_hosting_compose_is_pinned_read_only_durable_and_least_privilege() 
     assert "no-new-privileges:true" in compose
     assert "AEP_EMERGENCY_DISABLE_FILE: /var/lib/aep/control/EMERGENCY_DISABLE" in compose
     assert compose.count("/var/run/docker.sock") == 4
+    environment_example = (
+        ROOT / "deploy/self-hosting/.env.example"
+    ).read_text(encoding="utf-8")
+    assert "AEP_DOCKER_SOCKET=/var/run/docker.sock" in environment_example
+    assert "//./pipe/docker_engine" not in environment_example
     assert compose.count("github_webhook_secret]") == 1
     assert compose.count("openai_api_key]") == 2
     assert compose.count("github_app_private_key") >= 3

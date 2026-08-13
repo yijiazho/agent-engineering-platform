@@ -36,6 +36,11 @@ Startup verifies the checkout is detached and completely clean before loading
 `.ai/`; a modified or untracked file fails every service. The deployment also
 passes `AEP_STATE_DIRECTORY` as the host-visible Docker state root so nested
 validation binds the execution worktree rather than a container-only path.
+For Docker Desktop's Linux-container backend, keep `AEP_DOCKER_SOCKET` set to
+`/var/run/docker.sock`. Docker Compose resolves that path through the Linux VM
+and mounts an actual Unix socket into Workflow Runtime and Tool Runtime. A
+Windows named-pipe value such as `//./pipe/docker_engine` becomes a directory
+inside a Linux container and makes nested Docker validation unavailable.
 Because this profile mounts a checkout prepared by Windows Git into Linux
 containers, it explicitly verifies cleanliness with `core.autocrlf=true`.
 This matches the host's CRLF worktree normalization while still rejecting

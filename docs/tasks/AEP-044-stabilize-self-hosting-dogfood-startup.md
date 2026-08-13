@@ -189,3 +189,27 @@ services. Local health and Resource discovery reported the pinned repository,
 Workspace, `dogfood` environment, Resource revision, and 35 Resources. Public
 Cloudflare ingress reached AEP and returned its intentional `404` for an
 unsigned GET rather than an origin error.
+
+### Reopened Validation: Docker CLI Generation
+
+Reopened and completed again on 2026-08-12 after the shared image changed from
+Debian's `docker.io` package to the client-only `docker-cli` package. The first
+startup failure was an incomplete generation update: `.env` pinned Resource
+revision `e6f1141fe08ea3e509317339ab27da282fa28d11` while the mounted detached
+checkout remained at `a5653fe45529a00b205cf114bca6b3f5c3c3f91b`; the existing
+identity guard correctly rejected all services. After aligning that checkout,
+provider readiness exposed a second blocker: the example's Windows named-pipe
+source mounted as a directory at `/var/run/docker.sock` inside Linux
+containers. The profile now uses `/var/run/docker.sock` as both source and
+destination so Docker Desktop supplies its Linux VM Unix socket.
+
+The existing published generation
+`ghcr.io/yijiazho/agent-engineering-platform@sha256:f6f57d4a23e8198e2982e4ae3b3ed734276a6a87b6f77205bd3aea976a4b3643`
+then passed cold recreation and deliberate restart with all seven services
+healthy and zero restart growth. Workflow Runtime and Tool Runtime both saw a
+real socket and reported Docker client/server `26.1.5+dfsg1/29.6.1`. An
+isolated signed delivery returned `202 accepted`, its replay returned `200
+duplicate` with the same Event identity, and isolated state contained exactly
+one Event and one pending outbox row. Public ingress returned AEP `401`, the
+focused deployment/provider/checkout suites passed, and the final complete
+suite passed with 693 tests and one skip.
