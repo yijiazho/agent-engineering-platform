@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y ca-certificates docker.io git \
+    && apt-get install --no-install-recommends -y ca-certificates docker-cli git \
+    && docker --version \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/aep

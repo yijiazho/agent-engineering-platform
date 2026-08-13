@@ -110,7 +110,9 @@ def test_self_hosting_compose_is_pinned_read_only_durable_and_least_privilege() 
     ):
         assert f"  {service}:" in compose
     dockerfile = (ROOT / "deploy/local/Dockerfile").read_text(encoding="utf-8")
-    assert "docker.io git" in dockerfile
+    assert "docker-cli git" in dockerfile
+    assert "docker --version" in dockerfile
+    assert "docker.io" not in dockerfile
     assert "PYTHONPATH=/opt/aep/src" in dockerfile
 
 

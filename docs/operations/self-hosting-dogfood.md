@@ -20,7 +20,7 @@ run the control plane from a branch checkout.
 
 ```powershell
 git clone --filter=blob:none https://github.com/yijiazho/agent-engineering-platform C:\aep\resources\agent-engineering-platform
-git -C C:\aep\resources\agent-engineering-platform checkout --detach <40-character-release-commit>
+git -C C:\aep\resources\agent-engineering-platform checkout --detach 'replace-with-40-character-release-commit'
 New-Item -ItemType Directory -Force C:\aep\state\agent-engineering-platform\control
 Copy-Item deploy/self-hosting/.env.example deploy/self-hosting/.env
 ```
@@ -65,6 +65,494 @@ Restrict host ACLs to the deployment operator and container runtime. Compose
 mounts the webhook secret only into Event Controller, the App key only into
 Workflow Runtime and Tool Runtime, and the model key only into Workflow Runtime
 and Agent Resolver. Installation tokens and Git askpass files remain ephemeral.
+
+## Manual End-To-End Test Plan
+
+Use this plan for the controlled AEP-043 pilot and for every replacement host or
+release generation. Execute the tests in order. A failed observation is a stop
+condition: preserve the state directory and relevant redacted logs, diagnose the
+failure, publish a corrected immutable generation, and restart from the first
+affected test. Do not skip directly to opening a live issue.
+
+The plan separates read-only checks, isolated ingress checks, fail-closed checks,
+and the one authorized live publication. Commands assume Windows PowerShell 5,
+Docker Desktop, Git, GitHub CLI, and `cloudflared`. Run repository commands from
+the repository root. Run only the Cloudflare connector command from an elevated
+Administrator PowerShell.
+
+Record the following in an operator change record without recording secret
+values, webhook signatures, request bodies, prompts, or artifact bodies:
+
+* operator, start/end time, host, and change or incident reference;
+* image repository and digest, Resource revision, default-branch base SHA, and
+  validation-image digest;
+* GitHub App ID and installation ID, public webhook hostname, and GitHub
+  delivery ID;
+* test ID, action, timestamp, observed status, evidence address, and pass/fail;
+* WorkflowExecution and trace IDs, execution branch, PR number/URL/head SHA,
+  and terminal status; and
+* any deviation, retry, provider ambiguity, retained worktree, or cleanup
+  decision.
+
+The test gates are:
+
+| Test | Action | Required observation |
+| --- | --- | --- |
+| MTP-01 | Validate immutable inputs and host paths | Published digest exists; Resource checkout is detached, clean, and at the configured revision; secrets are non-empty without being printed. |
+| MTP-02 | Run deterministic tests | Deployment, ingress, checkout, provider, and end-to-end harness tests pass without live credentials. |
+| MTP-03 | Cold-start the self-hosting stack | All seven containers become healthy, retain zero restart-count growth, and report one consistent identity. |
+| MTP-04 | Verify Resources and live provider boundaries | The complete six-Task graph resolves; GitHub App readiness is `READY`; Docker is reachable; OpenAI local configuration is ready. |
+| MTP-05 | Test public ingress | The Cloudflare route reaches AEP and an unsigned request fails at AEP with `401`, not at the tunnel with a timeout, `502`, or connection refusal. |
+| MTP-06 | Test authentication and replay in isolated state | First signed fixture is `202 accepted`, replay is `200 duplicate`, negative cases fail closed, and only one pending outbox identity exists. |
+| MTP-07 | Test emergency disable | Admission returns `503 emergency_disabled`, no new Event/outbox row appears, and services recover after controlled re-enable. |
+| MTP-08 | Establish the publication baseline | No pre-existing branch or PR can be mistaken for the pilot result; backup and capacity checks pass. |
+| MTP-09 | Open one controlled issue | GitHub records one successful Issues delivery and AEP creates one WorkflowExecution at the live default-branch SHA. |
+| MTP-10 | Observe the six-Task execution | The Tasks succeed in DAG order with correlated context, Agent/Model/Tool, artifact, Evaluation, and Policy evidence. |
+| MTP-11 | Verify publication | Exactly one authorized execution branch and one open, unmerged PR exist with the required body and head/base identity. |
+| MTP-12 | Verify restart and replay idempotency | Compose restart and GitHub redelivery create no second Event, WorkflowExecution, branch, mutation, or PR. |
+| MTP-13 | Review evidence and security | Durable evidence is complete and correlated; logs and exported metadata contain no secret or artifact body. |
+
+### MTP-01: Immutable Input And Host Preflight
+
+Read the non-secret pins from `.env`, verify their format, and compare the
+Resource pin with the detached checkout. The status command must print nothing,
+and `symbolic-ref` must exit `1`, proving that the checkout is detached.
+
+```powershell
+$envLines = Get-Content .\deploy\self-hosting\.env
+function Get-AepSetting([string]$name) {
+    $line = $envLines | Where-Object { $_ -like "$name=*" } | Select-Object -First 1
+    if (-not $line) { throw "$name is not configured" }
+    return ($line -split '=', 2)[1].Trim()
+}
+
+$imageRepository = Get-AepSetting 'AEP_IMAGE_REPOSITORY'
+$imageDigest = Get-AepSetting 'AEP_IMAGE_DIGEST'
+$resourceRevision = Get-AepSetting 'AEP_RESOURCE_REVISION'
+$resourceCheckout = Get-AepSetting 'AEP_RESOURCE_CHECKOUT'
+$stateDirectory = Get-AepSetting 'AEP_STATE_DIRECTORY'
+
+if ($imageDigest -notmatch '^[0-9a-f]{64}$') { throw 'invalid AEP_IMAGE_DIGEST' }
+if ($resourceRevision -notmatch '^[0-9a-f]{40}$') { throw 'invalid AEP_RESOURCE_REVISION' }
+if ((git -C $resourceCheckout rev-parse HEAD).Trim() -ne $resourceRevision) { throw 'Resource revision mismatch' }
+if (git -C $resourceCheckout status --porcelain=v1 --untracked-files=all) { throw 'Resource checkout is dirty' }
+git -C $resourceCheckout symbolic-ref -q HEAD
+if ($LASTEXITCODE -ne 1) { throw 'Resource checkout is not detached' }
+$resourcePath = (Resolve-Path $resourceCheckout).Path.TrimEnd('\')
+$statePath = (Resolve-Path $stateDirectory).Path.TrimEnd('\')
+if ($resourcePath.Equals($statePath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Resource checkout equals state root' }
+if ($resourcePath.StartsWith($statePath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Resource checkout overlaps state' }
+if ($statePath.StartsWith($resourcePath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'State overlaps Resource checkout' }
+
+docker manifest inspect "$imageRepository@sha256:$imageDigest" | Out-Null
+docker pull python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml config --quiet
+```
+
+Verify secret presence without reading their values. Relative secret paths are
+resolved from `deploy/self-hosting`, matching Compose behavior.
+
+```powershell
+$selfHostingRoot = (Resolve-Path .\deploy\self-hosting).Path
+'AEP_GITHUB_WEBHOOK_SECRET_FILE','AEP_GITHUB_APP_PRIVATE_KEY_FILE','AEP_OPENAI_API_KEY_FILE' | ForEach-Object {
+    $configured = Get-AepSetting $_
+    $path = if ([IO.Path]::IsPathRooted($configured)) { $configured } else { Join-Path $selfHostingRoot $configured }
+    $item = Get-Item -LiteralPath $path -ErrorAction Stop
+    if ($item.Length -le 0) { throw "$_ is empty" }
+    [pscustomobject]@{ Name = $_; Exists = $true; NonEmpty = $true }
+}
+```
+
+Pass only if the registry manifest and validation image resolve, the Compose
+configuration is valid, the checkout is clean and detached at the pin, the two
+host roots do not overlap, and all three results report `Exists=True` and
+`NonEmpty=True`. Do not display the rendered secret contents or the private key.
+
+### MTP-02: Credential-Free Regression Gate
+
+Run the tests from the exact release checkout used to build the pinned image:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_mvp_harness.py tests/test_dogfood_deployment.py
+.\.venv\Scripts\python.exe -m pytest tests/test_github_webhook.py tests/test_execution_checkout.py
+.\.venv\Scripts\python.exe -m pytest tests/test_github_app_provider.py tests/test_openai_model_provider.py
+.\.venv\Scripts\python.exe -m pytest tests/test_self_hosting_resource_bundle.py
+.\.venv\Scripts\python.exe -m pytest
+```
+
+Pass only if every command exits `0`. These tests prove deterministic allowed
+and blocked paths with fakes; they do not replace the live provider and pilot
+tests below.
+
+### MTP-03: Cold Start, Identity, And Stability
+
+`down` must not use `--volumes`. Start from stopped containers while preserving
+the explicit durable state directory:
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml down
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml pull
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml up -d --force-recreate
+Start-Sleep -Seconds 30
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml ps
+docker inspect self-hosting-event-controller-1 self-hosting-resource-controller-1 self-hosting-workflow-runtime-1 self-hosting-agent-resolver-1 self-hosting-context-builder-1 self-hosting-tool-runtime-1 self-hosting-evaluation-engine-1 --format '{{.Name}} restarts={{.RestartCount}} status={{.State.Status}} health={{.State.Health.Status}}'
+```
+
+Query all service health endpoints and require identical identity fields:
+
+```powershell
+$health = 8081..8087 | ForEach-Object { Invoke-RestMethod "http://127.0.0.1:$_/healthz" }
+$health | Select-Object service,status,repository,workspace,environment,resourceRevision | Format-Table -AutoSize
+$identity = @($health | Group-Object repository,workspace,environment,resourceRevision)
+if ($identity.Count -ne 1) { throw 'service identity drift' }
+if (($health | Where-Object { $_.status -ne 'ready' }).Count -ne 0) { throw 'a service is not ready' }
+```
+
+Wait five minutes and rerun the `docker inspect` command:
+
+```powershell
+Start-Sleep -Seconds 300
+docker inspect self-hosting-event-controller-1 self-hosting-resource-controller-1 self-hosting-workflow-runtime-1 self-hosting-agent-resolver-1 self-hosting-context-builder-1 self-hosting-tool-runtime-1 self-hosting-evaluation-engine-1 --format '{{.Name}} restarts={{.RestartCount}} status={{.State.Status}} health={{.State.Health.Status}}'
+```
+
+Pass only if all seven services remain `running/healthy`, restart counts do not
+increase, every health response is `ready`, and the identity is
+`github:yijiazho/agent-engineering-platform`,
+`agent-engineering-platform:1.0.0`, `dogfood`, and the configured Resource
+revision.
+
+### MTP-04: Resource And Provider Readiness
+
+Inspect the resolved Resource inventory without reading Resource bodies:
+
+```powershell
+$discovery = Invoke-RestMethod http://127.0.0.1:8082/v1/resources
+$discovery.workspace
+$discovery.resources | Group-Object { ($_ -split '/', 2)[0] } | Select-Object Name,Count | Sort-Object Name
+```
+
+Require one Workspace, one Event, one Workflow, six Tasks, four Agents, and all
+versioned Prompt, Model, Tool, Policy, Evaluation, and KnowledgeBase references.
+Confirm in `.ai/workflows/issue-to-pr.yaml` that the resolved DAG is:
+
+```text
+analyze-issue
+  -> build-implementation-plan
+  -> generate-patch
+  -> run-validation
+  -> evaluate-acceptance
+  -> create-pull-request
+```
+
+Run credential-free readiness output from the live containers. GitHub readiness
+performs the live installation lookup; OpenAI readiness proves only local URL
+and key-file configuration, while a successful ModelInvocation in MTP-10 proves
+the live model call. The shared image installs Debian's `docker-cli` package,
+not the Docker daemon package: Workflow Runtime uses that client with the
+host-mounted Docker socket. The image build verifies that the client binary is
+available before publication.
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c "import json,os; from aep.github_app_provider import github_app_provider_from_environment; print(json.dumps(github_app_provider_from_environment(os.environ).readiness(),sort_keys=True))"
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c "import json,os; from aep.openai_model_provider import openai_model_adapter_from_environment; print(json.dumps(openai_model_adapter_from_environment('openai',environ=os.environ).readiness(),sort_keys=True))"
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime docker version --format '{{.Server.Version}}'
+```
+
+Pass only if GitHub reports `READY` for the configured repository, App,
+installation, default branch, and authorized branch prefix; OpenAI reports
+`READY` with the expected API URL and no key; and the nested Docker client
+reports a server version. In the GitHub App UI, independently verify that it is
+installed only on this repository with Metadata read, Issues read, Contents
+read/write, Pull requests read/write, and only the Issues webhook subscription.
+Verify that repository rules permit the App to push `aep/execution/*` branches.
+
+### MTP-05: Cloudflare Public Ingress
+
+From Administrator PowerShell, start the configured connector and keep it
+running:
+
+```powershell
+cloudflared tunnel run --token-file C:\ProgramData\cloudflared\token
+```
+
+From a second, non-elevated PowerShell, send an intentionally unsigned request
+to the exact configured public path:
+
+```powershell
+$publicWebhookUrl = 'https://<public-hostname>/v1/webhooks/github'
+curl.exe --silent --show-error --output NUL --write-out "%{http_code}`n" -X POST -H "Content-Type: application/json" -H "X-GitHub-Event: issues" -H "X-GitHub-Delivery: aep-public-preflight" --data-binary "{}" $publicWebhookUrl
+```
+
+Pass only if the response is AEP `401 invalid_signature`. A Cloudflare `502`,
+`1033`, timeout, TLS error, DNS failure, or `ECONNREFUSED` means ingress is not
+ready. Confirm that only the webhook route is published and ports 8082-8087
+remain bound to loopback.
+
+### MTP-06: Isolated Authentication, Negative Cases, And Replay
+
+Do not send the synthetic fixture to the live durable state while Workflow
+Runtime is consuming it: a valid accepted Event is eligible for the complete
+Workflow. Instead, stop the main stack and start only Event Controller under a
+separate Compose project and isolated state directory:
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml down
+$env:AEP_STATE_DIRECTORY = 'C:/aep/state/agent-engineering-platform-ingress-test'
+docker compose -p aep-ingress-test --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml up -d event-controller
+Start-Sleep -Seconds 20
+docker compose -p aep-ingress-test --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml ps
+```
+
+Run the signed fixture procedure in **Validate Authentication, Replay, And
+Blocking** below against `http://127.0.0.1:8081/v1/webhooks/github`. Require the
+first response to be `202 accepted`, the replay to be `200 duplicate`, and both
+responses to contain the same Event ID. Then use the same prepared `$bodyBytes`,
+`$headers`, and `$secret` variables for negative cases without printing them:
+
+```powershell
+function Invoke-WebhookStatus([hashtable]$requestHeaders, [byte[]]$requestBody) {
+    try {
+        $response = Invoke-WebRequest http://127.0.0.1:8081/v1/webhooks/github -Method Post -Headers $requestHeaders -ContentType application/json -Body $requestBody -UseBasicParsing
+        return [int]$response.StatusCode
+    } catch {
+        if ($_.Exception.Response) { return [int]$_.Exception.Response.StatusCode }
+        throw
+    }
+}
+
+$badSignatureHeaders = $headers.Clone()
+$badSignatureHeaders['X-GitHub-Delivery'] = 'aep-negative-bad-signature'
+$badSignatureHeaders['X-Hub-Signature-256'] = 'sha256=' + ('0' * 64)
+Invoke-WebhookStatus $badSignatureHeaders $bodyBytes
+
+$wrongEventHeaders = $headers.Clone()
+$wrongEventHeaders['X-GitHub-Delivery'] = 'aep-negative-wrong-event'
+$wrongEventHeaders['X-GitHub-Event'] = 'push'
+Invoke-WebhookStatus $wrongEventHeaders $bodyBytes
+
+$oversizedBody = New-Object byte[] 1048577
+$oversizedHmac = [Security.Cryptography.HMACSHA256]::new($secret)
+$oversizedDigest = ([BitConverter]::ToString($oversizedHmac.ComputeHash($oversizedBody))).Replace('-', '').ToLowerInvariant()
+$oversizedHeaders = @{
+    'X-Hub-Signature-256' = "sha256=$oversizedDigest"
+    'X-GitHub-Event' = 'issues'
+    'X-GitHub-Delivery' = 'aep-negative-oversized'
+}
+Invoke-WebhookStatus $oversizedHeaders $oversizedBody
+$oversizedHmac.Dispose()
+```
+
+Require `401`, `422`, and `413`, respectively. For repository mismatch and
+unsupported action, alter only the fixture repository or `action`, reserialize
+the body, recompute HMAC exactly as in the signed procedure, use a fresh
+delivery ID, and require `422 repository_mismatch` or `422 unsupported_action`.
+
+Inspect only outbox metadata, never `event_json` or `request_json`:
+
+```powershell
+docker compose -p aep-ingress-test --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T event-controller python -c "import sqlite3; c=sqlite3.connect('/var/lib/aep/shared/github-webhook.sqlite3'); print({'events':c.execute('select count(*) from github_webhook_events').fetchone()[0],'outbox':c.execute('select status,count(*) from reconciliation_outbox group by status').fetchall(),'failures':c.execute('select count(*) from reconciliation_failures').fetchone()[0]})"
+```
+
+Pass only if the isolated database contains exactly one Event and one `PENDING`
+outbox row from the accepted/replayed delivery; rejected requests add nothing.
+Stop the isolated project, preserve its state as test evidence, clear the
+process-level override, and restart the real stack:
+
+```powershell
+docker compose -p aep-ingress-test --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml down
+Remove-Item Env:AEP_STATE_DIRECTORY
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml up -d
+```
+
+### MTP-07: Emergency Disable
+
+Count live admission rows before the test, create the exact durable marker, and
+restart Event Controller:
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T event-controller python -c "import sqlite3; c=sqlite3.connect('/var/lib/aep/shared/github-webhook.sqlite3'); print(c.execute('select count(*) from reconciliation_outbox').fetchone()[0])"
+Set-Content -NoNewline C:\aep\state\agent-engineering-platform\control\EMERGENCY_DISABLE 'manual preflight'
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml restart event-controller
+Start-Sleep -Seconds 20
+curl.exe --silent --show-error --output NUL --write-out "%{http_code}`n" -X POST -H "Content-Type: application/json" -H "X-GitHub-Event: issues" -H "X-GitHub-Delivery: aep-disabled-preflight" --data-binary "{}" http://127.0.0.1:8081/v1/webhooks/github
+```
+
+Require HTTP `503` with code `emergency_disabled`, health status `disabled`,
+and an unchanged outbox count. Confirm the exact target, remove only that marker,
+restart Event Controller, and require `ready` health:
+
+```powershell
+$disableMarker = 'C:\aep\state\agent-engineering-platform\control\EMERGENCY_DISABLE'
+if ((Resolve-Path $disableMarker).Path -ne $disableMarker) { throw 'unexpected disable marker target' }
+Remove-Item -LiteralPath $disableMarker
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml restart event-controller
+Start-Sleep -Seconds 20
+Invoke-RestMethod http://127.0.0.1:8081/healthz
+```
+
+The deterministic suite in MTP-02 must also prove failed validation, policy
+denial, repository mismatch, stale revision, and incomplete evidence prevent
+publication. Do not edit the live pinned Resources to manufacture those cases.
+
+### MTP-08: Publication Baseline, Backup, And Capacity
+
+Record the live default-branch SHA and the pre-existing execution branches and
+open PRs before opening the pilot issue:
+
+```powershell
+$baseSha = (git ls-remote https://github.com/yijiazho/agent-engineering-platform.git refs/heads/main).Split()[0]
+$baseSha
+gh api --paginate repos/yijiazho/agent-engineering-platform/git/matching-refs/heads/aep/execution/ --jq '.[].ref'
+gh pr list --repo yijiazho/agent-engineering-platform --state open --json number,url,headRefName,baseRefName,isDraft
+Get-PSDrive -Name C | Select-Object Name,Used,Free
+Get-ChildItem C:\aep\state\agent-engineering-platform\execution-worktrees -ErrorAction SilentlyContinue
+```
+
+Create the consistent pre-pilot backup described in **Backup And Recovery** and
+record its location, image digest, Resource revision, and restore owner. Pass
+only if the backup target and state directory have sufficient capacity, no
+unexplained pending outbox row or retained dirty worktree exists, and the
+operator can distinguish every existing branch/PR from the forthcoming pilot.
+
+### MTP-09: Controlled GitHub Trigger
+
+In GitHub, create exactly one narrow issue in
+`yijiazho/agent-engineering-platform`. Add the dogfood label at creation time;
+the runtime trigger is `issues/opened`, so labeling an already-open issue does
+not trigger the MVP. State concrete allowed paths and acceptance criteria that
+the repository's offline validation can satisfy. Record the issue number and
+the delivery ID shown in the GitHub App delivery UI.
+
+Observe the GitHub delivery and local ingress:
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml logs --since 10m --no-color event-controller workflow-runtime
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T event-controller python -c "import sqlite3; c=sqlite3.connect('/var/lib/aep/shared/github-webhook.sqlite3'); print(c.execute('select event_id,status from reconciliation_outbox order by rowid desc limit 5').fetchall()); print(c.execute('select event_id,failure_class,message from reconciliation_failures order by failed_at desc limit 5').fetchall())"
+```
+
+Require GitHub HTTP `202`, one new Event/outbox identity, and no terminal
+failure. The Workflow may briefly remain `PENDING` while reconciliation runs.
+Do not open another issue if it stalls; diagnose the existing delivery.
+
+### MTP-10: Runtime And Six-Task Evidence
+
+Poll until the WorkflowExecution becomes terminal. The following audit prints
+only runtime metadata, never prompts or artifact bodies:
+
+```powershell
+$runtimeAudit = @'
+import collections
+import json
+from pathlib import Path
+from aep.runtime_store import DurableJsonRuntimeObjectStore
+
+path = Path('/var/lib/aep/runtime/objects.json')
+payload = json.loads(path.read_text(encoding='utf-8'))
+workflows = [value for value in payload['objects'].values() if value.get('kind') == 'WorkflowExecution']
+workflow = max(workflows, key=lambda value: value.get('createdAt', ''))
+store = DurableJsonRuntimeObjectStore(path)
+related = store.list_by_workflow_execution(workflow['id'])
+counts = collections.Counter((value.get('kind'), value.get('status', '')) for value in related)
+tasks = [value for value in related if value.get('kind') == 'TaskExecution']
+prs = [value for value in related if value.get('kind') == 'GeneratedArtifact' and value.get('artifactType') == 'PULL_REQUEST_DESCRIPTION']
+print({'workflowExecutionId': workflow['id'], 'traceId': workflow.get('traceId'), 'status': workflow.get('status'), 'repositoryRevision': workflow.get('repositoryRevision')})
+print({'kindStatusCounts': sorted((kind, status, count) for (kind, status), count in counts.items())})
+print({'tasks': [(value.get('taskRef', {}).get('name'), value.get('attempt'), value.get('status'), value.get('workingBranch')) for value in tasks]})
+print({'pullRequests': [(value.get('pullRequestNumber'), value.get('pullRequestUrl'), value.get('headRevision')) for value in prs]})
+'@
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c $runtimeAudit
+```
+
+Require one `SUCCEEDED` WorkflowExecution at `$baseSha` and exactly six
+successful TaskExecutions in this order:
+
+1. `analyze-issue`
+2. `build-implementation-plan`
+3. `generate-patch`
+4. `run-validation`
+5. `evaluate-acceptance`
+6. `create-pull-request`
+
+For the same WorkflowExecution and trace, require ContextPackages,
+ResolvedAgents, AgentInvocations, successful ModelInvocations, ToolInvocations,
+GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
+
+* issue analysis and implementation plan artifacts passed schema evaluation;
+* patch provenance and changed paths match the plan and base revision;
+* Docker build and test commands both completed successfully with networking
+  disabled and the pinned validation image;
+* acceptance evaluation used only same-revision successful evidence;
+* Publication Policy allowed the candidate only after validation;
+* separate `git.push` and `github.create_pr` capability decisions allowed the
+  two external mutations; and
+* the final PR artifact records provider request identity, PR URL/number, pushed
+  head revision, and the Git/GitHub ToolInvocation IDs.
+
+Any failed ModelInvocation, validation, Evaluation, PolicyDecision, push, or PR
+mutation is a failed pilot until explained. An `UNKNOWN` provider mutation must
+be reconciled by owner/head/base before any retry.
+
+### MTP-11: Branch And Pull Request Verification
+
+Copy the execution branch and PR number from the safe runtime audit, then query
+GitHub:
+
+```powershell
+$executionBranch = 'aep/execution/<execution-hash>'
+$prNumber = 123 # Replace with the recorded pull-request number.
+$matches = gh pr list --repo yijiazho/agent-engineering-platform --state open --head $executionBranch --json number,url,state,isDraft,headRefName,headRefOid,baseRefName,body | ConvertFrom-Json
+if ($matches.Count -ne 1) { throw 'expected exactly one open PR for the execution branch' }
+$matches | Select-Object number,url,state,isDraft,headRefName,headRefOid,baseRefName
+gh pr view $prNumber --repo yijiazho/agent-engineering-platform --json number,url,state,isDraft,headRefName,headRefOid,baseRefName,body
+git ls-remote --heads https://github.com/yijiazho/agent-engineering-platform.git "refs/heads/$executionBranch"
+```
+
+Pass only if there is exactly one `aep/execution/` branch for this execution and
+one open, unmerged PR targeting `main`; its head SHA equals the pushed and
+artifact-recorded revision. Manually verify that the PR body links the issue and
+contains the implementation plan, changed-file summary, and build/test evidence.
+Confirm that AEP did not merge the PR or deploy the generated code.
+
+### MTP-12: Restart And Delivery Replay Idempotency
+
+Record the Event, WorkflowExecution, branch, PR, and restart counts. Restart the
+stack without deleting state:
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml restart
+Start-Sleep -Seconds 30
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml ps
+docker inspect self-hosting-event-controller-1 self-hosting-resource-controller-1 self-hosting-workflow-runtime-1 self-hosting-agent-resolver-1 self-hosting-context-builder-1 self-hosting-tool-runtime-1 self-hosting-evaluation-engine-1 --format '{{.Name}} restarts={{.RestartCount}} status={{.State.Status}} health={{.State.Health.Status}}'
+```
+
+In the GitHub App delivery UI, redeliver the same recorded delivery. Require
+HTTP `200 duplicate` with the original Event ID. Rerun the outbox query, runtime
+audit, and PR query. Pass only if the outbox identity remains unique and
+completed, the original terminal WorkflowExecution is unchanged, and no second
+execution branch, push, GitHub mutation, or PR appears.
+
+### MTP-13: Final Evidence And Security Review
+
+Review container health, safe runtime metadata, content-addressed directories,
+and checkout ownership:
+
+```powershell
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml ps
+Get-ChildItem C:\aep\state\agent-engineering-platform\runtime
+Get-ChildItem C:\aep\state\agent-engineering-platform\artifacts\objects
+Get-ChildItem C:\aep\state\agent-engineering-platform\docker-logs
+Get-ChildItem C:\aep\state\agent-engineering-platform\git-logs
+Get-ChildItem C:\aep\state\agent-engineering-platform\execution-worktrees
+docker inspect self-hosting-event-controller-1 self-hosting-workflow-runtime-1 self-hosting-tool-runtime-1 --format '{{.Name}} readOnly={{.HostConfig.ReadonlyRootfs}} security={{json .HostConfig.SecurityOpt}} mounts={{range .Mounts}}{{.Destination}}:{{.RW}} {{end}}'
+```
+
+Pass only if runtime evidence is durable and correlated, generated writes are
+confined to execution/state storage, the Resource checkout and image remain
+unchanged, and secret mounts match service scope. Review only redacted lifecycle
+metadata. Do not print or export unrestricted environment variables, secret
+files, webhook headers, request bodies, prompts, model bodies, or artifact
+bodies. Record the final PR and evidence addresses, leave the PR unmerged, and
+have a second operator review the change record before marking AEP-043 complete.
 
 ## Install And Verify Readiness
 
