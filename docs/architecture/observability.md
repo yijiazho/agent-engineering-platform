@@ -78,7 +78,9 @@ The required MVP event names are:
 * `TaskExecutionQueued`, `TaskExecutionStarted`, `TaskExecutionSucceeded`, `TaskExecutionFailed`, `TaskExecutionCancelled`, `TaskExecutionAwaitingApproval`
 * `ContextPackageCreated`, `AgentResolved`
 * `AgentInvocationStarted`, `AgentInvocationCompleted`, `AgentInvocationFailed`
-* `ModelInvocationStarted`, `ModelInvocationCompleted`, `ModelInvocationFailed`
+* `ModelInvocationStarted`, `ModelRequestAdmitted`, `ModelRequestThrottled`,
+  `ModelRetryScheduled`, `ModelRetrySuppressed`, `ModelInvocationCompleted`,
+  `ModelInvocationFailed`
 * `ToolInvocationStarted`, `ToolInvocationCompleted`, `ToolInvocationFailed`
 * `EvaluationCompleted`, `EvaluationFailed`, `PolicyDecisionRecorded`
 * `ApprovalRequested`, `ApprovalRecorded`, `GeneratedArtifactCreated`
@@ -125,3 +127,10 @@ failure class (`RECOVERABLE`, `CONFIGURATION`, `EVALUATION`, `POLICY`, or
 `PERMANENT`) and uses `ERROR` level. Other lifecycle records use `INFO`.
 Durations are measured by the producing component and expressed as
 non-negative integer milliseconds. Timestamps are timezone-qualified RFC3339.
+
+Model admission attributes are allowlisted normalized evidence: HTTP status,
+provider reason/scope, attempt and retry decision, token estimate/reservation,
+coordinator/applied delay and source, retry eligibility, hashed request ID, and
+numeric limit/remaining/reset hints. Raw provider bodies and headers, prompts,
+ContextPackage/model output bodies, API keys, credential/project identity, and
+raw request IDs are omitted.

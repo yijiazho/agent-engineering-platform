@@ -168,6 +168,7 @@ class AnalyzeIssueTaskHandler:
                 return TaskExecutionResult.failure(
                     _failure_class(failure.get("class")),
                     str(failure.get("message") or f"{self.invocation_label} invocation failed"),
+                    retry_not_before=failure.get("retryNotBefore"),
                 )
 
             artifact_id = self._runtime_id("generatedartifact", str(task_execution["id"]))
@@ -422,6 +423,7 @@ def _model_configuration(model: Resource) -> ModelConfiguration:
         token_limit=spec.get("tokenLimit"),
         timeout_ms=spec.get("timeoutMs"),
         retry_policy=dict(spec.get("retryPolicy", {})),
+        rate_limit_policy=dict(spec.get("rateLimitPolicy", {})),
     )
 
 

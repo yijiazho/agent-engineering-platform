@@ -420,6 +420,12 @@ The self-hosting Model selects the live OpenAI Responses API adapter with
 AgentInvocation execution process; `AEP_OPENAI_API_URL` optionally selects a
 clean HTTPS-compatible endpoint. Model identity, parameters, output-token
 limit, timeout, and retry policy come only from the immutable Model Resource.
+The same Resource declares request/token admission capacities. The single-worker
+self-hosting runtime reserves estimated input plus the 32,000-token output
+allowance, paces shared requests, honors uncapped numeric `Retry-After` minima,
+and persists safe retry eligibility and normalized rate-limit evidence. Its
+process-local coordinator rejects multi-worker configuration until a durable
+cross-process implementation is supplied.
 See the [OpenAI Model provider operator guide](docs/operations/openai-model-provider.md)
 for supported configuration, safe evidence, and credential-free verification.
 
@@ -515,7 +521,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 45 implementation tasks are complete.
+contracts are established, and 43 of the 46 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -543,7 +549,9 @@ Implemented foundations currently include:
   ContextPackage assembly, provider evidence, and structured-output validation.
 * Idempotent WorkflowExecution trace-root creation with provenance events.
 * TaskExecution lifecycle and retry semantics.
-* Provider-neutral ModelInvocation and Tool Runtime contracts.
+* Provider-neutral ModelInvocation and Tool Runtime contracts, including
+  provider-aware Model admission pacing, coordinated retry eligibility, and
+  safe rate-limit diagnostics.
 * Deterministic pre-execution capability policy with persisted decisions.
 * Workspace-confined Filesystem Tool reads and policy-authorized writes with
   trusted control-plane reads, race-safe handle confinement, and idempotent

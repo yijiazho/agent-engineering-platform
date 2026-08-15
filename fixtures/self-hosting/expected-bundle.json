@@ -21,6 +21,11 @@
     "create-pull-request"
   ],
   "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
+  "resourceVersions": {
+    "workflow": "1.1.0",
+    "model": "1.1.0",
+    "analyzeIssueTask": "1.2.0"
+  },
   "publicationCapabilities": ["git.push", "github.create_pr"],
   "forbiddenCapabilities": ["repository.retrieve", "secret.read", "github.merge_pr", "deployment.create"],
   "validation": {

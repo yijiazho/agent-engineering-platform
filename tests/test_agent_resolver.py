@@ -51,8 +51,12 @@ def test_resolves_exact_resources_to_immutable_schema_valid_runtime_object() -> 
         "parameters": {"temperature": 0.2},
         "tokenLimit": None,
         "timeoutMs": None,
-        "retryPolicy": {},
-    }
+            "retryPolicy": {},
+            "rateLimitPolicy": {
+                "requestsPerMinute": 60_000,
+                "tokensPerMinute": 1_000_000_000,
+            },
+        }
     assert resolved["outputSchema"] == {
         "type": "object",
         "required": ("summary",),

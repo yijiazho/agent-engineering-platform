@@ -227,6 +227,12 @@ def invoke_agent(
             "message": str(error) or error.code,
             "retryable": error.recoverable,
         }
+        retry_eligible_at = error.provider_metadata.get("retryEligibleAt")
+        if error.recoverable and isinstance(retry_eligible_at, str):
+            failure["retryNotBefore"] = retry_eligible_at
+        _emit_provider_decisions(
+            lifecycle_logger, saved_model, error.provider_metadata, completed_at
+        )
         failed_model = store.update_status(
             model_invocation_id,
             "FAILED",
@@ -256,6 +262,9 @@ def invoke_agent(
         _emit(lifecycle_logger, "AgentInvocationFailed", failed_agent, completed_at)
         return failed_agent
 
+    _emit_provider_decisions(
+        lifecycle_logger, saved_model, response.provider_metadata, completed_at
+    )
     output, serialization_error = _json_output(response.output)
     validation_errors = (
         [serialization_error]
@@ -491,6 +500,61 @@ def _emit(
             service="workflow-runtime",
             runtime_object=runtime_object,
             emitted_at=timestamp,
+        )
+
+
+def _emit_provider_decisions(
+    logger: StructuredLifecycleLogger | None,
+    runtime_object: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    timestamp: str,
+) -> None:
+    if logger is None:
+        return
+    attempts = metadata.get("attempts")
+    if not isinstance(attempts, (list, tuple)):
+        attempts = ()
+    for attempt in attempts:
+        if not isinstance(attempt, Mapping):
+            continue
+        logger.emit(
+            event_name="ModelRequestAdmitted",
+            service="model-runtime",
+            runtime_object=runtime_object,
+            emitted_at=timestamp,
+            attributes=attempt,
+        )
+        if attempt.get("coordinatorDelayMs", 0) or attempt.get("code") == "rate_limit":
+            logger.emit(
+                event_name="ModelRequestThrottled",
+                service="model-runtime",
+                runtime_object=runtime_object,
+                emitted_at=timestamp,
+                attributes=attempt,
+            )
+        decision = attempt.get("retryDecision")
+        event_name = (
+            "ModelRetryScheduled"
+            if decision == "scheduled"
+            else "ModelRetrySuppressed"
+            if decision in {"suppressed", "deferred"}
+            else None
+        )
+        if event_name is not None:
+            logger.emit(
+                event_name=event_name,
+                service="model-runtime",
+                runtime_object=runtime_object,
+                emitted_at=timestamp,
+                attributes=attempt,
+            )
+    if metadata.get("retryDecision") == "deferred" and not attempts:
+        logger.emit(
+            event_name="ModelRetrySuppressed",
+            service="model-runtime",
+            runtime_object=runtime_object,
+            emitted_at=timestamp,
+            attributes=metadata,
         )
 
 

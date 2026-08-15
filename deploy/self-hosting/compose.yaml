@@ -31,6 +31,7 @@ x-aep-common: &aep-common
     AEP_GITHUB_API_URL: ${AEP_GITHUB_API_URL:-https://api.github.com}
     AEP_OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
     AEP_OPENAI_API_URL: ${AEP_OPENAI_API_URL:-https://api.openai.com/v1}
+    AEP_MODEL_WORKER_REPLICAS: ${AEP_MODEL_WORKER_REPLICAS:-1}
   volumes:
     - ${AEP_RESOURCE_CHECKOUT:?set AEP_RESOURCE_CHECKOUT}:/srv/aep/resources:ro
     - ${AEP_STATE_DIRECTORY:?set AEP_STATE_DIRECTORY}:/var/lib/aep

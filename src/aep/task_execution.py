@@ -163,6 +163,7 @@ class TaskExecutionLifecycle:
         classification: FailureClass,
         message: str,
         timestamp: str,
+        retry_not_before: str | None = None,
     ) -> RuntimeObject:
         if not message:
             raise ValueError("failure message must not be empty")
@@ -171,6 +172,15 @@ class TaskExecutionLifecycle:
             "message": message,
             "retryable": classification is FailureClass.RECOVERABLE,
         }
+        if retry_not_before is not None:
+            if (
+                classification is not FailureClass.RECOVERABLE
+                or not is_rfc3339_timestamp(retry_not_before)
+            ):
+                raise ValueError(
+                    "retry_not_before requires a recoverable failure and RFC3339 timestamp"
+                )
+            failure["retryNotBefore"] = retry_not_before
         return self._transition(
             execution_id,
             TaskStatus.FAILED,

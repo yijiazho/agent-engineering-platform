@@ -533,6 +533,23 @@ Those responsibilities belong to the Context Builder subsystem.
 
 The runtime orchestrates execution.
 
+## Model Admission And Retry Ownership
+
+The single-replica MVP owns one process-local Model admission coordinator per
+provider endpoint and credential boundary. Credential or project identity never
+enters runtime evidence. Thread-safe reservations pace request count and
+estimated token demand: the serialized input estimate plus the versioned Model
+output allowance. Successful usage reconciles that estimate.
+
+Provider attempts consume the immutable Model retry budget. Recoverable work
+that cannot fit the active deadline returns `retryEligibleAt`. AgentInvocation
+copies it to `failure.retryNotBefore`, and the scheduler waits before creating
+the next idempotent TaskExecution attempt. The self-hosting Model uses one
+provider attempt and at most two scheduler attempts, eliminating the former
+two-by-two expansion. Existing ModelInvocation pair claims prevent ambiguous
+provider replay after restart. Multi-worker startup is rejected until
+coordination is durable across processes.
+
 The Context Builder assembles knowledge.
 
 Agents perform reasoning.

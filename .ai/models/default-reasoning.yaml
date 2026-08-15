@@ -1,10 +1,11 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Model",
-  "metadata": {"name": "default-reasoning", "version": "1.0.1"},
+  "metadata": {"name": "default-reasoning", "version": "1.1.0"},
   "spec": {
     "provider": "openai", "model": "gpt-5",
     "tokenLimit": 32000,
     "timeoutMs": 120000,
-    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000}
+    "retryPolicy": {"maxAttempts": 1, "backoffMs": 1000},
+    "rateLimitPolicy": {"requestsPerMinute": 2, "tokensPerMinute": 80000}
   }
 }

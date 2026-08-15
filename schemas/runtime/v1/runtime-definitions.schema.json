@@ -89,6 +89,9 @@
         },
         "retryable": {
           "type": "boolean"
+        },
+        "retryNotBefore": {
+          "$ref": "#/$defs/timestamp"
         }
       }
     },

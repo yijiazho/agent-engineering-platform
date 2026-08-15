@@ -1,9 +1,9 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
-  "metadata": {"name": "build-implementation-plan", "version": "1.0.2"},
+  "metadata": {"name": "build-implementation-plan", "version": "1.1.0"},
   "spec": {
     "objective": "Turn the evaluated issue analysis into an actionable, repository-scoped implementation plan.",
-    "agentRef": {"kind": "Agent", "name": "planner", "version": "1.0.1"},
+    "agentRef": {"kind": "Agent", "name": "planner", "version": "1.1.0"},
     "outputs": {
       "type": "object", "additionalProperties": false,
       "required": ["intendedFiles", "tests", "assumptions", "risks", "implementationSteps"],

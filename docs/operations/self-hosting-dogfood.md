@@ -484,13 +484,18 @@ For the same WorkflowExecution and trace, require ContextPackages,
 ResolvedAgents, AgentInvocations, successful ModelInvocations, ToolInvocations,
 GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
 
-* `analyze-issue:1.1.0` produces one ContextPackage at or below its declarative
+* `analyze-issue:1.2.0` produces one ContextPackage at or below its declarative
   32,000 input-token budget, with category-only count evidence; the package
   must not fail near 121,421 tokens or contain the complete repository inventory;
 * the bounded package includes repository evidence for the issue's allowed
   paths and retains revision/snapshot provenance and merged selection reasons;
 * `aep-repository:1.1.0` uses explicit per-source limits, while Model
   `tokenLimit` remains the independent OpenAI `max_output_tokens` value;
+* `default-reasoning:1.1.0` retains `tokenLimit: 32000`, uses one provider
+  attempt per Task attempt, and declares request/token admission capacities;
+* shared provider requests show paced admission evidence rather than an
+  immediate burst, and throttles record normalized reason/scope, attempt,
+  delay/source, valid `Retry-After`, and `retryEligibleAt` evidence;
 * issue analysis and implementation plan artifacts passed schema evaluation;
 * patch provenance and changed paths match the plan and base revision;
 * Docker build and test commands both completed successfully with networking
@@ -505,6 +510,13 @@ GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
 Any failed ModelInvocation, validation, Evaluation, PolicyDecision, push, or PR
 mutation is a failed pilot until explained. An `UNKNOWN` provider mutation must
 be reconciled by owner/head/base before any retry.
+
+For a provider failure, do not immediately reopen or relabel the issue. A
+temporary token/request throttle may retry after `retryEligibleAt`. `quota`,
+`billing`, `authentication`, `authorization`, `invalid_request`, and
+`unsupported_model` require operator action and must not repeat the unchanged
+request. A valid long `Retry-After` may intentionally defer MTP-10 beyond the
+current invocation deadline.
 
 ### MTP-11: Branch And Pull Request Verification
 

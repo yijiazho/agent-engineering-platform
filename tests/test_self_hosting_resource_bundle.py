@@ -58,7 +58,9 @@ def test_normalized_issue_selects_only_six_task_workflow_in_order(
     )
     resolution = resolve_workflow_for_event(event, resources)
     assert resolution.workflow_refs == (
-        ResourceRef("Workflow", "issue-to-pr", "1.0.2"),
+        ResourceRef(
+            "Workflow", "issue-to-pr", EXPECTED["resourceVersions"]["workflow"]
+        ),
     )
 
     workflow = resources.get(resolution.workflow_refs[0])
@@ -73,6 +75,13 @@ def test_normalized_issue_selects_only_six_task_workflow_in_order(
 def test_context_and_agent_boundaries_are_explicit(
     resources: ResourceCollection,
 ) -> None:
+    assert resources.get(
+        ResourceRef(
+            "Task",
+            "analyze-issue",
+            EXPECTED["resourceVersions"]["analyzeIssueTask"],
+        )
+    ) is not None
     tasks = {item.name: item.data["spec"] for item in resources.by_kind("Task")}
     assert {"event", "issue", "candidate-files"} <= set(
         tasks["analyze-issue"]["requiredContext"]
@@ -108,10 +117,20 @@ def test_context_and_agent_boundaries_are_explicit(
             ]
         }
 
-    model = resources.get(ResourceRef("Model", "default-reasoning", "1.0.1"))
+    model = resources.get(
+        ResourceRef(
+            "Model", "default-reasoning", EXPECTED["resourceVersions"]["model"]
+        )
+    )
     assert model is not None
     assert "parameters" not in model.data["spec"]
     assert model.data["spec"]["timeoutMs"] == 120000
+    assert model.data["spec"]["tokenLimit"] == 32000
+    assert model.data["spec"]["retryPolicy"]["maxAttempts"] == 1
+    assert model.data["spec"]["rateLimitPolicy"] == {
+        "requestsPerMinute": 2,
+        "tokensPerMinute": 80000,
+    }
 
 
 def test_capabilities_fail_closed_and_publication_is_exclusive(

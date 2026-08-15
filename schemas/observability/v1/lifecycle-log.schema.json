@@ -19,6 +19,7 @@
         "ContextPackageCreated", "AgentResolved",
         "AgentInvocationStarted", "AgentInvocationCompleted", "AgentInvocationFailed",
         "ModelInvocationStarted", "ModelInvocationCompleted", "ModelInvocationFailed",
+        "ModelRequestAdmitted", "ModelRequestThrottled", "ModelRetryScheduled", "ModelRetrySuppressed",
         "ToolInvocationStarted", "ToolInvocationCompleted", "ToolInvocationFailed",
         "EvaluationCompleted", "EvaluationFailed", "PolicyDecisionRecorded",
         "ApprovalRequested", "ApprovalRecorded", "GeneratedArtifactCreated"
@@ -78,7 +79,7 @@
       "then": { "properties": { "runtimeKind": { "const": "AgentInvocation" } } }
     },
     {
-      "if": { "properties": { "eventName": { "enum": ["ModelInvocationStarted", "ModelInvocationCompleted", "ModelInvocationFailed"] } } },
+      "if": { "properties": { "eventName": { "enum": ["ModelInvocationStarted", "ModelInvocationCompleted", "ModelInvocationFailed", "ModelRequestAdmitted", "ModelRequestThrottled", "ModelRetryScheduled", "ModelRetrySuppressed"] } } },
       "then": { "properties": { "runtimeKind": { "const": "ModelInvocation" } } }
     },
     {
@@ -100,6 +101,10 @@
     {
       "if": { "properties": { "eventName": { "const": "GeneratedArtifactCreated" } } },
       "then": { "properties": { "runtimeKind": { "const": "GeneratedArtifact" } } }
+    },
+    {
+      "if": { "properties": { "eventName": { "enum": ["ModelRequestAdmitted", "ModelRequestThrottled", "ModelRetryScheduled", "ModelRetrySuppressed"] } } },
+      "then": { "properties": { "status": { "const": "RUNNING" } } }
     },
     {
       "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionStarted", "TaskExecutionStarted", "AgentInvocationStarted", "ModelInvocationStarted", "ToolInvocationStarted"] } } },

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid5
 
@@ -28,6 +29,7 @@ class TaskExecutionResult:
     succeeded: bool
     failure_class: FailureClass | None = None
     message: str | None = None
+    retry_not_before: str | None = None
 
     @classmethod
     def success(cls) -> TaskExecutionResult:
@@ -35,7 +37,11 @@ class TaskExecutionResult:
 
     @classmethod
     def failure(
-        cls, classification: FailureClass, message: str
+        cls,
+        classification: FailureClass,
+        message: str,
+        *,
+        retry_not_before: str | None = None,
     ) -> TaskExecutionResult:
         if not isinstance(classification, FailureClass):
             raise TypeError("classification must be a FailureClass")
@@ -45,15 +51,27 @@ class TaskExecutionResult:
             succeeded=False,
             failure_class=classification,
             message=message.strip(),
+            retry_not_before=retry_not_before,
         )
 
     def validate(self) -> None:
         if self.succeeded:
-            if self.failure_class is not None or self.message is not None:
+            if (
+                self.failure_class is not None
+                or self.message is not None
+                or self.retry_not_before is not None
+            ):
                 raise ValueError("successful Task result cannot contain failure details")
             return
         if self.failure_class is None or not self.message:
             raise ValueError("failed Task result requires classification and message")
+        if self.retry_not_before is not None and (
+            self.failure_class is not FailureClass.RECOVERABLE
+            or not is_rfc3339_timestamp(self.retry_not_before)
+        ):
+            raise ValueError(
+                "retry_not_before requires a recoverable failure and RFC3339 timestamp"
+            )
 
 
 class TaskExecutor(Protocol):
@@ -130,7 +148,7 @@ class WorkflowScheduler:
                 ready.append((node, None, dependency_ids))
             elif latest.get("status") == TaskStatus.PENDING.value:
                 ready.append((node, latest, dependency_ids))
-            elif _retry_is_ready(latest, self._max_attempts):
+            elif _retry_is_ready(latest, self._max_attempts, timestamp):
                 ready.append((node, latest, dependency_ids))
 
         scheduled: list[RuntimeObject] = []
@@ -214,6 +232,7 @@ class WorkflowScheduler:
                     result.failure_class,  # type: ignore[arg-type]
                     result.message or "Task execution failed",
                     timestamp,
+                    retry_not_before=result.retry_not_before,
                 )
                 event_type = "TaskExecutionFailed"
             self._emit(terminal, event_type, sequence=3, timestamp=timestamp)
@@ -238,6 +257,7 @@ class WorkflowScheduler:
         attempt: int,
         dependency_ids: tuple[str, ...],
         timestamp: str,
+        retry_not_before: str | None = None,
     ) -> RuntimeObject:
         task_ref = _ref_record(node.task_ref)
         task_execution_id = _task_execution_id(
@@ -360,6 +380,7 @@ class WorkflowScheduler:
         classification: FailureClass,
         message: str,
         timestamp: str,
+        retry_not_before: str | None = None,
     ) -> RuntimeObject:
         try:
             return self._lifecycle.fail(
@@ -367,6 +388,7 @@ class WorkflowScheduler:
                 classification=classification,
                 message=message,
                 timestamp=timestamp,
+                retry_not_before=retry_not_before,
             )
         except Exception:
             persisted = self._store.get(str(running["id"]))
@@ -493,14 +515,25 @@ def _succeeded_dependency_ids(
     return tuple(dependency_ids)
 
 
-def _retry_is_ready(attempt: RuntimeObject, max_attempts: int) -> bool:
+def _retry_is_ready(
+    attempt: RuntimeObject, max_attempts: int, timestamp: str
+) -> bool:
     failure = attempt.get("failure")
+    not_before = failure.get("retryNotBefore") if isinstance(failure, Mapping) else None
     return (
         attempt.get("status") == TaskStatus.FAILED.value
         and isinstance(failure, Mapping)
         and failure.get("class") == FailureClass.RECOVERABLE.value
         and int(attempt["attempt"]) < max_attempts
+        and (
+            not isinstance(not_before, str)
+            or _parse_timestamp(timestamp) >= _parse_timestamp(not_before)
+        )
     )
+
+
+def _parse_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _task_execution_id(
