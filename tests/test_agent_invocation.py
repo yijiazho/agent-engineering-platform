@@ -282,6 +282,56 @@ def test_rate_limit_decisions_emit_correlated_redacted_lifecycle_events() -> Non
     assert "sk-must-not-leak" not in rendered
 
 
+def test_single_provider_attempt_propagates_retry_eligibility_to_agent_failure() -> None:
+    class TemporaryThrottleTransport:
+        def request(self, **_request):
+            return ProviderHttpResponse(
+                status=429,
+                headers={"Retry-After": "75"},
+                body=b'{"error":{"code":"tokens"}}',
+            )
+
+    store = InMemoryRuntimeObjectStore()
+    configuration = ModelConfiguration(
+        model_ref={"kind": "Model", "name": "test-model", "version": "1.1.0"},
+        provider="openai",
+        model="gpt-5",
+        token_limit=32_000,
+        timeout_ms=120_000,
+        retry_policy={"maxAttempts": 1, "backoffMs": 1000},
+        rate_limit_policy={"requestsPerMinute": 2, "tokensPerMinute": 80_000},
+    )
+    agent = resolved_agent()
+    agent["modelRef"] = dict(configuration.model_ref)
+    agent["modelParameters"] = {}
+    agent["modelConfiguration"] = configuration.as_record()
+    agent["provenance"]["resourceRefs"] = [dict(configuration.model_ref)]
+
+    result = invoke_agent(
+        store=store,
+        invocation_id=AGENT_ID,
+        model_invocation_id=MODEL_ID,
+        resolved_agent=agent,
+        context_package=context_package(),
+        prompt=prompt(),
+        model_configuration=configuration,
+        adapter=OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="sk-must-not-leak"),
+            transport=TemporaryThrottleTransport(),
+        ),
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+    )
+
+    model = store.get(MODEL_ID)
+    assert result["failure"]["class"] == "RECOVERABLE"
+    assert result["failure"]["retryNotBefore"]
+    assert model["providerMetadata"]["appliedDelayMs"] == 75_000
+    assert model["providerMetadata"]["retryEligibleAt"] == result["failure"][
+        "retryNotBefore"
+    ]
+
+
 def test_invalid_structured_output_fails_agent_but_records_successful_model_call() -> None:
     store = InMemoryRuntimeObjectStore()
     adapter = FakeModelAdapter(

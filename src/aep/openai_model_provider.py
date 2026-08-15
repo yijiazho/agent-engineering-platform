@@ -30,7 +30,10 @@ from aep.model_invocation import (
     ModelResponse,
     ModelUsage,
 )
-from aep.model_rate_limits import ProcessLocalModelAdmissionCoordinator
+from aep.model_rate_limits import (
+    CoordinatorStateError,
+    ProcessLocalModelAdmissionCoordinator,
+)
 
 
 _DEFAULT_API_URL = "https://api.openai.com/v1"
@@ -216,6 +219,8 @@ class OpenAIModelAdapter(ModelAdapter):
         wall_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         jitter: Callable[[], float] = lambda: 0.5,
         coordinator: ProcessLocalModelAdmissionCoordinator | None = None,
+        coordinator_state_root: Path | None = None,
+        wall_time: Callable[[], float] = time.time,
     ) -> None:
         self._config = config
         self._transport = transport or UrllibProviderTransport()
@@ -224,6 +229,8 @@ class OpenAIModelAdapter(ModelAdapter):
         self._wall_clock = wall_clock
         self._jitter = jitter
         self._coordinator = coordinator
+        self._coordinator_state_root = coordinator_state_root
+        self._wall_time = wall_time
         self._coordinators: dict[
             tuple[str, int, int], ProcessLocalModelAdmissionCoordinator
         ] = {}
@@ -307,17 +314,35 @@ class OpenAIModelAdapter(ModelAdapter):
                     ProcessLocalModelAdmissionCoordinator(
                         requests_per_minute=requests_per_minute,
                         tokens_per_minute=tokens_per_minute,
+                        state_path=(
+                            self._coordinator_state_root
+                            / (
+                                sha256(
+                                    (
+                                        f"{configuration.model}:{requests_per_minute}:"
+                                        f"{tokens_per_minute}"
+                                    ).encode("utf-8")
+                                ).hexdigest()
+                                + ".json"
+                            )
+                            if self._coordinator_state_root is not None
+                            else None
+                        ),
+                        wall_clock=self._wall_time,
                     ),
                 )
 
         for attempt in range(1, configuration.max_attempts + 1):
             admitted_at = self._monotonic()
-            admission = coordinator.admit(
-                now=admitted_at,
-                deadline=deadline,
-                estimated_input_tokens=estimated_input_tokens,
-                output_token_allowance=configuration.token_limit or 0,
-            )
+            try:
+                admission = coordinator.admit(
+                    now=admitted_at,
+                    deadline=deadline,
+                    estimated_input_tokens=estimated_input_tokens,
+                    output_token_allowance=configuration.token_limit or 0,
+                )
+            except CoordinatorStateError:
+                raise _coordinator_unavailable(configuration.model, attempts) from None
             admission_evidence = {
                 "estimatedInputTokens": admission.estimated_input_tokens,
                 "outputTokenAllowance": configuration.token_limit or 0,
@@ -343,6 +368,41 @@ class OpenAIModelAdapter(ModelAdapter):
                 ) from None
             if admission.delay_ms:
                 self._sleep(admission.delay_ms / 1000)
+            while True:
+                rechecked_at = self._monotonic()
+                try:
+                    recheck = coordinator.revalidate(
+                        now=rechecked_at, deadline=deadline
+                    )
+                except CoordinatorStateError:
+                    raise _coordinator_unavailable(
+                        configuration.model, attempts
+                    ) from None
+                if not recheck.admitted:
+                    additional_delay = recheck.delay_ms
+                    eligible = _future_timestamp(
+                        self._wall_clock(), additional_delay
+                    )
+                    admission_evidence["coordinatorDelayMs"] += additional_delay
+                    raise ModelInvocationError(
+                        "model provider retry is deferred beyond the invocation deadline",
+                        classification=ModelErrorClass.RECOVERABLE,
+                        code="rate_limit_deferred",
+                        provider_metadata={
+                            "provider": "openai",
+                            "requestedModel": configuration.model,
+                            "attemptCount": len(attempts),
+                            "attempts": attempts,
+                            **admission_evidence,
+                            "delaySource": "coordinator-recheck",
+                            "retryEligibleAt": eligible,
+                            "retryDecision": "deferred",
+                        },
+                    ) from None
+                if not recheck.delay_ms:
+                    break
+                admission_evidence["coordinatorDelayMs"] += recheck.delay_ms
+                self._sleep(recheck.delay_ms / 1000)
             remaining_ms = _remaining_ms(deadline, self._monotonic())
             try:
                 response = self._transport.request(
@@ -373,6 +433,7 @@ class OpenAIModelAdapter(ModelAdapter):
                             admission_evidence,
                             coordinator,
                             admission.reserved_tokens,
+                            self._monotonic(),
                         )
                     except ModelInvocationError as error:
                         failure = error
@@ -390,7 +451,7 @@ class OpenAIModelAdapter(ModelAdapter):
                 **http_evidence,
             }
             attempts.append(attempt_evidence)
-            if not failure.recoverable or attempt == configuration.max_attempts:
+            if not failure.recoverable:
                 attempt_evidence["retryDecision"] = "suppressed"
                 raise ModelInvocationError(
                     str(failure),
@@ -425,18 +486,50 @@ class OpenAIModelAdapter(ModelAdapter):
                 else "exponential-backoff"
             )
             retry_eligible_at = _future_timestamp(self._wall_clock(), delay_ms)
+            decision = (
+                "deferred"
+                if attempt == configuration.max_attempts
+                else "scheduled"
+            )
             attempt_evidence.update(
                 {
                     "appliedDelayMs": delay_ms,
                     "delaySource": delay_source,
                     "retryEligibleAt": retry_eligible_at,
-                    "retryDecision": "scheduled",
+                    "retryDecision": decision,
                 }
             )
-            coordinator.observe_throttle(
-                eligible_at=self._monotonic() + delay_ms / 1000
-            )
-            if self._monotonic() + delay_ms / 1000 >= deadline:
+            throttle_observed_at = self._monotonic()
+            try:
+                coordinator.observe_throttle(
+                    now=throttle_observed_at,
+                    eligible_at=throttle_observed_at + delay_ms / 1000,
+                )
+            except CoordinatorStateError:
+                raise _coordinator_unavailable(
+                    configuration.model, attempts
+                ) from None
+            if attempt == configuration.max_attempts:
+                raise ModelInvocationError(
+                    str(failure),
+                    classification=failure.classification,
+                    code=failure.code,
+                    provider_metadata={
+                        **dict(failure.provider_metadata),
+                        "provider": "openai",
+                        "requestedModel": configuration.model,
+                        "requestId": request_id,
+                        "attemptCount": attempt,
+                        "attempts": attempts,
+                        **http_evidence,
+                        **admission_evidence,
+                        "appliedDelayMs": delay_ms,
+                        "delaySource": delay_source,
+                        "retryEligibleAt": retry_eligible_at,
+                        "retryDecision": "deferred",
+                    },
+                ) from None
+            if throttle_observed_at + delay_ms / 1000 >= deadline:
                 raise ModelInvocationError(
                     "model provider retry is deferred beyond the invocation deadline",
                     classification=ModelErrorClass.RECOVERABLE,
@@ -488,7 +581,24 @@ def openai_model_adapter_from_environment(
         raise ModelProviderConfigurationError(
             "process-local Model rate-limit coordination requires exactly one worker replica"
         )
-    return OpenAIModelAdapter(config, transport=transport)
+    state_root = values.get("AEP_STATE_ROOT", "").strip()
+    if not state_root:
+        raise ModelProviderConfigurationError(
+            "AEP_STATE_ROOT is required for durable Model rate-limit coordination"
+        )
+    return OpenAIModelAdapter(
+        config,
+        transport=transport,
+        coordinator_state_root=(
+            Path(state_root)
+            / "model-rate-limits"
+            / sha256(
+                (config.api_url + "\0" + api_key).encode(
+                    "utf-8", errors="replace"
+                )
+            ).hexdigest()
+        ),
+    )
 
 
 def verify_openai_model_provider_environment(
@@ -514,6 +624,7 @@ def _successful_response(
     admission_evidence: Mapping[str, Any],
     coordinator: ProcessLocalModelAdmissionCoordinator,
     reserved_tokens: int,
+    observed_at: float,
 ) -> ModelResponse:
     try:
         document = json.loads(response.body)
@@ -576,6 +687,7 @@ def _successful_response(
     if not _non_negative_int(input_tokens) or not _non_negative_int(output_tokens):
         raise _malformed(request_id=request_id, model=requested_model)
     coordinator.observe_success(
+        now=observed_at,
         reserved_tokens=reserved_tokens,
         actual_input_tokens=input_tokens,
         actual_output_tokens=output_tokens,
@@ -691,6 +803,23 @@ def _failure(
         classification=ModelErrorClass.RECOVERABLE if recoverable else ModelErrorClass.PERMANENT,
         code=code,
         provider_metadata=metadata,
+    )
+
+
+def _coordinator_unavailable(
+    requested_model: str, attempts: list[dict[str, Any]]
+) -> ModelInvocationError:
+    return ModelInvocationError(
+        "model rate-limit coordinator state is unavailable",
+        classification=ModelErrorClass.RECOVERABLE,
+        code="coordinator_unavailable",
+        provider_metadata={
+            "provider": "openai",
+            "requestedModel": requested_model,
+            "attemptCount": len(attempts),
+            "attempts": attempts,
+            "retryDecision": "suppressed",
+        },
     )
 
 

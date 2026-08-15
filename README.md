@@ -426,6 +426,9 @@ allowance, paces shared requests, honors uncapped numeric `Retry-After` minima,
 and persists safe retry eligibility and normalized rate-limit evidence. Its
 process-local coordinator rejects multi-worker configuration until a durable
 cross-process implementation is supplied.
+The single-worker coordinator atomically checkpoints safe quota deadlines below
+`AEP_STATE_ROOT`, restores active windows after restart, and rechecks newer
+provider throttle state before each delayed dispatch.
 See the [OpenAI Model provider operator guide](docs/operations/openai-model-provider.md)
 for supported configuration, safe evidence, and credential-free verification.
 

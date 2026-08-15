@@ -20,7 +20,10 @@ from aep.openai_model_provider import (
     openai_model_adapter_from_environment,
     verify_openai_model_provider_environment,
 )
-from aep.model_rate_limits import ProcessLocalModelAdmissionCoordinator
+from aep.model_rate_limits import (
+    CoordinatorStateError,
+    ProcessLocalModelAdmissionCoordinator,
+)
 
 
 class ScriptedTransport:
@@ -345,7 +348,9 @@ def test_timeout_is_recoverable_and_stops_at_max_attempts():
 
 def test_rate_limit_exhaustion_has_explicit_safe_classification():
     transport = ScriptedTransport(
-        [response(429, {"error": {"message": "secret body"}}, headers={"X-Request-ID": "req_rate"})]
+        [response(429, {"error": {"message": "secret body"}}, headers={
+            "X-Request-ID": "req_rate", "Retry-After": "2"
+        })]
     )
 
     with pytest.raises(ModelInvocationError) as raised:
@@ -354,6 +359,12 @@ def test_rate_limit_exhaustion_has_explicit_safe_classification():
     assert raised.value.code == "rate_limit"
     assert raised.value.recoverable is True
     assert raised.value.provider_metadata["requestId"] == normalized_id("req_rate")
+    assert raised.value.provider_metadata["retryAfterMs"] == 2_000
+    assert raised.value.provider_metadata["appliedDelayMs"] == 2_000
+    assert raised.value.provider_metadata["delaySource"] == "retry-after"
+    assert raised.value.provider_metadata["retryDecision"] == "deferred"
+    assert raised.value.provider_metadata["retryEligibleAt"]
+    assert len(transport.requests) == 1
 
 
 @pytest.mark.parametrize("retry_after", ["1e309", "Infinity", "-Infinity", "NaN"])
@@ -387,6 +398,95 @@ def test_concurrent_ready_requests_reserve_paced_provider_times():
 
     assert [decision.delay_ms for decision in decisions] == [0, 35_672, 71_344]
     assert all(decision.reserved_tokens == 47_563 for decision in decisions)
+
+
+def test_delayed_admission_rechecks_provider_throttle_before_dispatch():
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2, tokens_per_minute=1_000_000
+    )
+    coordinator.admit(
+        now=0.0,
+        deadline=200.0,
+        estimated_input_tokens=1,
+        output_token_allowance=1,
+    )
+    reserved = Event()
+    throttled = Event()
+    result = []
+
+    def delayed_request():
+        admission = coordinator.admit(
+            now=0.0,
+            deadline=200.0,
+            estimated_input_tokens=1,
+            output_token_allowance=1,
+        )
+        assert admission.delay_ms == 30_000
+        reserved.set()
+        assert throttled.wait(1)
+        result.append(coordinator.revalidate(now=30.0, deadline=200.0))
+
+    worker = Thread(target=delayed_request)
+    worker.start()
+    assert reserved.wait(1)
+    coordinator.observe_throttle(now=10.0, eligible_at=90.0)
+    throttled.set()
+    worker.join(1)
+
+    assert not worker.is_alive()
+    assert result[0].admitted is True
+    assert result[0].delay_ms == 60_000
+
+
+def test_durable_coordinator_restores_throttle_after_restart(tmp_path):
+    state_path = tmp_path / "scope.json"
+    first = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2,
+        tokens_per_minute=80_000,
+        state_path=state_path,
+        wall_clock=lambda: 1_000.0,
+    )
+    first.admit(
+        now=100.0,
+        deadline=300.0,
+        estimated_input_tokens=1_000,
+        output_token_allowance=32_000,
+    )
+    first.observe_throttle(now=100.0, eligible_at=175.0)
+
+    restarted = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2,
+        tokens_per_minute=80_000,
+        state_path=state_path,
+        wall_clock=lambda: 1_025.0,
+    )
+    decision = restarted.admit(
+        now=0.0,
+        deadline=100.0,
+        estimated_input_tokens=1,
+        output_token_allowance=1,
+    )
+
+    assert decision.admitted is True
+    assert decision.delay_ms == 50_000
+
+
+def test_corrupt_durable_coordinator_state_fails_closed(tmp_path):
+    state_path = tmp_path / "scope.json"
+    state_path.write_text('{"version":99}', encoding="utf-8")
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2,
+        tokens_per_minute=80_000,
+        state_path=state_path,
+    )
+
+    with pytest.raises(CoordinatorStateError, match="unavailable"):
+        coordinator.admit(
+            now=0.0,
+            deadline=100.0,
+            estimated_input_tokens=1,
+            output_token_allowance=1,
+        )
 
 
 class FakeTime:
@@ -622,7 +722,10 @@ def test_environment_factory_reads_secret_file_but_readiness_and_verification_do
     secret = "sk-file-secret-value"
     secret_file = tmp_path / "openai-key.txt"
     secret_file.write_text(secret, encoding="utf-8")
-    values = {"AEP_OPENAI_API_KEY_FILE": str(secret_file)}
+    values = {
+        "AEP_OPENAI_API_KEY_FILE": str(secret_file),
+        "AEP_STATE_ROOT": str(tmp_path / "state"),
+    }
 
     provider = openai_model_adapter_from_environment(
         "openai", environ=values, transport=ScriptedTransport([success()])
@@ -631,8 +734,25 @@ def test_environment_factory_reads_secret_file_but_readiness_and_verification_do
     assert secret not in repr(provider.readiness())
     assert str(secret_file) not in repr(provider.readiness())
     assert secret not in repr(provider._config)
+    provider.invoke(model_request())
+    coordinator_files = list((tmp_path / "state" / "model-rate-limits").rglob("*.json"))
+    assert len(coordinator_files) == 1
+    rendered_state = coordinator_files[0].read_text(encoding="utf-8")
+    assert secret not in str(coordinator_files[0]) + rendered_state
+    assert "gpt-5" not in str(coordinator_files[0]) + rendered_state
     verification = verify_openai_model_provider_environment("openai", environ={})
     assert verification["status"] == "CONFIGURATION_VALID"
+
+
+def test_environment_factory_requires_durable_coordinator_state_root(tmp_path):
+    secret_file = tmp_path / "openai-key.txt"
+    secret_file.write_text("sk-file-secret-value", encoding="utf-8")
+
+    with pytest.raises(ModelProviderConfigurationError, match="AEP_STATE_ROOT"):
+        openai_model_adapter_from_environment(
+            "openai",
+            environ={"AEP_OPENAI_API_KEY_FILE": str(secret_file)},
+        )
 
 
 def test_transport_and_provider_error_details_are_redacted_from_exception_chain():

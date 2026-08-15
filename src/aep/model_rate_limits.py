@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
 from threading import Lock
+import time
+
+
+class CoordinatorStateError(RuntimeError):
+    """Raised when durable quota state cannot be restored or checkpointed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,15 +40,20 @@ class ProcessLocalModelAdmissionCoordinator:
         *,
         requests_per_minute: int,
         tokens_per_minute: int,
+        state_path: Path | None = None,
+        wall_clock: Callable[[], float] = time.time,
     ) -> None:
         if requests_per_minute < 1 or tokens_per_minute < 1:
             raise ValueError("rate-limit capacities must be positive")
         self.requests_per_minute = requests_per_minute
         self.tokens_per_minute = tokens_per_minute
+        self._state_path = state_path
+        self._wall_clock = wall_clock
         self._lock = Lock()
         self._next_request_at = 0.0
         self._next_token_at = 0.0
         self._blocked_until = 0.0
+        self._restored = False
 
     def admit(
         self,
@@ -53,6 +67,7 @@ class ProcessLocalModelAdmissionCoordinator:
             raise ValueError("token estimates must not be negative")
         demand = max(1, estimated_input_tokens + output_token_allowance)
         with self._lock:
+            self._restore(now)
             eligible_at = max(
                 now,
                 self._next_request_at,
@@ -66,6 +81,7 @@ class ProcessLocalModelAdmissionCoordinator:
                 self._next_token_at = (
                     eligible_at + demand * 60 / self.tokens_per_minute
                 )
+                self._persist(now)
         return AdmissionDecision(
             admitted=admitted,
             delay_ms=delay_ms,
@@ -74,8 +90,28 @@ class ProcessLocalModelAdmissionCoordinator:
             reserved_tokens=demand,
         )
 
+    def revalidate(self, *, now: float, deadline: float) -> AdmissionDecision:
+        """Recheck a reserved dispatch against newer provider throttle state."""
+
+        with self._lock:
+            self._restore(now)
+            eligible_at = max(now, self._blocked_until)
+            delay_ms = max(0, round((eligible_at - now) * 1000))
+        return AdmissionDecision(
+            admitted=eligible_at < deadline,
+            delay_ms=delay_ms,
+            eligible_at=eligible_at,
+            estimated_input_tokens=0,
+            reserved_tokens=0,
+        )
+
     def observe_success(
-        self, *, reserved_tokens: int, actual_input_tokens: int, actual_output_tokens: int
+        self,
+        *,
+        now: float,
+        reserved_tokens: int,
+        actual_input_tokens: int,
+        actual_output_tokens: int,
     ) -> None:
         """Reconcile conservative reservation demand with successful usage."""
 
@@ -84,10 +120,62 @@ class ProcessLocalModelAdmissionCoordinator:
         if not credit:
             return
         with self._lock:
+            self._restore(now)
             self._next_token_at = max(0.0, self._next_token_at - credit)
+            self._persist(now)
 
-    def observe_throttle(self, *, eligible_at: float) -> None:
+    def observe_throttle(self, *, now: float, eligible_at: float) -> None:
         """Apply a provider retry/reset hint to every request in this scope."""
 
         with self._lock:
+            self._restore(now)
             self._blocked_until = max(self._blocked_until, eligible_at)
+            self._persist(now)
+
+    def _restore(self, now: float) -> None:
+        if self._restored:
+            return
+        self._restored = True
+        if self._state_path is None or not self._state_path.exists():
+            return
+        try:
+            state = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or state.get("version") != 1:
+                raise ValueError("unsupported coordinator state")
+            wall_now = self._wall_clock()
+            deadlines = {
+                key: float(state[key])
+                for key in ("nextRequestAt", "nextTokenAt", "blockedUntil")
+            }
+            if any(value < 0 for value in deadlines.values()):
+                raise ValueError("negative coordinator deadline")
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise CoordinatorStateError(
+                "Model rate-limit coordinator state is unavailable"
+            ) from error
+        self._next_request_at = now + max(0.0, deadlines["nextRequestAt"] - wall_now)
+        self._next_token_at = now + max(0.0, deadlines["nextTokenAt"] - wall_now)
+        self._blocked_until = now + max(0.0, deadlines["blockedUntil"] - wall_now)
+
+    def _persist(self, now: float) -> None:
+        if self._state_path is None:
+            return
+        wall_now = self._wall_clock()
+        state = {
+            "version": 1,
+            "nextRequestAt": wall_now + max(0.0, self._next_request_at - now),
+            "nextTokenAt": wall_now + max(0.0, self._next_token_at - now),
+            "blockedUntil": wall_now + max(0.0, self._blocked_until - now),
+        }
+        temporary = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary.write_text(
+                json.dumps(state, sort_keys=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+            os.replace(temporary, self._state_path)
+        except OSError as error:
+            raise CoordinatorStateError(
+                "Model rate-limit coordinator state cannot be checkpointed"
+            ) from error

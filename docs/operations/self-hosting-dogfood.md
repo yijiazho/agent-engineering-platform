@@ -496,6 +496,9 @@ GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
 * shared provider requests show paced admission evidence rather than an
   immediate burst, and throttles record normalized reason/scope, attempt,
   delay/source, valid `Retry-After`, and `retryEligibleAt` evidence;
+* `AEP_STATE_ROOT/model-rate-limits` contains only safe hashed-scope deadline
+  checkpoints, and restarting the AgentInvocation worker does not admit work
+  before an unexpired checkpoint;
 * issue analysis and implementation plan artifacts passed schema evaluation;
 * patch provenance and changed paths match the plan and base revision;
 * Docker build and test commands both completed successfully with networking

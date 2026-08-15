@@ -54,6 +54,8 @@ conservative reservations, while provider reset and `Retry-After` hints delay
 the whole credential scope. The self-hosting policy uses one provider request
 per TaskExecution attempt; the Workflow scheduler owns the second logical
 attempt and honors persisted `failure.retryNotBefore` evidence.
+Delayed reservations recheck the shared throttle clock immediately before
+dispatch, so a newer provider minimum supersedes an earlier reservation.
 
 The self-hosting `gpt-5` Resource omits `parameters` because that model does
 not accept `temperature` or `top_p`. Use these optional generation parameters
@@ -85,6 +87,7 @@ executes AgentInvocations:
 AEP_OPENAI_API_KEY_FILE=/run/secrets/openai-api-key
 AEP_OPENAI_API_URL=https://api.openai.com/v1
 AEP_MODEL_WORKER_REPLICAS=1
+AEP_STATE_ROOT=/var/lib/aep
 ```
 
 `AEP_OPENAI_API_URL` is optional and defaults to the value shown. It must be a
@@ -93,6 +96,14 @@ Construct the selected adapter with `openai_model_adapter_from_environment`.
 The coordinator is process-local for the single-replica MVP. Startup rejects
 `AEP_MODEL_WORKER_REPLICAS` values other than `1`; multi-process deployment
 requires a durable distributed coordinator.
+Safe request, token, and throttle deadlines are atomically checkpointed below
+`AEP_STATE_ROOT/model-rate-limits`. The internal directory scope hashes the
+endpoint and credential, and its files hash the configured model and capacity;
+raw identities never enter the state document, runtime evidence, or logs.
+Startup restores unexpired deadlines against wall time before admitting work,
+so restarting the worker cannot erase an active reservation or `Retry-After`.
+Missing, malformed, or unwritable coordinator state fails recoverably without
+dispatching a provider request.
 Startup fails before a provider request when the selected provider is not
 supported, the secret-file setting is missing, the file is unavailable or
 empty, or the endpoint is invalid. Never put the key, secret path, or endpoint
@@ -165,6 +176,9 @@ at 60 seconds with injected jitter. Temporary token/request throttles remain
 recoverable. Allowlisted quota, billing, authentication, authorization,
 invalid-request, and unsupported-model reasons are permanent for the unchanged
 request even when delivered as HTTP 429.
+Eligibility is calculated before checking whether the current provider attempt
+is the last one. Thus the self-hosting one-attempt Model still persists the
+provider minimum for the scheduler instead of suppressing it.
 
 Safe failure evidence includes HTTP status, normalized reason and limit scope,
 attempt count, estimated/reserved tokens, coordinator and applied delays,

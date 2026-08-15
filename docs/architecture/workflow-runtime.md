@@ -540,6 +540,10 @@ provider endpoint and credential boundary. Credential or project identity never
 enters runtime evidence. Thread-safe reservations pace request count and
 estimated token demand: the serialized input estimate plus the versioned Model
 output allowance. Successful usage reconciles that estimate.
+Reservations revalidate newer shared throttle state before dispatch. Safe
+request, token, and throttle deadlines are atomically checkpointed under the
+runtime state root and restored using wall-clock expiry after restart; corrupt
+or unavailable state fails without a provider call.
 
 Provider attempts consume the immutable Model retry budget. Recoverable work
 that cannot fit the active deadline returns `retryEligibleAt`. AgentInvocation
