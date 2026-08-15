@@ -24,6 +24,7 @@ class AdmissionDecision:
     eligible_at: float
     estimated_input_tokens: int
     reserved_tokens: int
+    reservation_id: int | None = None
 
 
 class ProcessLocalModelAdmissionCoordinator:
@@ -54,6 +55,7 @@ class ProcessLocalModelAdmissionCoordinator:
         self._next_token_at = 0.0
         self._blocked_until = 0.0
         self._restored = False
+        self._latest_reservation_id = 0
 
     def admit(
         self,
@@ -77,17 +79,22 @@ class ProcessLocalModelAdmissionCoordinator:
             delay_ms = max(0, round((eligible_at - now) * 1000))
             admitted = eligible_at < deadline
             if admitted:
+                self._latest_reservation_id += 1
+                reservation_id = self._latest_reservation_id
                 self._next_request_at = eligible_at + 60 / self.requests_per_minute
                 self._next_token_at = (
                     eligible_at + demand * 60 / self.tokens_per_minute
                 )
                 self._persist(now)
+            else:
+                reservation_id = None
         return AdmissionDecision(
             admitted=admitted,
             delay_ms=delay_ms,
             eligible_at=eligible_at,
             estimated_input_tokens=estimated_input_tokens,
             reserved_tokens=demand,
+            reservation_id=reservation_id,
         )
 
     def revalidate(self, *, now: float, deadline: float) -> AdmissionDecision:
@@ -112,15 +119,20 @@ class ProcessLocalModelAdmissionCoordinator:
         reserved_tokens: int,
         actual_input_tokens: int,
         actual_output_tokens: int,
+        reservation_id: int | None,
     ) -> None:
         """Reconcile conservative reservation demand with successful usage."""
 
         actual = max(1, actual_input_tokens + actual_output_tokens)
         credit = max(0, reserved_tokens - actual) * 60 / self.tokens_per_minute
-        if not credit:
+        if not credit or reservation_id is None:
             return
         with self._lock:
             self._restore(now)
+            # A later reservation has already fixed the shared token tail. Moving
+            # that tail backwards would let a subsequent admission overlap it.
+            if reservation_id != self._latest_reservation_id:
+                return
             self._next_token_at = max(0.0, self._next_token_at - credit)
             self._persist(now)
 
@@ -135,8 +147,8 @@ class ProcessLocalModelAdmissionCoordinator:
     def _restore(self, now: float) -> None:
         if self._restored:
             return
-        self._restored = True
         if self._state_path is None or not self._state_path.exists():
+            self._restored = True
             return
         try:
             state = json.loads(self._state_path.read_text(encoding="utf-8"))
@@ -156,6 +168,7 @@ class ProcessLocalModelAdmissionCoordinator:
         self._next_request_at = now + max(0.0, deadlines["nextRequestAt"] - wall_now)
         self._next_token_at = now + max(0.0, deadlines["nextTokenAt"] - wall_now)
         self._blocked_until = now + max(0.0, deadlines["blockedUntil"] - wall_now)
+        self._restored = True
 
     def _persist(self, now: float) -> None:
         if self._state_path is None:

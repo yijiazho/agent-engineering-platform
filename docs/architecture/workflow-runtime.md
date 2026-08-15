@@ -539,7 +539,8 @@ The single-replica MVP owns one process-local Model admission coordinator per
 provider endpoint and credential boundary. Credential or project identity never
 enters runtime evidence. Thread-safe reservations pace request count and
 estimated token demand: the serialized input estimate plus the versioned Model
-output allowance. Successful usage reconciles that estimate.
+output allowance. Successful usage reconciles its estimate only when no later
+token reservation exists, preserving the shared admission tail under concurrency.
 Reservations revalidate newer shared throttle state before dispatch. Safe
 request, token, and throttle deadlines are atomically checkpointed under the
 runtime state root and restored using wall-clock expiry after restart; corrupt

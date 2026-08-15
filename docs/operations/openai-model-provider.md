@@ -50,8 +50,9 @@ Each reservation includes the estimated serialized request tokens plus the
 complete configured output allowance, so the self-hosting 32,000-token
 allowance remains available without being hidden from rate-limit accounting.
 Request and token clocks pace concurrently-ready work. Successful usage credits
-conservative reservations, while provider reset and `Retry-After` hints delay
-the whole credential scope. The self-hosting policy uses one provider request
+a conservative reservation only while it remains the latest token reservation;
+later reservations keep the shared tail fixed so credit cannot create a burst.
+Provider reset and `Retry-After` hints delay the whole credential scope. The self-hosting policy uses one provider request
 per TaskExecution attempt; the Workflow scheduler owns the second logical
 attempt and honors persisted `failure.retryNotBefore` evidence.
 Delayed reservations recheck the shared throttle clock immediately before
@@ -102,8 +103,9 @@ endpoint and credential, and its files hash the configured model and capacity;
 raw identities never enter the state document, runtime evidence, or logs.
 Startup restores unexpired deadlines against wall time before admitting work,
 so restarting the worker cannot erase an active reservation or `Retry-After`.
-Missing, malformed, or unwritable coordinator state fails recoverably without
-dispatching a provider request.
+Missing state initializes an empty coordinator; malformed, unreadable, or
+unwritable state fails recoverably without dispatching a provider request, and
+continues to fail closed until the checkpoint is repaired.
 Startup fails before a provider request when the selected provider is not
 supported, the secret-file setting is missing, the file is unavailable or
 empty, or the endpoint is invalid. Never put the key, secret path, or endpoint

@@ -433,6 +433,7 @@ class OpenAIModelAdapter(ModelAdapter):
                             admission_evidence,
                             coordinator,
                             admission.reserved_tokens,
+                            admission.reservation_id,
                             self._monotonic(),
                         )
                     except ModelInvocationError as error:
@@ -624,6 +625,7 @@ def _successful_response(
     admission_evidence: Mapping[str, Any],
     coordinator: ProcessLocalModelAdmissionCoordinator,
     reserved_tokens: int,
+    reservation_id: int | None,
     observed_at: float,
 ) -> ModelResponse:
     try:
@@ -691,6 +693,7 @@ def _successful_response(
         reserved_tokens=reserved_tokens,
         actual_input_tokens=input_tokens,
         actual_output_tokens=output_tokens,
+        reservation_id=reservation_id,
     )
     return ModelResponse(
         output=output,

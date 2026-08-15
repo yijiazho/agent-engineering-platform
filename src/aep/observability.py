@@ -45,7 +45,18 @@ _ARTIFACT_BODY_KEYS = {
     "rawcontent",
     "text",
 }
-_SAFE_TOKEN_KEYS = {"tokencount", "tokenestimate", "tokenusage", "tokenbudget"}
+_SAFE_TOKEN_KEYS = {
+    "tokencount",
+    "tokenestimate",
+    "tokenusage",
+    "tokenbudget",
+    "estimatedinputtokens",
+    "reservedtokens",
+    "outputtokenallowance",
+    "limittokens",
+    "remainingtokens",
+    "resettokensms",
+}
 _CONTAINER_KEYS = {"environment", "env", "headers", "requestheaders", "responseheaders"}
 _ENV_SECRET_KEYS = {
     "connectionstring",

@@ -232,8 +232,13 @@ def test_rate_limit_decisions_emit_correlated_redacted_lifecycle_events() -> Non
         def request(self, **_request):
             return ProviderHttpResponse(
                 status=429,
-                headers={"X-Request-ID": "raw-secret-request-id"},
-                body=b'{"error":{"code":"insufficient_quota","message":"raw secret body"}}',
+                headers={
+                    "X-Request-ID": "raw-secret-request-id",
+                    "X-RateLimit-Limit-Tokens": "80000",
+                    "X-RateLimit-Remaining-Tokens": "1234",
+                    "X-RateLimit-Reset-Tokens": "2.5s",
+                },
+                body=b'{"error":{"code":"tokens","message":"raw secret body"}}',
             )
 
     store = InMemoryRuntimeObjectStore()
@@ -273,6 +278,7 @@ def test_rate_limit_decisions_emit_correlated_redacted_lifecycle_events() -> Non
     assert result["status"] == "FAILED"
     names = [entry["eventName"] for entry in logs]
     assert "ModelRequestAdmitted" in names
+    assert "ModelRequestThrottled" in names
     assert "ModelRetrySuppressed" in names
     assert names[-2:] == ["ModelInvocationFailed", "AgentInvocationFailed"]
     assert all(entry["traceId"] == resolved_agent()["traceId"] for entry in logs)
@@ -280,6 +286,14 @@ def test_rate_limit_decisions_emit_correlated_redacted_lifecycle_events() -> Non
     assert "raw-secret-request-id" not in rendered
     assert "raw secret body" not in rendered
     assert "sk-must-not-leak" not in rendered
+    admitted = next(entry for entry in logs if entry["eventName"] == "ModelRequestAdmitted")
+    throttled = next(entry for entry in logs if entry["eventName"] == "ModelRequestThrottled")
+    assert admitted["attributes"]["estimatedInputTokens"] > 0
+    assert admitted["attributes"]["reservedTokens"] > 32_000
+    assert admitted["attributes"]["outputTokenAllowance"] == 32_000
+    assert throttled["attributes"]["limitTokens"] == 80_000
+    assert throttled["attributes"]["remainingTokens"] == 1234
+    assert throttled["attributes"]["resetTokensMs"] == 2500
 
 
 def test_single_provider_attempt_propagates_retry_eligibility_to_agent_failure() -> None:

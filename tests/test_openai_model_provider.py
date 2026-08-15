@@ -487,6 +487,48 @@ def test_corrupt_durable_coordinator_state_fails_closed(tmp_path):
             estimated_input_tokens=1,
             output_token_allowance=1,
         )
+    with pytest.raises(CoordinatorStateError, match="unavailable"):
+        coordinator.admit(
+            now=1.0,
+            deadline=100.0,
+            estimated_input_tokens=1,
+            output_token_allowance=1,
+        )
+
+
+def test_success_credit_does_not_move_token_tail_through_later_reservation():
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=100, tokens_per_minute=100
+    )
+    first = coordinator.admit(
+        now=0.0,
+        deadline=300.0,
+        estimated_input_tokens=100,
+        output_token_allowance=0,
+    )
+    second = coordinator.admit(
+        now=0.0,
+        deadline=300.0,
+        estimated_input_tokens=100,
+        output_token_allowance=0,
+    )
+
+    coordinator.observe_success(
+        now=1.0,
+        reserved_tokens=first.reserved_tokens,
+        actual_input_tokens=1,
+        actual_output_tokens=0,
+        reservation_id=first.reservation_id,
+    )
+    third = coordinator.admit(
+        now=0.0,
+        deadline=300.0,
+        estimated_input_tokens=1,
+        output_token_allowance=0,
+    )
+
+    assert second.delay_ms == 60_000
+    assert third.delay_ms == 120_000
 
 
 class FakeTime:
