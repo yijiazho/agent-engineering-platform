@@ -16,8 +16,11 @@ spec:
   tokenLimit: 32000
   timeoutMs: 120000
   retryPolicy:
-    maxAttempts: 2
+    maxAttempts: 1
     backoffMs: 1000
+  rateLimitPolicy:
+    requestsPerMinute: 2
+    tokensPerMinute: 80000
 ```
 
 The live adapter accepts only the stateless generation parameters
@@ -41,6 +44,19 @@ artifact publication. This follows the
 the configured GPT-5 model supports both the Responses endpoint and Structured
 Outputs according to the
 [official model page](https://developers.openai.com/api/docs/models/gpt-5).
+
+`rateLimitPolicy` drives a thread-safe, process-local admission coordinator.
+Each reservation includes the estimated serialized request tokens plus the
+complete configured output allowance, so the self-hosting 32,000-token
+allowance remains available without being hidden from rate-limit accounting.
+Request and token clocks pace concurrently-ready work. Successful usage credits
+a conservative reservation only while it remains the latest token reservation;
+later reservations keep the shared tail fixed so credit cannot create a burst.
+Provider reset and `Retry-After` hints delay the whole credential scope. The self-hosting policy uses one provider request
+per TaskExecution attempt; the Workflow scheduler owns the second logical
+attempt and honors persisted `failure.retryNotBefore` evidence.
+Delayed reservations recheck the shared throttle clock immediately before
+dispatch, so a newer provider minimum supersedes an earlier reservation.
 
 The self-hosting `gpt-5` Resource omits `parameters` because that model does
 not accept `temperature` or `top_p`. Use these optional generation parameters
@@ -71,11 +87,25 @@ executes AgentInvocations:
 ```text
 AEP_OPENAI_API_KEY_FILE=/run/secrets/openai-api-key
 AEP_OPENAI_API_URL=https://api.openai.com/v1
+AEP_MODEL_WORKER_REPLICAS=1
+AEP_STATE_ROOT=/var/lib/aep
 ```
 
 `AEP_OPENAI_API_URL` is optional and defaults to the value shown. It must be a
 clean HTTPS URL without user information, query parameters, or a fragment.
 Construct the selected adapter with `openai_model_adapter_from_environment`.
+The coordinator is process-local for the single-replica MVP. Startup rejects
+`AEP_MODEL_WORKER_REPLICAS` values other than `1`; multi-process deployment
+requires a durable distributed coordinator.
+Safe request, token, and throttle deadlines are atomically checkpointed below
+`AEP_STATE_ROOT/model-rate-limits`. The internal directory scope hashes the
+endpoint and credential, and its files hash the configured model and capacity;
+raw identities never enter the state document, runtime evidence, or logs.
+Startup restores unexpired deadlines against wall time before admitting work,
+so restarting the worker cannot erase an active reservation or `Retry-After`.
+Missing state initializes an empty coordinator; malformed, unreadable, or
+unwritable state fails recoverably without dispatching a provider request, and
+continues to fail closed until the checkpoint is repaired.
 Startup fails before a provider request when the selected provider is not
 supported, the secret-file setting is missing, the file is unavailable or
 empty, or the endpoint is invalid. Never put the key, secret path, or endpoint
@@ -139,3 +169,28 @@ Provider schema projection removes unsupported `minLength`, `maxLength`, and
 `uniqueItems` keywords only from schema objects. Identically named fields under
 `properties` and other schema maps are preserved, including their `required`
 entries.
+
+A valid numeric `Retry-After` is a minimum delay and is never capped at 60
+seconds. When admission or retry cannot occur before the invocation deadline,
+the adapter sends no early request and records `retryEligibleAt` for the
+Workflow scheduler. Missing or invalid values use exponential backoff bounded
+at 60 seconds with injected jitter. Temporary token/request throttles remain
+recoverable. Allowlisted quota, billing, authentication, authorization,
+invalid-request, and unsupported-model reasons are permanent for the unchanged
+request even when delivered as HTTP 429.
+Eligibility is calculated before checking whether the current provider attempt
+is the last one. Thus the self-hosting one-attempt Model still persists the
+provider minimum for the scheduler instead of suppressing it.
+
+Safe failure evidence includes HTTP status, normalized reason and limit scope,
+attempt count, estimated/reserved tokens, coordinator and applied delays,
+delay source, hashed request identity, retry decision and eligibility, plus
+numeric allowlisted limit/remaining/reset fields. Raw bodies, raw headers,
+prompts, ContextPackage/output bodies, API keys, project or credential
+identity, and raw request IDs are omitted.
+
+```powershell
+$objects = Get-Content "$env:AEP_STATE_ROOT/runtime/objects.json" -Raw | ConvertFrom-Json
+$objects | Where-Object kind -eq ModelInvocation | Select-Object id,status,failure,providerMetadata
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml logs --since 15m agent-invocation | Select-String 'ModelRequestAdmitted|ModelRequestThrottled|ModelRetry'
+```

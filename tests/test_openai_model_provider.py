@@ -5,6 +5,7 @@ from pathlib import Path
 from threading import Event, Thread
 import time
 import traceback
+from datetime import datetime, timezone
 
 import pytest
 
@@ -18,6 +19,10 @@ from aep.openai_model_provider import (
     _provider_schema,
     openai_model_adapter_from_environment,
     verify_openai_model_provider_environment,
+)
+from aep.model_rate_limits import (
+    CoordinatorStateError,
+    ProcessLocalModelAdmissionCoordinator,
 )
 
 
@@ -240,21 +245,22 @@ def test_structured_success_preserves_exact_model_bounds_and_usage_evidence():
 
     assert result.output == {"answer": 42}
     assert result.usage.as_record() == {"input": 17, "output": 5}
-    assert result.provider_metadata == {
+    assert {
+        key: result.provider_metadata[key]
+        for key in (
+            "provider", "requestedModel", "providerModel", "requestId",
+            "finishReason", "attemptCount"
+        )
+    } == {
         "provider": "openai",
         "requestedModel": "gpt-5",
         "providerModel": "gpt-5",
         "requestId": normalized_id("resp_123"),
         "finishReason": "completed",
         "attemptCount": 1,
-        "attempts": [
-            {
-                "attempt": 1,
-                "code": "succeeded",
-                "requestId": normalized_id("resp_123"),
-            }
-        ],
     }
+    assert result.provider_metadata["attempts"][0]["code"] == "succeeded"
+    assert result.provider_metadata["attempts"][0]["reservedTokens"] == 432
     sent = json.loads(transport.requests[0]["body"])
     assert sent["model"] == "gpt-5"
     assert sent["temperature"] == 0.1
@@ -342,7 +348,9 @@ def test_timeout_is_recoverable_and_stops_at_max_attempts():
 
 def test_rate_limit_exhaustion_has_explicit_safe_classification():
     transport = ScriptedTransport(
-        [response(429, {"error": {"message": "secret body"}}, headers={"X-Request-ID": "req_rate"})]
+        [response(429, {"error": {"message": "secret body"}}, headers={
+            "X-Request-ID": "req_rate", "Retry-After": "2"
+        })]
     )
 
     with pytest.raises(ModelInvocationError) as raised:
@@ -351,6 +359,12 @@ def test_rate_limit_exhaustion_has_explicit_safe_classification():
     assert raised.value.code == "rate_limit"
     assert raised.value.recoverable is True
     assert raised.value.provider_metadata["requestId"] == normalized_id("req_rate")
+    assert raised.value.provider_metadata["retryAfterMs"] == 2_000
+    assert raised.value.provider_metadata["appliedDelayMs"] == 2_000
+    assert raised.value.provider_metadata["delaySource"] == "retry-after"
+    assert raised.value.provider_metadata["retryDecision"] == "deferred"
+    assert raised.value.provider_metadata["retryEligibleAt"]
+    assert len(transport.requests) == 1
 
 
 @pytest.mark.parametrize("retry_after", ["1e309", "Infinity", "-Infinity", "NaN"])
@@ -365,6 +379,284 @@ def test_nonfinite_retry_after_is_ignored_without_escaping_normalization(retry_a
 
     assert result.output == {"answer": 42}
     assert len(transport.requests) == 2
+
+
+def test_concurrent_ready_requests_reserve_paced_provider_times():
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2, tokens_per_minute=80_000
+    )
+
+    decisions = [
+        coordinator.admit(
+            now=10.0,
+            deadline=200.0,
+            estimated_input_tokens=15_563,
+            output_token_allowance=32_000,
+        )
+        for _ in range(3)
+    ]
+
+    assert [decision.delay_ms for decision in decisions] == [0, 35_672, 71_344]
+    assert all(decision.reserved_tokens == 47_563 for decision in decisions)
+
+
+def test_delayed_admission_rechecks_provider_throttle_before_dispatch():
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2, tokens_per_minute=1_000_000
+    )
+    coordinator.admit(
+        now=0.0,
+        deadline=200.0,
+        estimated_input_tokens=1,
+        output_token_allowance=1,
+    )
+    reserved = Event()
+    throttled = Event()
+    result = []
+
+    def delayed_request():
+        admission = coordinator.admit(
+            now=0.0,
+            deadline=200.0,
+            estimated_input_tokens=1,
+            output_token_allowance=1,
+        )
+        assert admission.delay_ms == 30_000
+        reserved.set()
+        assert throttled.wait(1)
+        result.append(coordinator.revalidate(now=30.0, deadline=200.0))
+
+    worker = Thread(target=delayed_request)
+    worker.start()
+    assert reserved.wait(1)
+    coordinator.observe_throttle(now=10.0, eligible_at=90.0)
+    throttled.set()
+    worker.join(1)
+
+    assert not worker.is_alive()
+    assert result[0].admitted is True
+    assert result[0].delay_ms == 60_000
+
+
+def test_durable_coordinator_restores_throttle_after_restart(tmp_path):
+    state_path = tmp_path / "scope.json"
+    first = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2,
+        tokens_per_minute=80_000,
+        state_path=state_path,
+        wall_clock=lambda: 1_000.0,
+    )
+    first.admit(
+        now=100.0,
+        deadline=300.0,
+        estimated_input_tokens=1_000,
+        output_token_allowance=32_000,
+    )
+    first.observe_throttle(now=100.0, eligible_at=175.0)
+
+    restarted = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2,
+        tokens_per_minute=80_000,
+        state_path=state_path,
+        wall_clock=lambda: 1_025.0,
+    )
+    decision = restarted.admit(
+        now=0.0,
+        deadline=100.0,
+        estimated_input_tokens=1,
+        output_token_allowance=1,
+    )
+
+    assert decision.admitted is True
+    assert decision.delay_ms == 50_000
+
+
+def test_corrupt_durable_coordinator_state_fails_closed(tmp_path):
+    state_path = tmp_path / "scope.json"
+    state_path.write_text('{"version":99}', encoding="utf-8")
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2,
+        tokens_per_minute=80_000,
+        state_path=state_path,
+    )
+
+    with pytest.raises(CoordinatorStateError, match="unavailable"):
+        coordinator.admit(
+            now=0.0,
+            deadline=100.0,
+            estimated_input_tokens=1,
+            output_token_allowance=1,
+        )
+    with pytest.raises(CoordinatorStateError, match="unavailable"):
+        coordinator.admit(
+            now=1.0,
+            deadline=100.0,
+            estimated_input_tokens=1,
+            output_token_allowance=1,
+        )
+
+
+def test_success_credit_does_not_move_token_tail_through_later_reservation():
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=100, tokens_per_minute=100
+    )
+    first = coordinator.admit(
+        now=0.0,
+        deadline=300.0,
+        estimated_input_tokens=100,
+        output_token_allowance=0,
+    )
+    second = coordinator.admit(
+        now=0.0,
+        deadline=300.0,
+        estimated_input_tokens=100,
+        output_token_allowance=0,
+    )
+
+    coordinator.observe_success(
+        now=1.0,
+        reserved_tokens=first.reserved_tokens,
+        actual_input_tokens=1,
+        actual_output_tokens=0,
+        reservation_id=first.reservation_id,
+    )
+    third = coordinator.admit(
+        now=0.0,
+        deadline=300.0,
+        estimated_input_tokens=1,
+        output_token_allowance=0,
+    )
+
+    assert second.delay_ms == 60_000
+    assert third.delay_ms == 120_000
+
+
+class FakeTime:
+    def __init__(self):
+        self.value = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.value
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.value += seconds
+
+
+def test_retry_after_longer_than_sixty_seconds_is_deferred_without_early_request():
+    clock = FakeTime()
+    transport = ScriptedTransport(
+        [response(429, {"error": {"code": "rate_limit_exceeded"}}, headers={"Retry-After": "75"}), success()]
+    )
+    provider = OpenAIModelAdapter(
+        OpenAIProviderConfig(api_key="sk-runtime-secret"),
+        transport=transport,
+        monotonic_clock=clock.monotonic,
+        sleeper=clock.sleep,
+        wall_clock=lambda: datetime(2026, 8, 15, tzinfo=timezone.utc),
+        jitter=lambda: 0.0,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        provider.invoke(
+            model_request(
+                retry_policy={"maxAttempts": 2, "backoffMs": 1000},
+                timeout_ms=60_000,
+                token_limit=32_000,
+            )
+        )
+
+    assert raised.value.code == "rate_limit_deferred"
+    assert len(transport.requests) == 1
+    assert clock.sleeps == []
+    evidence = raised.value.provider_metadata
+    assert evidence["retryAfterMs"] == 75_000
+    assert evidence["appliedDelayMs"] == 75_000
+    assert evidence["delaySource"] == "retry-after"
+    assert evidence["retryEligibleAt"] == "2026-08-15T00:01:15.000Z"
+    assert evidence["reservedTokens"] > 32_000
+
+
+def test_missing_retry_after_uses_bounded_exponential_backoff_with_jitter():
+    clock = FakeTime()
+    provider = OpenAIModelAdapter(
+        OpenAIProviderConfig(api_key="sk-runtime-secret"),
+        transport=ScriptedTransport([response(503, {}), response(503, {}), success()]),
+        monotonic_clock=clock.monotonic,
+        sleeper=clock.sleep,
+        jitter=lambda: 0.0,
+    )
+
+    result = provider.invoke(
+        model_request(retry_policy={"maxAttempts": 3, "backoffMs": 1000})
+    )
+
+    assert clock.sleeps == [1.0, 2.0]
+    assert [item["appliedDelayMs"] for item in result.provider_metadata["attempts"][:2]] == [1000, 2000]
+    assert all(
+        item["delaySource"] == "exponential-backoff"
+        for item in result.provider_metadata["attempts"][:2]
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ({"code": "insufficient_quota"}, "quota"),
+        ({"code": "billing_hard_limit_reached"}, "billing"),
+        ({"type": "authentication_error"}, "authentication"),
+        ({"code": "permission_denied"}, "authorization"),
+        ({"type": "invalid_request_error"}, "invalid_request"),
+        ({"code": "model_not_found"}, "unsupported_model"),
+    ],
+)
+def test_actionable_429_reasons_are_stable_and_never_retried(error, code):
+    transport = ScriptedTransport([response(429, {"error": error}), success()])
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(
+            model_request(retry_policy={"maxAttempts": 2, "backoffMs": 1})
+        )
+
+    assert raised.value.code == code
+    assert raised.value.recoverable is False
+    assert raised.value.provider_metadata["httpStatus"] == 429
+    assert len(transport.requests) == 1
+
+
+def test_allowlisted_rate_limit_headers_are_normalized_without_raw_headers():
+    transport = ScriptedTransport(
+        [response(429, {"error": {"code": "tokens"}}, headers={
+            "Retry-After": "0.5",
+            "X-RateLimit-Limit-Tokens": "80000",
+            "X-RateLimit-Remaining-Tokens": "1234",
+            "X-RateLimit-Reset-Tokens": "2.5s",
+            "X-Unsafe-Project": "project-must-not-leak",
+        })]
+    )
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(model_request(token_limit=32_000))
+
+    metadata = raised.value.provider_metadata
+    assert metadata["rateLimitScope"] == "tokens"
+    assert metadata["limitTokens"] == 80_000
+    assert metadata["remainingTokens"] == 1234
+    assert metadata["resetTokensMs"] == 2500
+    assert "project-must-not-leak" not in repr(metadata)
+
+
+def test_process_local_factory_rejects_unsupported_multi_worker_scope(tmp_path):
+    secret_file = tmp_path / "key.txt"
+    secret_file.write_text("sk-secret", encoding="utf-8")
+    with pytest.raises(ModelProviderConfigurationError, match="exactly one"):
+        openai_model_adapter_from_environment(
+            "openai",
+            environ={
+                "AEP_OPENAI_API_KEY_FILE": str(secret_file),
+                "AEP_MODEL_WORKER_REPLICAS": "2",
+            },
+        )
 
 
 def test_safety_refusal_is_permanent_and_contains_no_output_body():
@@ -472,7 +764,10 @@ def test_environment_factory_reads_secret_file_but_readiness_and_verification_do
     secret = "sk-file-secret-value"
     secret_file = tmp_path / "openai-key.txt"
     secret_file.write_text(secret, encoding="utf-8")
-    values = {"AEP_OPENAI_API_KEY_FILE": str(secret_file)}
+    values = {
+        "AEP_OPENAI_API_KEY_FILE": str(secret_file),
+        "AEP_STATE_ROOT": str(tmp_path / "state"),
+    }
 
     provider = openai_model_adapter_from_environment(
         "openai", environ=values, transport=ScriptedTransport([success()])
@@ -481,8 +776,25 @@ def test_environment_factory_reads_secret_file_but_readiness_and_verification_do
     assert secret not in repr(provider.readiness())
     assert str(secret_file) not in repr(provider.readiness())
     assert secret not in repr(provider._config)
+    provider.invoke(model_request())
+    coordinator_files = list((tmp_path / "state" / "model-rate-limits").rglob("*.json"))
+    assert len(coordinator_files) == 1
+    rendered_state = coordinator_files[0].read_text(encoding="utf-8")
+    assert secret not in str(coordinator_files[0]) + rendered_state
+    assert "gpt-5" not in str(coordinator_files[0]) + rendered_state
     verification = verify_openai_model_provider_environment("openai", environ={})
     assert verification["status"] == "CONFIGURATION_VALID"
+
+
+def test_environment_factory_requires_durable_coordinator_state_root(tmp_path):
+    secret_file = tmp_path / "openai-key.txt"
+    secret_file.write_text("sk-file-secret-value", encoding="utf-8")
+
+    with pytest.raises(ModelProviderConfigurationError, match="AEP_STATE_ROOT"):
+        openai_model_adapter_from_environment(
+            "openai",
+            environ={"AEP_OPENAI_API_KEY_FILE": str(secret_file)},
+        )
 
 
 def test_transport_and_provider_error_details_are_redacted_from_exception_chain():

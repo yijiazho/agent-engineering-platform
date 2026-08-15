@@ -45,7 +45,18 @@ _ARTIFACT_BODY_KEYS = {
     "rawcontent",
     "text",
 }
-_SAFE_TOKEN_KEYS = {"tokencount", "tokenestimate", "tokenusage", "tokenbudget"}
+_SAFE_TOKEN_KEYS = {
+    "tokencount",
+    "tokenestimate",
+    "tokenusage",
+    "tokenbudget",
+    "estimatedinputtokens",
+    "reservedtokens",
+    "outputtokenallowance",
+    "limittokens",
+    "remainingtokens",
+    "resettokensms",
+}
 _CONTAINER_KEYS = {"environment", "env", "headers", "requestheaders", "responseheaders"}
 _ENV_SECRET_KEYS = {
     "connectionstring",
@@ -85,6 +96,10 @@ _LIFECYCLE_SEMANTICS: dict[str, tuple[str, frozenset[str], bool]] = {
     "ModelInvocationStarted": ("ModelInvocation", frozenset({"RUNNING"}), False),
     "ModelInvocationCompleted": ("ModelInvocation", frozenset({"SUCCEEDED"}), False),
     "ModelInvocationFailed": ("ModelInvocation", frozenset({"FAILED"}), True),
+    "ModelRequestAdmitted": ("ModelInvocation", frozenset({"RUNNING"}), False),
+    "ModelRequestThrottled": ("ModelInvocation", frozenset({"RUNNING"}), False),
+    "ModelRetryScheduled": ("ModelInvocation", frozenset({"RUNNING"}), False),
+    "ModelRetrySuppressed": ("ModelInvocation", frozenset({"RUNNING"}), False),
     "ToolInvocationStarted": ("ToolInvocation", frozenset({"RUNNING"}), False),
     "ToolInvocationCompleted": ("ToolInvocation", frozenset({"SUCCEEDED"}), False),
     "ToolInvocationFailed": ("ToolInvocation", frozenset({"FAILED"}), True),

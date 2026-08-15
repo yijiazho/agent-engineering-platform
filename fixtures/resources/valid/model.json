@@ -16,6 +16,10 @@
     "retryPolicy": {
       "maxAttempts": 2,
       "backoffMs": 1000
+    },
+    "rateLimitPolicy": {
+      "requestsPerMinute": 2,
+      "tokensPerMinute": 80000
     }
   }
 }

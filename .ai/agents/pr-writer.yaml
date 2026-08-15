@@ -1,10 +1,10 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Agent",
-  "metadata": {"name": "pr-writer", "version": "1.0.1"},
+  "metadata": {"name": "pr-writer", "version": "1.1.0"},
   "spec": {
     "role": "Pull Request Writer",
     "promptRef": {"kind": "Prompt", "name": "pull-request-writing", "version": "1.0.0"},
-    "modelRef": {"kind": "Model", "name": "default-reasoning", "version": "1.0.1"},
+    "modelRef": {"kind": "Model", "name": "default-reasoning", "version": "1.1.0"},
     "policyRefs": [{"kind": "Policy", "name": "agent-safety", "version": "1.0.0"}],
     "outputSchema": {"type": "object", "additionalProperties": false, "required": ["title", "body"], "properties": {"title": {"type": "string", "minLength": 1}, "body": {"type": "string", "minLength": 1}}}
   }

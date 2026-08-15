@@ -24,7 +24,16 @@
         },
         "tokenLimit": { "type": "integer", "minimum": 1 },
         "timeoutMs": { "$ref": "./resource-definitions.schema.json#/$defs/durationMs" },
-        "retryPolicy": { "$ref": "./resource-definitions.schema.json#/$defs/retryPolicy" }
+        "retryPolicy": { "$ref": "./resource-definitions.schema.json#/$defs/retryPolicy" },
+        "rateLimitPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requestsPerMinute", "tokensPerMinute"],
+          "properties": {
+            "requestsPerMinute": { "type": "integer", "minimum": 1 },
+            "tokensPerMinute": { "type": "integer", "minimum": 1 }
+          }
+        }
       }
     }
   }

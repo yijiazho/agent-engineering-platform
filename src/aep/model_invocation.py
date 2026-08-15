@@ -36,6 +36,7 @@ class ModelConfiguration:
     token_limit: int | None = None
     timeout_ms: int | None = None
     retry_policy: JsonObject = field(default_factory=dict)
+    rate_limit_policy: JsonObject = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.provider or not self.model:
@@ -75,6 +76,23 @@ class ModelConfiguration:
         object.__setattr__(self, "model_ref", _mapping(self.model_ref))
         object.__setattr__(self, "parameters", _mapping(self.parameters))
         object.__setattr__(self, "retry_policy", _mapping(retry_policy))
+        rate_limit_policy = dict(self.rate_limit_policy)
+        unknown_rate_fields = set(rate_limit_policy) - {
+            "requestsPerMinute", "tokensPerMinute"
+        }
+        if unknown_rate_fields:
+            raise ValueError("rate_limit_policy contains unsupported fields")
+        # Legacy Resources without an explicit policy remain effectively
+        # unpaced; production self-hosting declares conservative capacities.
+        for key, default in (
+            ("requestsPerMinute", 60_000),
+            ("tokensPerMinute", 1_000_000_000),
+        ):
+            value = rate_limit_policy.get(key, default)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"rate_limit_policy.{key} must be a positive integer")
+            rate_limit_policy[key] = value
+        object.__setattr__(self, "rate_limit_policy", _mapping(rate_limit_policy))
 
     @property
     def max_attempts(self) -> int:
@@ -94,6 +112,7 @@ class ModelConfiguration:
             "tokenLimit": self.token_limit,
             "timeoutMs": self.timeout_ms,
             "retryPolicy": deepcopy(dict(self.retry_policy)),
+            "rateLimitPolicy": deepcopy(dict(self.rate_limit_policy)),
         }
 
 

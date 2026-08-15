@@ -690,6 +690,18 @@ and bounded incremental response reads, and cancels the caller-visible
 operation when that deadline expires. It never follows HTTP redirects, which
 prevents the Authorization header from crossing origins or an HTTPS-to-HTTP
 downgrade.
+One thread-safe process-local coordinator paces requests for each internal
+provider/credential scope using both request and estimated-token reservations.
+The estimate includes the complete configured output allowance. A valid
+numeric `Retry-After` is not capped; work that cannot fit its deadline is
+deferred through persisted retry eligibility rather than dispatched early.
+Delayed reservations recheck newer throttle state before dispatch. Safe scope
+deadlines are checkpointed under `AEP_STATE_ROOT/model-rate-limits` and restored
+after restart without storing raw credential or project identity.
+Allowlisted reason and limit headers become normalized evidence, while raw
+headers, bodies, and credential/project identity remain excluded. The MVP
+fails startup when configured for more than one Model worker because this
+coordinator does not claim cross-process quota ownership.
 Only finite, stateless generation parameters cross this provider boundary;
 provider conversation handles are rejected. Evidence records the Model
 Resource's requested identity separately from the bounded provider-resolved

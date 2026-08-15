@@ -11,6 +11,7 @@ from aep.task_dag import resolve_task_dag
 from aep.task_execution import FailureClass
 from aep.workflow_execution import _runtime_validator
 from aep.workflow_scheduler import TaskExecutionResult, WorkflowScheduler
+from aep.workflow_scheduler import _retry_is_ready
 from aep.workflow_scheduler import InvalidSchedulerInputError
 
 
@@ -579,3 +580,17 @@ class BlockingExecutor:
         if not self.release.wait(timeout=2):
             raise TimeoutError("test did not release fake executor")
         return TaskExecutionResult.success()
+def test_recoverable_retry_waits_for_persisted_not_before():
+    attempt = {
+        "status": "FAILED",
+        "attempt": 1,
+        "failure": {
+            "class": "RECOVERABLE",
+            "retryable": True,
+            "message": "provider throttle",
+            "retryNotBefore": "2026-08-15T00:01:15Z",
+        },
+    }
+
+    assert not _retry_is_ready(attempt, 2, "2026-08-15T00:01:14Z")
+    assert _retry_is_ready(attempt, 2, "2026-08-15T00:01:15Z")

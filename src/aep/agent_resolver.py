@@ -210,6 +210,17 @@ def resolve_agent(
             "tokenLimit": model_spec.get("tokenLimit"),
             "timeoutMs": model_spec.get("timeoutMs"),
             "retryPolicy": deepcopy(dict(model_spec.get("retryPolicy", {}))),
+            "rateLimitPolicy": deepcopy(
+                dict(
+                    model_spec.get(
+                        "rateLimitPolicy",
+                        {
+                            "requestsPerMinute": 60_000,
+                            "tokensPerMinute": 1_000_000_000,
+                        },
+                    )
+                )
+            ),
         },
         "outputSchema": deepcopy(dict(output_schema_value)),
         "resolvedAt": resolved_at,

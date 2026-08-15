@@ -1,0 +1,51 @@
+{
+  "apiVersion": "aep.dev/v1alpha1",
+  "kind": "ModelInvocation",
+  "id": "modelinvocation-rate-limit-0001",
+  "traceId": "trace-rate-limit-0001",
+  "createdAt": "2026-08-15T00:00:00Z",
+  "updatedAt": "2026-08-15T00:00:01Z",
+  "provenance": {
+    "actor": "model-adapter:openai",
+    "workflowExecutionId": "workflowexecution-rate-limit-0001",
+    "taskExecutionId": "taskexecution-rate-limit-0001",
+    "resourceRefs": [
+      {"kind": "Model", "name": "default-reasoning", "version": "1.1.0"}
+    ]
+  },
+  "agentInvocationId": "agentinvocation-rate-limit-0001",
+  "modelRef": {"kind": "Model", "name": "default-reasoning", "version": "1.1.0"},
+  "modelConfiguration": {
+    "provider": "openai",
+    "model": "gpt-5",
+    "parameters": {},
+    "tokenLimit": 32000,
+    "timeoutMs": 120000,
+    "retryPolicy": {"maxAttempts": 1, "backoffMs": 1000},
+    "rateLimitPolicy": {"requestsPerMinute": 2, "tokensPerMinute": 80000}
+  },
+  "status": "FAILED",
+  "inputAddress": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "providerMetadata": {
+    "errorCode": "rate_limit_deferred",
+    "httpStatus": 429,
+    "providerErrorReason": "temporary_throttle",
+    "rateLimitScope": "tokens",
+    "attemptCount": 1,
+    "retryAfterReceived": true,
+    "retryAfterMs": 75000,
+    "appliedDelayMs": 75000,
+    "delaySource": "retry-after",
+    "retryEligibleAt": "2026-08-15T00:01:16Z",
+    "retryDecision": "deferred"
+  },
+  "schemaValidation": "NOT_RUN",
+  "failure": {
+    "class": "RECOVERABLE",
+    "message": "model provider retry is deferred beyond the invocation deadline",
+    "retryable": true,
+    "retryNotBefore": "2026-08-15T00:01:16Z"
+  },
+  "startedAt": "2026-08-15T00:00:00Z",
+  "completedAt": "2026-08-15T00:00:01Z"
+}

@@ -44,6 +44,8 @@ Create the self-hosting deployment and operator runbook that:
 * AEP-040
 * AEP-041
 * AEP-042
+* AEP-045
+* AEP-046
 
 ## Acceptance Criteria
 

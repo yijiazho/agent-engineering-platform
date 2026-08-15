@@ -227,6 +227,125 @@ def test_deep_provider_json_terminalizes_both_invocations_as_malformed() -> None
     assert model["providerMetadata"]["errorCode"] == "malformed_response"
 
 
+def test_rate_limit_decisions_emit_correlated_redacted_lifecycle_events() -> None:
+    class QuotaTransport:
+        def request(self, **_request):
+            return ProviderHttpResponse(
+                status=429,
+                headers={
+                    "X-Request-ID": "raw-secret-request-id",
+                    "X-RateLimit-Limit-Tokens": "80000",
+                    "X-RateLimit-Remaining-Tokens": "1234",
+                    "X-RateLimit-Reset-Tokens": "2.5s",
+                },
+                body=b'{"error":{"code":"tokens","message":"raw secret body"}}',
+            )
+
+    store = InMemoryRuntimeObjectStore()
+    configuration = ModelConfiguration(
+        model_ref={"kind": "Model", "name": "test-model", "version": "1.1.0"},
+        provider="openai",
+        model="gpt-5",
+        token_limit=32_000,
+        timeout_ms=120_000,
+        retry_policy={"maxAttempts": 1, "backoffMs": 1000},
+        rate_limit_policy={"requestsPerMinute": 2, "tokensPerMinute": 80_000},
+    )
+    agent = resolved_agent()
+    agent["modelRef"] = dict(configuration.model_ref)
+    agent["modelParameters"] = {}
+    agent["modelConfiguration"] = configuration.as_record()
+    agent["provenance"]["resourceRefs"] = [dict(configuration.model_ref)]
+    logs = []
+
+    result = invoke_agent(
+        store=store,
+        invocation_id=AGENT_ID,
+        model_invocation_id=MODEL_ID,
+        resolved_agent=agent,
+        context_package=context_package(),
+        prompt=prompt(),
+        model_configuration=configuration,
+        adapter=OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="sk-must-not-leak"),
+            transport=QuotaTransport(),
+        ),
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+        lifecycle_logger=StructuredLifecycleLogger(logs.append),
+    )
+
+    assert result["status"] == "FAILED"
+    names = [entry["eventName"] for entry in logs]
+    assert "ModelRequestAdmitted" in names
+    assert "ModelRequestThrottled" in names
+    assert "ModelRetrySuppressed" in names
+    assert names[-2:] == ["ModelInvocationFailed", "AgentInvocationFailed"]
+    assert all(entry["traceId"] == resolved_agent()["traceId"] for entry in logs)
+    rendered = repr(logs)
+    assert "raw-secret-request-id" not in rendered
+    assert "raw secret body" not in rendered
+    assert "sk-must-not-leak" not in rendered
+    admitted = next(entry for entry in logs if entry["eventName"] == "ModelRequestAdmitted")
+    throttled = next(entry for entry in logs if entry["eventName"] == "ModelRequestThrottled")
+    assert admitted["attributes"]["estimatedInputTokens"] > 0
+    assert admitted["attributes"]["reservedTokens"] > 32_000
+    assert admitted["attributes"]["outputTokenAllowance"] == 32_000
+    assert throttled["attributes"]["limitTokens"] == 80_000
+    assert throttled["attributes"]["remainingTokens"] == 1234
+    assert throttled["attributes"]["resetTokensMs"] == 2500
+
+
+def test_single_provider_attempt_propagates_retry_eligibility_to_agent_failure() -> None:
+    class TemporaryThrottleTransport:
+        def request(self, **_request):
+            return ProviderHttpResponse(
+                status=429,
+                headers={"Retry-After": "75"},
+                body=b'{"error":{"code":"tokens"}}',
+            )
+
+    store = InMemoryRuntimeObjectStore()
+    configuration = ModelConfiguration(
+        model_ref={"kind": "Model", "name": "test-model", "version": "1.1.0"},
+        provider="openai",
+        model="gpt-5",
+        token_limit=32_000,
+        timeout_ms=120_000,
+        retry_policy={"maxAttempts": 1, "backoffMs": 1000},
+        rate_limit_policy={"requestsPerMinute": 2, "tokensPerMinute": 80_000},
+    )
+    agent = resolved_agent()
+    agent["modelRef"] = dict(configuration.model_ref)
+    agent["modelParameters"] = {}
+    agent["modelConfiguration"] = configuration.as_record()
+    agent["provenance"]["resourceRefs"] = [dict(configuration.model_ref)]
+
+    result = invoke_agent(
+        store=store,
+        invocation_id=AGENT_ID,
+        model_invocation_id=MODEL_ID,
+        resolved_agent=agent,
+        context_package=context_package(),
+        prompt=prompt(),
+        model_configuration=configuration,
+        adapter=OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="sk-must-not-leak"),
+            transport=TemporaryThrottleTransport(),
+        ),
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+    )
+
+    model = store.get(MODEL_ID)
+    assert result["failure"]["class"] == "RECOVERABLE"
+    assert result["failure"]["retryNotBefore"]
+    assert model["providerMetadata"]["appliedDelayMs"] == 75_000
+    assert model["providerMetadata"]["retryEligibleAt"] == result["failure"][
+        "retryNotBefore"
+    ]
+
+
 def test_invalid_structured_output_fails_agent_but_records_successful_model_call() -> None:
     store = InMemoryRuntimeObjectStore()
     adapter = FakeModelAdapter(

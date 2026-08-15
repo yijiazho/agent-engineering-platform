@@ -29,7 +29,8 @@
     "parameters": {"temperature": 0.2},
     "tokenLimit": 32000,
     "timeoutMs": 60000,
-    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000}
+    "retryPolicy": {"maxAttempts": 2, "backoffMs": 1000},
+    "rateLimitPolicy": {"requestsPerMinute": 2, "tokensPerMinute": 80000}
   },
   "status": "SUCCEEDED",
   "inputAddress": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
