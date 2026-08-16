@@ -25,8 +25,8 @@ or `Blocked` as implementation state changes.
 | Status | Count |
 | ------ | ----: |
 | Completed | 43 |
-| In Progress | 3 |
-| Not Started | 1 |
+| In Progress | 4 |
+| Not Started | 0 |
 | Blocked | 0 |
 | Total | 47 |
 
@@ -226,7 +226,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
 | AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | In Progress |
 | AEP-046 | AEP-010, AEP-036, AEP-040, AEP-042, AEP-045 | In Progress |
-| AEP-047 | AEP-023, AEP-027, AEP-032, AEP-039, AEP-040 | Not Started |
+| AEP-047 | AEP-023, AEP-027, AEP-032, AEP-039, AEP-040 | In Progress |
 
 ---
 

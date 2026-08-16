@@ -137,6 +137,10 @@ def completed(*commands: DockerCommandResult) -> DockerExecutionResult:
         logs_ref="sha256:" + "d" * 64,
         started_at=TIMESTAMP,
         completed_at=TIMESTAMP,
+        readiness=(
+            {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\.", "output": "Python 3.12.9", "logsRef": "sha256:" + "a" * 64},
+            {"argv": ["git", "--version"], "versionPattern": "^git version 2\\.", "output": "git version 2.43.0", "logsRef": "sha256:" + "b" * 64},
+        ),
     )
 
 

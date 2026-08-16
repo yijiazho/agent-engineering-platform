@@ -480,6 +480,13 @@ class DockerRunConfiguration:
             raise ValueError("Docker image, readiness commands, and commands must not be empty")
         if any(not argv or not pattern for argv, pattern in executables):
             raise ValueError("Docker readiness command arguments and patterns must not be empty")
+        try:
+            for _argv, pattern in executables:
+                re.compile(pattern)
+        except re.error as error:
+            raise DockerImageReadinessError(
+                "Docker readiness versionPattern is not a valid regular expression"
+            ) from error
         if any(
             not command or any(not value for value in command)
             for command in commands
@@ -531,7 +538,7 @@ class DockerExecutionResult:
     logs_ref: str
     started_at: str
     completed_at: str
-    readiness: tuple[Mapping[str, Any], ...] = ()
+    readiness: tuple[Mapping[str, Any], ...]
 
     def __post_init__(self) -> None:
         commands = tuple(self.commands)
@@ -543,8 +550,11 @@ class DockerExecutionResult:
             raise ValueError("execution logs_ref must not be empty")
         if not self.started_at or not self.completed_at:
             raise ValueError("execution result must contain timing evidence")
+        readiness = tuple(dict(item) for item in self.readiness)
+        if not readiness:
+            raise ValueError("execution result must contain readiness evidence")
         object.__setattr__(self, "commands", commands)
-        object.__setattr__(self, "readiness", tuple(dict(item) for item in self.readiness))
+        object.__setattr__(self, "readiness", readiness)
 
 
 @dataclass(frozen=True)
@@ -971,13 +981,25 @@ class _DockerToolExecution(ToolExecution):
             raise ValueError(
                 "Docker executor command evidence does not match requested commands"
             )
-        readiness = tuple(getattr(outcome, "readiness", ())) or tuple(
-            {
-                "argv": list(argv), "versionPattern": pattern,
-                "output": "verified by executor", "logsRef": outcome.logs_ref,
-            }
-            for argv, pattern in self._configuration.required_executables
-        )
+        readiness = tuple(getattr(outcome, "readiness", ()))
+        if not timed_out:
+            try:
+                _validate_readiness_evidence(
+                    readiness, self._configuration.required_executables
+                )
+            except DockerImageReadinessError as error:
+                return ToolResult(
+                    status=ToolResultStatus.FAILED,
+                    output=None,
+                    logs_ref=outcome.logs_ref,
+                    metrics=ToolMetrics(
+                        duration_ms=sum(item.duration_ms for item in outcome.commands)
+                    ),
+                    started_at=outcome.started_at,
+                    completed_at=outcome.completed_at,
+                    failure_class=ToolFailureClass.CONFIGURATION,
+                    failure_message=str(error),
+                )
         command_records = [command.as_record() for command in outcome.commands]
         duration_ms = sum(command.duration_ms for command in outcome.commands)
         return ToolResult(
@@ -1023,3 +1045,31 @@ class _DockerToolExecution(ToolExecution):
 
     def cleanup(self) -> None:
         self._execution.cleanup()
+
+
+def _validate_readiness_evidence(
+    evidence: Sequence[Mapping[str, Any]],
+    expected: Sequence[tuple[tuple[str, ...], str]],
+) -> None:
+    """Fail closed when an executor cannot prove the configured image checks."""
+
+    if len(evidence) != len(expected):
+        raise DockerImageReadinessError(
+            "Docker executor readiness evidence does not match configured prerequisites"
+        )
+    for item, (argv, pattern) in zip(evidence, expected, strict=True):
+        if not isinstance(item, Mapping):
+            raise DockerImageReadinessError("Docker executor readiness evidence is invalid")
+        output = item.get("output")
+        logs_ref = item.get("logsRef")
+        if (
+            tuple(item.get("argv", ())) != argv
+            or item.get("versionPattern") != pattern
+            or not isinstance(output, str)
+            or re.search(pattern, output) is None
+            or not isinstance(logs_ref, str)
+            or not logs_ref
+        ):
+            raise DockerImageReadinessError(
+                "Docker executor readiness evidence does not satisfy configured prerequisites"
+            )

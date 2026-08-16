@@ -85,6 +85,10 @@ def outcome(*, exit_code: int = 0) -> DockerExecutionResult:
         logs_ref="sha256:" + "c" * 64,
         started_at="2026-07-30T00:00:00Z",
         completed_at="2026-07-30T00:00:00.025Z",
+        readiness=(
+            {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\.", "output": "Python 3.12.9", "logsRef": "sha256:" + "d" * 64},
+            {"argv": ["git", "--version"], "versionPattern": "^git version 2\\.", "output": "git version 2.43.0", "logsRef": "sha256:" + "e" * 64},
+        ),
     )
 
 
@@ -452,6 +456,28 @@ def test_missing_declared_image_executable_is_configuration_failure() -> None:
     assert [call[0][0:2] for call in process.calls] == [
         ("docker", "create"), ("docker", "start"), ("docker", "rm")
     ]
+
+
+def test_invalid_readiness_pattern_is_configuration_failure() -> None:
+    executor = FakeDockerExecutor(outcome())
+    tool_request = request()
+    malformed = dict(tool_request.input)
+    malformed["requiredExecutables"] = [
+        {"argv": ["python", "--version"], "versionPattern": "["}
+    ]
+    tool_request = ToolRequest(
+        tool_ref=tool_request.tool_ref,
+        input=malformed,
+        caller=tool_request.caller,
+        capabilities=tool_request.capabilities,
+        timeout_ms=tool_request.timeout_ms,
+        correlation=tool_request.correlation,
+    )
+
+    result = invoke(executor, tool_request=tool_request)
+
+    assert result.failure_class is ToolFailureClass.CONFIGURATION
+    assert executor.configurations == []
 
 
 def test_docker_run_capability_is_required_even_with_an_allowing_hook() -> None:
