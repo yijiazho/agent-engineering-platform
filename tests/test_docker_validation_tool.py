@@ -282,10 +282,28 @@ def test_concrete_cli_executor_timeout_is_stopped_killed_and_removed() -> None:
     result = invoke(DockerCliExecutor(process, FakeLogStore()))
 
     assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.output["readiness"]["status"] == "INCOMPLETE"
+    assert len(result.output["readiness"]["executables"]) == 2
     name = process.calls[0][0][3]
     assert process.calls[3][0] == ("docker", "stop", name)
     assert process.calls[4][0] == ("docker", "kill", name)
     assert process.calls[5][0] == ("docker", "rm", "-f", name)
+
+
+def test_readiness_probe_timeout_is_recorded_as_incomplete() -> None:
+    ok = DockerProcessResult("", "", 0, 1)
+    process = FakeProcessBoundary(
+        [ok, ok, ok, ok, ok],
+        readiness_results={("python", "--version"): None},
+    )
+
+    result = invoke(DockerCliExecutor(process, FakeLogStore()))
+
+    assert result.status is ToolResultStatus.TIMED_OUT
+    assert result.output["readiness"] == {
+        "status": "INCOMPLETE", "executables": ()
+    }
+    assert result.output["commands"] == ()
 
 
 def test_create_start_and_commands_share_one_absolute_deadline() -> None:
@@ -322,6 +340,8 @@ def test_later_command_timeout_preserves_completed_evidence_and_logs() -> None:
 
     assert result.status is ToolResultStatus.TIMED_OUT
     assert result.failure_class is ToolFailureClass.TIMEOUT
+    assert result.output["readiness"]["status"] == "INCOMPLETE"
+    assert len(result.output["readiness"]["executables"]) == 2
     assert len(result.output["commands"]) == 1
     assert result.output["commands"][0]["argv"] == ("python", "-m", "build")
     assert result.output["commands"][0]["stdout"] == "built\n"

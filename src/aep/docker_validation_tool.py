@@ -115,8 +115,8 @@ DOCKER_VALIDATION_OUTPUT_SCHEMA: Mapping[str, Any] = {
             "type": "object", "additionalProperties": False,
             "required": ["status", "executables"],
             "properties": {
-                "status": {"enum": ["PASS"]},
-                "executables": {"type": "array", "minItems": 1,
+                "status": {"enum": ["PASS", "INCOMPLETE"]},
+                "executables": {"type": "array", "minItems": 0,
                     "items": {"type": "object", "additionalProperties": False,
                         "required": ["argv", "versionPattern", "output", "logsRef"],
                         "properties": {
@@ -565,6 +565,7 @@ class DockerTimeoutResult:
     logs_ref: str
     started_at: str
     completed_at: str
+    readiness: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         commands = tuple(self.commands)
@@ -573,6 +574,7 @@ class DockerTimeoutResult:
         if not self.logs_ref or not self.started_at or not self.completed_at:
             raise ValueError("timeout result must contain logs and timing evidence")
         object.__setattr__(self, "commands", commands)
+        object.__setattr__(self, "readiness", tuple(dict(item) for item in self.readiness))
 
 
 class DockerStartupError(ToolAdapterError):
@@ -793,13 +795,13 @@ class _DockerCliExecution(DockerExecution):
             remaining_ms = max(0, round((deadline - self._clock()) * 1000))
             if remaining_ms < 1:
                 self._timed_out = True
-                return self._timeout_result(evidence, combined, started_at)
+                return self._timeout_result(evidence, combined, started_at, readiness)
             result = self._process.run(
                 ["docker", "exec", self._name, *argv], remaining_ms
             )
             if result is None:
                 self._timed_out = True
-                return self._timeout_result(evidence, combined, started_at)
+                return self._timeout_result(evidence, combined, started_at, readiness)
             output = (result.stdout + result.stderr).strip()[:1024]
             logs_ref = self._logs.write(f"readiness {list(argv)!r}:\n{output}")
             if result.exit_code != 0 or re.search(version_pattern, output) is None:
@@ -813,7 +815,7 @@ class _DockerCliExecution(DockerExecution):
             remaining_ms = max(0, round((deadline - self._clock()) * 1000))
             if remaining_ms < 1:
                 self._timed_out = True
-                return self._timeout_result(evidence, combined, started_at)
+                return self._timeout_result(evidence, combined, started_at, readiness)
             result = self._process.run(
                 [
                     "docker", "exec", "--workdir", DOCKER_WORKSPACE_DESTINATION,
@@ -823,7 +825,7 @@ class _DockerCliExecution(DockerExecution):
             )
             if result is None:
                 self._timed_out = True
-                return self._timeout_result(evidence, combined, started_at)
+                return self._timeout_result(evidence, combined, started_at, readiness)
             content = f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             combined.append(content)
             evidence.append(
@@ -851,12 +853,14 @@ class _DockerCliExecution(DockerExecution):
         evidence: list[DockerCommandResult],
         combined: list[str],
         started_at: datetime,
+        readiness: Sequence[Mapping[str, Any]],
     ) -> DockerTimeoutResult:
         return DockerTimeoutResult(
             commands=tuple(evidence),
             logs_ref=self._logs.write("\n".join(combined)),
             started_at=started_at.isoformat().replace("+00:00", "Z"),
             completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            readiness=tuple(readiness),
         )
 
     def terminate(self) -> None:
@@ -1013,7 +1017,10 @@ class _DockerToolExecution(ToolExecution):
             output={
                 "image": self._configuration.image,
                 "workspaceMount": self._configuration.workspace_mount.as_record(),
-                "readiness": {"status": "PASS", "executables": list(readiness)},
+                "readiness": {
+                    "status": "INCOMPLETE" if timed_out else "PASS",
+                    "executables": list(readiness),
+                },
                 "commands": command_records,
             },
             logs_ref=outcome.logs_ref,

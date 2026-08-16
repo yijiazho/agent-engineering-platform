@@ -114,7 +114,10 @@ class RunValidationTaskHandler:
             # configuration defect, not evidence that the candidate patch failed.
             # Do not manufacture build/test EvaluationResults for commands that
             # were deliberately never started.
-            if result.failure_class is ToolFailureClass.CONFIGURATION:
+            if result.failure_class in {
+                ToolFailureClass.CONFIGURATION,
+                ToolFailureClass.STARTUP,
+            }:
                 return _tool_failure(result)
 
             build_id = self._runtime_id(

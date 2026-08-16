@@ -259,6 +259,29 @@ def test_denial_is_policy_failure_with_complete_evidence(tmp_path: Path) -> None
     assert artifacts.list_by_task_execution(TASK_EXECUTION_ID)
 
 
+def test_startup_failure_skips_candidate_evaluations(tmp_path: Path) -> None:
+    store, handler, task, artifacts, executor = setup_handler(
+        tmp_path,
+        completed(
+            command(("python", "-m", "build")),
+            command(("python", "-m", "pytest")),
+        ),
+    )
+
+    def unavailable(_configuration):
+        raise RuntimeError("image unavailable")
+
+    executor.start = unavailable
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.failure_class is FailureClass.RECOVERABLE
+    execution = store.get(TASK_EXECUTION_ID)
+    invocation = store.get(execution["toolInvocationIds"][0])
+    assert invocation["failureClass"] == "STARTUP"
+    assert "evaluationResultIds" not in execution
+    assert artifacts.list_by_task_execution(TASK_EXECUTION_ID) == ()
+
+
 def test_malformed_executor_evidence_is_classified_and_reported(tmp_path: Path) -> None:
     store, handler, task, artifacts, _executor = setup_handler(
         tmp_path,
