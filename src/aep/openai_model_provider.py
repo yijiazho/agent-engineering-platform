@@ -688,18 +688,12 @@ def _successful_response(
     output_tokens = usage.get("output_tokens")
     if not _non_negative_int(input_tokens) or not _non_negative_int(output_tokens):
         raise _malformed(request_id=request_id, model=requested_model)
-    coordinator.observe_success(
-        now=observed_at,
-        reserved_tokens=reserved_tokens,
-        actual_input_tokens=input_tokens,
-        actual_output_tokens=output_tokens,
-        reservation_id=reservation_id,
-    )
-    return ModelResponse(
-        output=output,
-        usage=ModelUsage(input_tokens, output_tokens),
-        latency_ms=max(0, latency_ms),
-        provider_metadata={
+    try:
+        response = ModelResponse(
+            output=output,
+            usage=ModelUsage(input_tokens, output_tokens),
+            latency_ms=max(0, latency_ms),
+            provider_metadata={
             "provider": "openai",
             "requestedModel": requested_model,
             "providerModel": provider_model,
@@ -716,10 +710,20 @@ def _successful_response(
                     "retryDecision": "terminal",
                 },
             ],
-            **dict(admission_evidence),
-            "retryDecision": "terminal",
-        },
+                **dict(admission_evidence),
+                "retryDecision": "terminal",
+            },
+        )
+    except (RecursionError, ValueError, TypeError):
+        raise _malformed(request_id=request_id, model=requested_model) from None
+    coordinator.observe_success(
+        now=observed_at,
+        reserved_tokens=reserved_tokens,
+        actual_input_tokens=input_tokens,
+        actual_output_tokens=output_tokens,
+        reservation_id=reservation_id,
     )
+    return response
 
 
 def _output_text(document: Mapping[str, Any]) -> str:

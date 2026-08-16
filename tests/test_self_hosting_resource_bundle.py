@@ -199,7 +199,7 @@ def test_knowledge_and_validation_are_repository_bound_and_bounded(
         "tests/",
     } <= paths
 
-    validation = resources.get(ResourceRef("Task", "run-validation", "1.0.0")).data[
+    validation = resources.get(ResourceRef("Task", "run-validation", "1.1.0")).data[
         "spec"
     ]["validation"]
     assert validation["image"].count("@sha256:") == 1
@@ -216,7 +216,7 @@ def test_knowledge_and_validation_are_repository_bound_and_bounded(
         "containerPath": "/workspace",
         "readOnly": False,
     }
-    docker = resources.get(ResourceRef("Tool", "docker-validation", "1.0.0"))
+    docker = resources.get(ResourceRef("Tool", "docker-validation", "1.1.0"))
     assert "network:none" in docker.data["spec"]["permissions"]
     assert validation["resources"] == {
         "cpuLimit": 2,
@@ -283,7 +283,7 @@ def test_locked_project_and_dependencies_are_installed():
         if os.name == "nt"
         else environment_root / "bin" / "python"
     )
-    validation = resources.get(ResourceRef("Task", "run-validation", "1.0.0")).data[
+    validation = resources.get(ResourceRef("Task", "run-validation", "1.1.0")).data[
         "spec"
     ]["validation"]
     command_environment = {

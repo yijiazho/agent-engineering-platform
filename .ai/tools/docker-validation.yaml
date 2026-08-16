@@ -1,6 +1,6 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
-  "metadata": {"name": "docker-validation", "version": "1.0.0", "description": "Network-disabled build and test execution in a bounded container."},
+  "metadata": {"name": "docker-validation", "version": "1.1.0", "description": "Network-disabled build and test execution in a bounded container with image readiness evidence."},
   "spec": {
     "category": "execution", "capabilities": ["docker.run"],
     "inputSchema": {"type": "object", "additionalProperties": false, "required": ["image", "commands", "workspaceMount", "resources"], "properties": {"image": {"type": "string", "minLength": 1}, "commands": {"type": "array", "minItems": 2}, "workspaceMount": {"type": "object"}, "resources": {"type": "object"}}},

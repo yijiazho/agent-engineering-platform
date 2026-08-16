@@ -147,13 +147,24 @@ class FakeProcessBoundary(DockerProcessBoundary):
         *,
         clock=None,
         advances: list[float] | None = None,
+        readiness_results: dict[tuple[str, ...], DockerProcessResult | None] | None = None,
     ) -> None:
         self.results = list(results)
         self.calls: list[tuple[tuple[str, ...], int]] = []
         self.clock = clock
         self.advances = list(advances or [])
+        self.readiness_results = dict(readiness_results or {})
 
     def run(self, argv, timeout_ms):
+        # Readiness probes are an image contract, not the command sequence
+        # asserted by the legacy lifecycle fixtures below.
+        readiness_argv = tuple(argv[-2:])
+        if readiness_argv in self.readiness_results:
+            return self.readiness_results[readiness_argv]
+        if readiness_argv == ("python", "--version"):
+            return DockerProcessResult("Python 3.12.9\n", "", 0, 1)
+        if readiness_argv == ("git", "--version"):
+            return DockerProcessResult("git version 2.43.0\n", "", 0, 1)
         self.calls.append((tuple(argv), timeout_ms))
         if self.advances:
             self.clock.value += self.advances.pop(0)
@@ -204,7 +215,7 @@ def test_pass_captures_configuration_and_command_evidence() -> None:
         "logsRef": "sha256:" + "a" + "0" * 63,
     }
     configuration = executor.configurations[0]
-    assert configuration.image.startswith("python@sha256:")
+    assert "@sha256:" in configuration.image
     assert configuration.timeout_ms == 30_000
     assert configuration.workspace_mount.container_path == "/workspace"
     assert configuration.workspace_mount.read_only is False
@@ -257,7 +268,7 @@ def test_concrete_cli_executor_builds_scoped_container_and_evidence() -> None:
     )
     assert process.calls[3][0] == ("docker", "rm", "-f", create[3])
     assert result.output["commands"][0]["stdout"] == "passed\n"
-    assert len(logs.contents) == 2
+    assert len(logs.contents) == 4
 
 
 def test_concrete_cli_executor_timeout_is_stopped_killed_and_removed() -> None:
@@ -310,7 +321,7 @@ def test_later_command_timeout_preserves_completed_evidence_and_logs() -> None:
     assert len(result.output["commands"]) == 1
     assert result.output["commands"][0]["argv"] == ("python", "-m", "build")
     assert result.output["commands"][0]["stdout"] == "built\n"
-    assert result.logs_ref == "sha256:" + f"{2:064x}"
+    assert result.logs_ref == "sha256:" + f"{4:064x}"
     with pytest.raises(TypeError):
         result.output["commands"][0]["stdout"] = "changed"
     name = process.calls[0][0][3]
@@ -345,7 +356,7 @@ def test_cleanup_failure_after_partial_timeout_preserves_evidence() -> None:
     )
     assert len(result.output["commands"]) == 1
     assert result.output["commands"][0]["stdout"] == "built\n"
-    assert result.logs_ref == "sha256:" + f"{2:064x}"
+    assert result.logs_ref == "sha256:" + f"{4:064x}"
     assert result.metrics.duration_ms == 8
 
 
@@ -422,6 +433,25 @@ def test_startup_failure_is_classified_before_execution() -> None:
     assert result.failure_class is ToolFailureClass.STARTUP
     assert result.failure_message == "Docker startup failed: daemon unavailable"
     assert executor.startup_cleaned_up is True
+
+
+def test_missing_declared_image_executable_is_configuration_failure() -> None:
+    ok = DockerProcessResult("", "", 0, 1)
+    process = FakeProcessBoundary(
+        [ok, ok, ok],
+        readiness_results={
+            ("git", "--version"): DockerProcessResult("", "git: not found", 127, 1)
+        },
+    )
+
+    result = invoke(DockerCliExecutor(process, FakeLogStore()))
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_class is ToolFailureClass.CONFIGURATION
+    assert "prerequisite 'git' is unavailable" in result.failure_message
+    assert [call[0][0:2] for call in process.calls] == [
+        ("docker", "create"), ("docker", "start"), ("docker", "rm")
+    ]
 
 
 def test_docker_run_capability_is_required_even_with_an_allowing_hook() -> None:

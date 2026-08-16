@@ -110,6 +110,13 @@ class RunValidationTaskHandler:
                 task_execution["id"], {"toolInvocationIds": [invocation_id]}
             )
 
+            # An unavailable or incompatible pinned image is a deployment
+            # configuration defect, not evidence that the candidate patch failed.
+            # Do not manufacture build/test EvaluationResults for commands that
+            # were deliberately never started.
+            if result.failure_class is ToolFailureClass.CONFIGURATION:
+                return _tool_failure(result)
+
             build_id = self._runtime_id(
                 "evaluationresult", f"{task_execution['id']}:build"
             )
@@ -362,6 +369,24 @@ class RunValidationTaskHandler:
                 "RunValidation Docker Tool must declare docker.run"
             )
         commands = validation.get("commands")
+        required_executables = validation.get("requiredExecutables")
+        if (
+            isinstance(required_executables, (str, bytes))
+            or not isinstance(required_executables, Sequence)
+            or not required_executables
+            or any(
+                not isinstance(item, Mapping)
+                or not isinstance(item.get("argv"), Sequence)
+                or isinstance(item.get("argv"), (str, bytes))
+                or not item.get("argv")
+                or not isinstance(item.get("versionPattern"), str)
+                or not item["versionPattern"]
+                for item in required_executables
+            )
+        ):
+            raise RunValidationContractError(
+                "RunValidation requires declared image readiness executables"
+            )
         if (
             isinstance(commands, (str, bytes))
             or not isinstance(commands, Sequence)
@@ -413,6 +438,7 @@ class RunValidationTaskHandler:
             "commandIndexes": indexes,
             "input": {
                 "image": validation.get("image"),
+                "requiredExecutables": deepcopy(validation.get("requiredExecutables")),
                 "commands": docker_commands,
                 "workspaceMount": {
                     "hostPath": workspace_path,
@@ -549,6 +575,7 @@ def _tool_failure(result: ToolResult) -> TaskExecutionResult:
         ToolFailureClass.BOUNDARY: FailureClass.POLICY,
         ToolFailureClass.NOT_FOUND: FailureClass.PERMANENT,
         ToolFailureClass.IO: FailureClass.RECOVERABLE,
+        ToolFailureClass.CONFIGURATION: FailureClass.CONFIGURATION,
     }[failure]
     return TaskExecutionResult.failure(
         classification,

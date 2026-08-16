@@ -636,6 +636,11 @@ requires it to remain within its configured authorized workspace root after
 traversal and symlink resolution. The container destination is fixed at
 `/workspace`.
 
+The validation Task declares required executable argv and version patterns.
+The executor checks them inside the network-disabled container before it runs
+build or test commands. A missing executable or incompatible version is a
+configuration image-readiness failure, not candidate test evidence.
+
 The production Docker CLI executor creates one invocation-scoped container with
 networking disabled by default, the authorized mount, and configured CPU and
 memory limits. Every command executes with `/workspace` as its working

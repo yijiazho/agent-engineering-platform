@@ -515,6 +515,10 @@ def resource_collection(*, timeout_ms: int = 30_000) -> tuple[ResourceCollection
             "validation": {
                 "toolRef": TOOL_REF,
                 "image": "python@sha256:" + "a" * 64,
+                "requiredExecutables": [
+                    {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\."},
+                    {"argv": ["git", "--version"], "versionPattern": "^git version 2\\."},
+                ],
                 "commands": [
                     {"type": "build", "argv": ["python", "-m", "build"]},
                     {"type": "test", "argv": ["python", "-m", "pytest"]},

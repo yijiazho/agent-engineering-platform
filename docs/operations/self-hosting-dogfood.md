@@ -150,7 +150,9 @@ if ($resourcePath.StartsWith($statePath + '\', [StringComparison]::OrdinalIgnore
 if ($statePath.StartsWith($resourcePath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'State overlaps Resource checkout' }
 
 docker manifest inspect "$imageRepository@sha256:$imageDigest" | Out-Null
-docker pull python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
+docker pull ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73
+docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73 python --version
+docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73 git --version
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml config --quiet
 ```
 

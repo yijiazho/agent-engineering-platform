@@ -72,6 +72,7 @@ class ToolFailureClass(str, Enum):
     BOUNDARY = "BOUNDARY"
     NOT_FOUND = "NOT_FOUND"
     IO = "IO"
+    CONFIGURATION = "CONFIGURATION"
 
 
 @dataclass(frozen=True)

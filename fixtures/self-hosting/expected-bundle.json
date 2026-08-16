@@ -22,7 +22,7 @@
   ],
   "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
   "resourceVersions": {
-    "workflow": "1.1.0",
+    "workflow": "1.2.0",
     "model": "1.1.0",
     "analyzeIssueTask": "1.2.0"
   },
