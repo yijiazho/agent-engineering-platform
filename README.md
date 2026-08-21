@@ -262,6 +262,11 @@ and compiles `src/` and `tests/`. The second configured command runs
 boundary throughout, the writable mount is confined to the execution checkout,
 and CPU, memory, timeout, and retry limits are explicit.
 
+`deploy/validation/image.lock.json` records the consumed validation-image
+digest, immutable Python base digest, pinned Debian package versions, and dated
+Debian snapshot. The bundle contract test rejects drift between that lock, the
+RunValidation Task, the expected bundle, and the Dockerfile.
+
 The wheelhouse includes CPython 3.12 artifacts for the Linux validation
 container and Windows local contract proof. Refresh it only from
 `requirements-dev.lock` plus the explicitly pinned `setuptools` and `wheel`

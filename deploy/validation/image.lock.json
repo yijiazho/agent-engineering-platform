@@ -2,5 +2,10 @@
   "image": "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73",
   "pythonVersion": "3.12",
   "requiredExecutables": ["python", "git"],
-  "baseImage": "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de"
+  "baseImage": "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+  "aptSnapshot": "http://snapshot.debian.org/archive/debian/20250901T000000Z",
+  "packages": {
+    "git": "1:2.47.3-0+deb13u1",
+    "ca-certificates": "20250419"
+  }
 }

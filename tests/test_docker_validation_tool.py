@@ -468,11 +468,29 @@ def test_missing_declared_image_executable_is_configuration_failure() -> None:
         },
     )
 
-    result = invoke(DockerCliExecutor(process, FakeLogStore()))
+    logs = FakeLogStore()
+    result = invoke(DockerCliExecutor(process, logs))
 
     assert result.status is ToolResultStatus.FAILED
     assert result.failure_class is ToolFailureClass.CONFIGURATION
     assert "prerequisite 'git' is unavailable" in result.failure_message
+    assert result.output["readiness"]["status"] == "FAILED"
+    assert [dict(item) for item in result.output["readiness"]["executables"]] == [
+        {
+            "argv": ("python", "--version"),
+            "versionPattern": "^Python 3\\.12\\.",
+            "output": "Python 3.12.9",
+            "logsRef": "sha256:" + f"{1:064x}",
+        },
+        {
+            "argv": ("git", "--version"),
+            "versionPattern": "^git version 2\\.",
+            "output": "git: not found",
+            "logsRef": "sha256:" + f"{2:064x}",
+        },
+    ]
+    assert result.logs_ref == "sha256:" + f"{2:064x}"
+    assert logs.contents[-1] == "readiness ['git', '--version']:\ngit: not found"
     assert [call[0][0:2] for call in process.calls] == [
         ("docker", "create"), ("docker", "start"), ("docker", "rm")
     ]

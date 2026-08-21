@@ -115,7 +115,7 @@ DOCKER_VALIDATION_OUTPUT_SCHEMA: Mapping[str, Any] = {
             "type": "object", "additionalProperties": False,
             "required": ["status", "executables"],
             "properties": {
-                "status": {"enum": ["PASS", "INCOMPLETE"]},
+                "status": {"enum": ["PASS", "INCOMPLETE", "FAILED"]},
                 "executables": {"type": "array", "minItems": 0,
                     "items": {"type": "object", "additionalProperties": False,
                         "required": ["argv", "versionPattern", "output", "logsRef"],
@@ -588,6 +588,21 @@ class DockerImageReadinessError(ToolAdapterError):
 
     failure_class = ToolFailureClass.CONFIGURATION
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        readiness: Sequence[Mapping[str, Any]] = (),
+        logs_ref: str | None = None,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.readiness = tuple(dict(item) for item in readiness)
+        self.logs_ref = logs_ref
+        self.started_at = started_at
+        self.completed_at = completed_at
+
 
 class DockerExecution(ABC):
     """Injectable Docker lifecycle controlled by the shared Tool Runtime."""
@@ -804,13 +819,22 @@ class _DockerCliExecution(DockerExecution):
                 return self._timeout_result(evidence, combined, started_at, readiness)
             output = (result.stdout + result.stderr).strip()[:1024]
             logs_ref = self._logs.write(f"readiness {list(argv)!r}:\n{output}")
+            probe = {
+                "argv": list(argv),
+                "versionPattern": version_pattern,
+                "output": output,
+                "logsRef": logs_ref,
+            }
             if result.exit_code != 0 or re.search(version_pattern, output) is None:
                 reason = "is unavailable" if result.exit_code != 0 else "reported an incompatible version"
                 raise DockerImageReadinessError(
-                    f"validation image prerequisite {argv[0]!r} {reason}"
+                    f"validation image prerequisite {argv[0]!r} {reason}",
+                    readiness=(*readiness, probe),
+                    logs_ref=logs_ref,
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 )
-            readiness.append({"argv": list(argv), "versionPattern": version_pattern,
-                              "output": output, "logsRef": logs_ref})
+            readiness.append(probe)
         for command in self._configuration.commands:
             remaining_ms = max(0, round((deadline - self._clock()) * 1000))
             if remaining_ms < 1:
@@ -961,11 +985,19 @@ class _DockerToolExecution(ToolExecution):
             timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
             return ToolResult(
                 status=ToolResultStatus.FAILED,
-                output=None,
-                logs_ref=None,
+                output={
+                    "image": self._configuration.image,
+                    "workspaceMount": self._configuration.workspace_mount.as_record(),
+                    "readiness": {
+                        "status": "FAILED",
+                        "executables": list(error.readiness),
+                    },
+                    "commands": [],
+                },
+                logs_ref=error.logs_ref,
                 metrics=ToolMetrics(duration_ms=0),
-                started_at=timestamp,
-                completed_at=timestamp,
+                started_at=error.started_at or timestamp,
+                completed_at=error.completed_at or timestamp,
                 failure_class=ToolFailureClass.CONFIGURATION,
                 failure_message=str(error),
             )

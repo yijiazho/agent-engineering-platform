@@ -225,6 +225,25 @@ def test_knowledge_and_validation_are_repository_bound_and_bounded(
     assert validation["timeoutMs"] == 600000
 
 
+def test_validation_image_lock_matches_the_consumed_resource_and_build_source(
+    resources: ResourceCollection,
+) -> None:
+    validation_root = ROOT / "deploy" / "validation"
+    image_lock = json.loads((validation_root / "image.lock.json").read_text(encoding="utf-8"))
+    dockerfile = (validation_root / "Dockerfile").read_text(encoding="utf-8")
+    validation = resources.get(ResourceRef("Task", "run-validation", "1.1.0")).data[
+        "spec"
+    ]["validation"]
+
+    assert validation["image"] == image_lock["image"] == EXPECTED["validation"]["image"]
+    assert image_lock["baseImage"] == EXPECTED["validation"]["baseImage"]
+    assert image_lock["aptSnapshot"] == EXPECTED["validation"]["aptSnapshot"]
+    assert f"FROM {image_lock['baseImage']}" in dockerfile
+    assert image_lock["aptSnapshot"] in dockerfile
+    for package, version in image_lock["packages"].items():
+        assert f"{package}={version}" in dockerfile
+
+
 def test_offline_wheelhouse_exactly_matches_hash_locked_artifacts() -> None:
     validation_root = ROOT / "deploy" / "validation"
     lock_text = (validation_root / "offline-requirements.txt").read_text(
