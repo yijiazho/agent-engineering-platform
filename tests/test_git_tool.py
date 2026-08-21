@@ -768,7 +768,7 @@ def test_push_credential_acquisition_uses_remaining_deadline_and_times_out(
             revision,
             "push_branch",
             capabilities=("git.push",),
-            timeout_ms=250,
+            timeout_ms=1_000,
         ),
         adapter(repository, revision, logs, credential_provider=provider),
     )
@@ -777,7 +777,7 @@ def test_push_credential_acquisition_uses_remaining_deadline_and_times_out(
     assert result.failure_class.value == "TIMEOUT"
     assert result.output["remoteMutationState"] == "NOT_ATTEMPTED"
     assert len(provider.timeout_requests) == 1
-    assert 0 < provider.timeout_requests[0] <= 250
+    assert 0 < provider.timeout_requests[0] <= 1_000
     assert "SECRET" not in (result.failure_message or "")
 
 

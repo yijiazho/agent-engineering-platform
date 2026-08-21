@@ -1018,12 +1018,12 @@ class _DockerToolExecution(ToolExecution):
                 "Docker executor command evidence does not match requested commands"
             )
         readiness = tuple(getattr(outcome, "readiness", ()))
-        if not timed_out:
-            try:
-                _validate_readiness_evidence(
-                    readiness, self._configuration.required_executables
-                )
-            except DockerImageReadinessError as error:
+        try:
+            _validate_readiness_evidence(
+                readiness, self._configuration.required_executables
+            )
+        except DockerImageReadinessError as error:
+            if not timed_out:
                 return ToolResult(
                     status=ToolResultStatus.FAILED,
                     output=None,
@@ -1036,6 +1036,9 @@ class _DockerToolExecution(ToolExecution):
                     failure_class=ToolFailureClass.CONFIGURATION,
                     failure_message=str(error),
                 )
+            readiness_status = "INCOMPLETE"
+        else:
+            readiness_status = "PASS"
         command_records = [command.as_record() for command in outcome.commands]
         duration_ms = sum(command.duration_ms for command in outcome.commands)
         return ToolResult(
@@ -1050,7 +1053,7 @@ class _DockerToolExecution(ToolExecution):
                 "image": self._configuration.image,
                 "workspaceMount": self._configuration.workspace_mount.as_record(),
                 "readiness": {
-                    "status": "INCOMPLETE" if timed_out else "PASS",
+                    "status": readiness_status,
                     "executables": list(readiness),
                 },
                 "commands": command_records,

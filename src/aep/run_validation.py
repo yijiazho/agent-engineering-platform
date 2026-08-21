@@ -117,7 +117,7 @@ class RunValidationTaskHandler:
             if result.failure_class in {
                 ToolFailureClass.CONFIGURATION,
                 ToolFailureClass.STARTUP,
-            }:
+            } or _readiness_is_incomplete(result):
                 return _tool_failure(result)
 
             build_id = self._runtime_id(
@@ -564,6 +564,13 @@ def _evaluation_summary(result: JsonMapping) -> dict[str, Any]:
         "outcome": result["outcome"],
         "evidence": deepcopy(dict(result["evidence"])),
     }
+
+
+def _readiness_is_incomplete(result: ToolResult) -> bool:
+    """Identify a sandbox timeout before any candidate command was eligible."""
+
+    readiness = result.output.get("readiness") if isinstance(result.output, Mapping) else None
+    return isinstance(readiness, Mapping) and readiness.get("status") == "INCOMPLETE"
 
 
 def _tool_failure(result: ToolResult) -> TaskExecutionResult:

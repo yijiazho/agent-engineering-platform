@@ -254,7 +254,9 @@ which includes CPython 3.12, Git, and CA certificates, and runs the repository's
 `deploy/validation/offline_bootstrap.py`. Before build/test execution, the
 Docker boundary checks the declared Python and Git versions inside the
 network-disabled sandbox; image readiness failures are configuration evidence,
-not candidate test failures. The bootstrap installs the exact
+not candidate test failures. A timeout after all probes pass preserves `PASS`
+readiness and is evaluated as a candidate-command timeout; incomplete probe
+evidence suppresses build/test evaluations. The bootstrap installs the exact
 hash-locked wheels under `deploy/validation/wheelhouse/` with `--no-index`,
 installs the mounted project without dependency resolution or build isolation,
 and compiles `src/` and `tests/`. The second configured command runs

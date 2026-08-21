@@ -282,7 +282,7 @@ def test_concrete_cli_executor_timeout_is_stopped_killed_and_removed() -> None:
     result = invoke(DockerCliExecutor(process, FakeLogStore()))
 
     assert result.status is ToolResultStatus.TIMED_OUT
-    assert result.output["readiness"]["status"] == "INCOMPLETE"
+    assert result.output["readiness"]["status"] == "PASS"
     assert len(result.output["readiness"]["executables"]) == 2
     name = process.calls[0][0][3]
     assert process.calls[3][0] == ("docker", "stop", name)
@@ -340,7 +340,7 @@ def test_later_command_timeout_preserves_completed_evidence_and_logs() -> None:
 
     assert result.status is ToolResultStatus.TIMED_OUT
     assert result.failure_class is ToolFailureClass.TIMEOUT
-    assert result.output["readiness"]["status"] == "INCOMPLETE"
+    assert result.output["readiness"]["status"] == "PASS"
     assert len(result.output["readiness"]["executables"]) == 2
     assert len(result.output["commands"]) == 1
     assert result.output["commands"][0]["argv"] == ("python", "-m", "build")
