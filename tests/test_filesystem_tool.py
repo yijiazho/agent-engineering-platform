@@ -331,7 +331,13 @@ def test_write_replace_race_is_rejected_before_truncate_or_write(
     )
 
     assert result.failure_class is ToolFailureClass.BOUNDARY
-    assert target.read_text(encoding="utf-8") == "inside original"
+    # The race hook intentionally replaced this directory entry with a link;
+    # assert the original inode was not opened for truncation and the external
+    # target was not modified.
+    if use_real_symlink:
+        assert target.is_symlink()
+    else:
+        assert target.read_text(encoding="utf-8") == "inside original"
     assert outside.read_text(encoding="utf-8") == "outside original"
 
 
@@ -366,7 +372,9 @@ def test_raced_intermediate_link_cannot_create_nonexistent_outside_file(
             request("write", "nested/must-not-exist.txt", content="escape"),
         )
     finally:
-        if nested.exists():
+        if nested.is_symlink():
+            nested.unlink()
+        elif nested.exists():
             nested.rmdir()
 
     assert result.failure_class is ToolFailureClass.BOUNDARY

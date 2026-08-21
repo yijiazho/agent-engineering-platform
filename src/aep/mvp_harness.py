@@ -160,6 +160,15 @@ class _FakeDockerExecutor(DockerExecutor):
                 logs_ref="sha256:" + "d" * 64,
                 started_at=TIMESTAMP,
                 completed_at=TIMESTAMP,
+                readiness=tuple(
+                    {
+                        "argv": list(argv),
+                        "versionPattern": pattern,
+                        "output": "Python 3.12.9" if argv[0] == "python" else "git version 2.43.0",
+                        "logsRef": "sha256:" + str(index + 3) * 64,
+                    }
+                    for index, (argv, pattern) in enumerate(configuration.required_executables)
+                ),
             )
         )
 

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 import json
 from pathlib import Path
+import re
 import subprocess
 from time import monotonic, sleep
 from typing import Any
@@ -39,9 +40,23 @@ INVOCATION_REPLAY_GRACE_MS = 1_000
 DOCKER_VALIDATION_INPUT_SCHEMA: Mapping[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["image", "commands", "workspaceMount", "resources"],
+    "required": [
+        "image", "requiredExecutables", "commands", "workspaceMount", "resources"
+    ],
     "properties": {
         "image": {"type": "string", "pattern": IMAGE_DIGEST_PATTERN},
+        "requiredExecutables": {
+            "type": "array", "minItems": 1, "uniqueItems": True,
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["argv", "versionPattern"],
+                "properties": {
+                    "argv": {"type": "array", "minItems": 1,
+                             "items": {"type": "string", "minLength": 1}},
+                    "versionPattern": {"type": "string", "minLength": 1, "maxLength": 200},
+                },
+            },
+        },
         "commands": {
             "type": "array",
             "minItems": 1,
@@ -83,7 +98,7 @@ DOCKER_VALIDATION_INPUT_SCHEMA: Mapping[str, Any] = {
 DOCKER_VALIDATION_OUTPUT_SCHEMA: Mapping[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["image", "workspaceMount", "commands"],
+    "required": ["image", "workspaceMount", "readiness", "commands"],
     "properties": {
         "image": {"type": "string", "minLength": 1},
         "workspaceMount": {
@@ -94,6 +109,22 @@ DOCKER_VALIDATION_OUTPUT_SCHEMA: Mapping[str, Any] = {
                 "hostPath": {"type": "string", "minLength": 1},
                 "containerPath": {"type": "string", "minLength": 1},
                 "readOnly": {"type": "boolean"},
+            },
+        },
+        "readiness": {
+            "type": "object", "additionalProperties": False,
+            "required": ["status", "executables"],
+            "properties": {
+                "status": {"enum": ["PASS", "INCOMPLETE", "FAILED"]},
+                "executables": {"type": "array", "minItems": 0,
+                    "items": {"type": "object", "additionalProperties": False,
+                        "required": ["argv", "versionPattern", "output", "logsRef"],
+                        "properties": {
+                            "argv": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                            "versionPattern": {"type": "string", "minLength": 1},
+                            "output": {"type": "string", "maxLength": 1024},
+                            "logsRef": {"type": "string", "minLength": 1},
+                        }}},
             },
         },
         "commands": {
@@ -390,6 +421,7 @@ def _runtime_failure_class(value: ToolFailureClass) -> str:
         ToolFailureClass.BOUNDARY: "POLICY",
         ToolFailureClass.NOT_FOUND: "PERMANENT",
         ToolFailureClass.IO: "RECOVERABLE",
+        ToolFailureClass.CONFIGURATION: "CONFIGURATION",
     }[value]
 
 
@@ -435,6 +467,7 @@ class DockerResourceSettings:
 @dataclass(frozen=True)
 class DockerRunConfiguration:
     image: str
+    required_executables: tuple[tuple[tuple[str, ...], str], ...]
     commands: tuple[tuple[str, ...], ...]
     workspace_mount: DockerWorkspaceMount
     timeout_ms: int
@@ -442,8 +475,18 @@ class DockerRunConfiguration:
 
     def __post_init__(self) -> None:
         commands = tuple(tuple(command) for command in self.commands)
-        if not self.image or not commands:
-            raise ValueError("Docker image and commands must not be empty")
+        executables = tuple((tuple(argv), pattern) for argv, pattern in self.required_executables)
+        if not self.image or not commands or not executables:
+            raise ValueError("Docker image, readiness commands, and commands must not be empty")
+        if any(not argv or not pattern for argv, pattern in executables):
+            raise ValueError("Docker readiness command arguments and patterns must not be empty")
+        try:
+            for _argv, pattern in executables:
+                re.compile(pattern)
+        except re.error as error:
+            raise DockerImageReadinessError(
+                "Docker readiness versionPattern is not a valid regular expression"
+            ) from error
         if any(
             not command or any(not value for value in command)
             for command in commands
@@ -452,6 +495,7 @@ class DockerRunConfiguration:
         if self.timeout_ms < 1:
             raise ValueError("Docker timeout must be positive")
         object.__setattr__(self, "commands", commands)
+        object.__setattr__(self, "required_executables", executables)
 
 
 @dataclass(frozen=True)
@@ -494,6 +538,7 @@ class DockerExecutionResult:
     logs_ref: str
     started_at: str
     completed_at: str
+    readiness: tuple[Mapping[str, Any], ...]
 
     def __post_init__(self) -> None:
         commands = tuple(self.commands)
@@ -505,7 +550,11 @@ class DockerExecutionResult:
             raise ValueError("execution logs_ref must not be empty")
         if not self.started_at or not self.completed_at:
             raise ValueError("execution result must contain timing evidence")
+        readiness = tuple(dict(item) for item in self.readiness)
+        if not readiness:
+            raise ValueError("execution result must contain readiness evidence")
         object.__setattr__(self, "commands", commands)
+        object.__setattr__(self, "readiness", readiness)
 
 
 @dataclass(frozen=True)
@@ -516,6 +565,7 @@ class DockerTimeoutResult:
     logs_ref: str
     started_at: str
     completed_at: str
+    readiness: tuple[Mapping[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         commands = tuple(self.commands)
@@ -524,12 +574,34 @@ class DockerTimeoutResult:
         if not self.logs_ref or not self.started_at or not self.completed_at:
             raise ValueError("timeout result must contain logs and timing evidence")
         object.__setattr__(self, "commands", commands)
+        object.__setattr__(self, "readiness", tuple(dict(item) for item in self.readiness))
 
 
 class DockerStartupError(ToolAdapterError):
     """Raised when the Docker sandbox cannot be provisioned."""
 
     failure_class = ToolFailureClass.STARTUP
+
+
+class DockerImageReadinessError(ToolAdapterError):
+    """The declared immutable image cannot satisfy validation prerequisites."""
+
+    failure_class = ToolFailureClass.CONFIGURATION
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        readiness: Sequence[Mapping[str, Any]] = (),
+        logs_ref: str | None = None,
+        started_at: str | None = None,
+        completed_at: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.readiness = tuple(dict(item) for item in readiness)
+        self.logs_ref = logs_ref
+        self.started_at = started_at
+        self.completed_at = completed_at
 
 
 class DockerExecution(ABC):
@@ -733,11 +805,41 @@ class _DockerCliExecution(DockerExecution):
         deadline = min(self._deadline, self._clock() + timeout_ms / 1000)
         evidence: list[DockerCommandResult] = []
         combined: list[str] = []
+        readiness: list[dict[str, Any]] = []
+        for argv, version_pattern in self._configuration.required_executables:
+            remaining_ms = max(0, round((deadline - self._clock()) * 1000))
+            if remaining_ms < 1:
+                self._timed_out = True
+                return self._timeout_result(evidence, combined, started_at, readiness)
+            result = self._process.run(
+                ["docker", "exec", self._name, *argv], remaining_ms
+            )
+            if result is None:
+                self._timed_out = True
+                return self._timeout_result(evidence, combined, started_at, readiness)
+            output = (result.stdout + result.stderr).strip()[:1024]
+            logs_ref = self._logs.write(f"readiness {list(argv)!r}:\n{output}")
+            probe = {
+                "argv": list(argv),
+                "versionPattern": version_pattern,
+                "output": output,
+                "logsRef": logs_ref,
+            }
+            if result.exit_code != 0 or re.search(version_pattern, output) is None:
+                reason = "is unavailable" if result.exit_code != 0 else "reported an incompatible version"
+                raise DockerImageReadinessError(
+                    f"validation image prerequisite {argv[0]!r} {reason}",
+                    readiness=(*readiness, probe),
+                    logs_ref=logs_ref,
+                    started_at=started_at.isoformat().replace("+00:00", "Z"),
+                    completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                )
+            readiness.append(probe)
         for command in self._configuration.commands:
             remaining_ms = max(0, round((deadline - self._clock()) * 1000))
             if remaining_ms < 1:
                 self._timed_out = True
-                return self._timeout_result(evidence, combined, started_at)
+                return self._timeout_result(evidence, combined, started_at, readiness)
             result = self._process.run(
                 [
                     "docker", "exec", "--workdir", DOCKER_WORKSPACE_DESTINATION,
@@ -747,7 +849,7 @@ class _DockerCliExecution(DockerExecution):
             )
             if result is None:
                 self._timed_out = True
-                return self._timeout_result(evidence, combined, started_at)
+                return self._timeout_result(evidence, combined, started_at, readiness)
             content = f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
             combined.append(content)
             evidence.append(
@@ -767,6 +869,7 @@ class _DockerCliExecution(DockerExecution):
             logs_ref=self._logs.write("\n".join(combined)),
             started_at=started_at.isoformat().replace("+00:00", "Z"),
             completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            readiness=tuple(readiness),
         )
 
     def _timeout_result(
@@ -774,12 +877,14 @@ class _DockerCliExecution(DockerExecution):
         evidence: list[DockerCommandResult],
         combined: list[str],
         started_at: datetime,
+        readiness: Sequence[Mapping[str, Any]],
     ) -> DockerTimeoutResult:
         return DockerTimeoutResult(
             commands=tuple(evidence),
             logs_ref=self._logs.write("\n".join(combined)),
             started_at=started_at.isoformat().replace("+00:00", "Z"),
             completed_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            readiness=tuple(readiness),
         )
 
     def terminate(self) -> None:
@@ -831,6 +936,10 @@ class DockerValidationAdapter(ToolAdapter):
         resources = value["resources"]
         configuration = DockerRunConfiguration(
             image=value["image"],
+            required_executables=tuple(
+                (tuple(item["argv"]), item["versionPattern"])
+                for item in value["requiredExecutables"]
+            ),
             commands=tuple(tuple(command["argv"]) for command in value["commands"]),
             workspace_mount=DockerWorkspaceMount(
                 host_path=str(host_path),
@@ -870,7 +979,28 @@ class _DockerToolExecution(ToolExecution):
         self._execution = execution
 
     def wait(self, timeout_ms: int) -> ToolResult | None:
-        outcome = self._execution.wait(timeout_ms)
+        try:
+            outcome = self._execution.wait(timeout_ms)
+        except DockerImageReadinessError as error:
+            timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            return ToolResult(
+                status=ToolResultStatus.FAILED,
+                output={
+                    "image": self._configuration.image,
+                    "workspaceMount": self._configuration.workspace_mount.as_record(),
+                    "readiness": {
+                        "status": "FAILED",
+                        "executables": list(error.readiness),
+                    },
+                    "commands": [],
+                },
+                logs_ref=error.logs_ref,
+                metrics=ToolMetrics(duration_ms=0),
+                started_at=error.started_at or timestamp,
+                completed_at=error.completed_at or timestamp,
+                failure_class=ToolFailureClass.CONFIGURATION,
+                failure_message=str(error),
+            )
         if outcome is None:
             return None
         timed_out = isinstance(outcome, DockerTimeoutResult)
@@ -887,6 +1017,28 @@ class _DockerToolExecution(ToolExecution):
             raise ValueError(
                 "Docker executor command evidence does not match requested commands"
             )
+        readiness = tuple(getattr(outcome, "readiness", ()))
+        try:
+            _validate_readiness_evidence(
+                readiness, self._configuration.required_executables
+            )
+        except DockerImageReadinessError as error:
+            if not timed_out:
+                return ToolResult(
+                    status=ToolResultStatus.FAILED,
+                    output=None,
+                    logs_ref=outcome.logs_ref,
+                    metrics=ToolMetrics(
+                        duration_ms=sum(item.duration_ms for item in outcome.commands)
+                    ),
+                    started_at=outcome.started_at,
+                    completed_at=outcome.completed_at,
+                    failure_class=ToolFailureClass.CONFIGURATION,
+                    failure_message=str(error),
+                )
+            readiness_status = "INCOMPLETE"
+        else:
+            readiness_status = "PASS"
         command_records = [command.as_record() for command in outcome.commands]
         duration_ms = sum(command.duration_ms for command in outcome.commands)
         return ToolResult(
@@ -900,6 +1052,10 @@ class _DockerToolExecution(ToolExecution):
             output={
                 "image": self._configuration.image,
                 "workspaceMount": self._configuration.workspace_mount.as_record(),
+                "readiness": {
+                    "status": readiness_status,
+                    "executables": list(readiness),
+                },
                 "commands": command_records,
             },
             logs_ref=outcome.logs_ref,
@@ -931,3 +1087,31 @@ class _DockerToolExecution(ToolExecution):
 
     def cleanup(self) -> None:
         self._execution.cleanup()
+
+
+def _validate_readiness_evidence(
+    evidence: Sequence[Mapping[str, Any]],
+    expected: Sequence[tuple[tuple[str, ...], str]],
+) -> None:
+    """Fail closed when an executor cannot prove the configured image checks."""
+
+    if len(evidence) != len(expected):
+        raise DockerImageReadinessError(
+            "Docker executor readiness evidence does not match configured prerequisites"
+        )
+    for item, (argv, pattern) in zip(evidence, expected, strict=True):
+        if not isinstance(item, Mapping):
+            raise DockerImageReadinessError("Docker executor readiness evidence is invalid")
+        output = item.get("output")
+        logs_ref = item.get("logsRef")
+        if (
+            tuple(item.get("argv", ())) != argv
+            or item.get("versionPattern") != pattern
+            or not isinstance(output, str)
+            or re.search(pattern, output) is None
+            or not isinstance(logs_ref, str)
+            or not logs_ref
+        ):
+            raise DockerImageReadinessError(
+                "Docker executor readiness evidence does not satisfy configured prerequisites"
+            )

@@ -131,21 +131,33 @@ def command(argv: tuple[str, ...], exit_code: int = 0) -> DockerCommandResult:
     )
 
 
+def readiness_evidence() -> tuple[dict[str, object], ...]:
+    return (
+        {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\.", "output": "Python 3.12.9", "logsRef": "sha256:" + "a" * 64},
+        {"argv": ["git", "--version"], "versionPattern": "^git version 2\\.", "output": "git version 2.43.0", "logsRef": "sha256:" + "b" * 64},
+    )
+
+
 def completed(*commands: DockerCommandResult) -> DockerExecutionResult:
     return DockerExecutionResult(
         commands=commands,
         logs_ref="sha256:" + "d" * 64,
         started_at=TIMESTAMP,
         completed_at=TIMESTAMP,
+        readiness=readiness_evidence(),
     )
 
 
-def timed_out(*commands: DockerCommandResult) -> DockerTimeoutResult:
+def timed_out(
+    *commands: DockerCommandResult,
+    readiness: tuple[dict[str, object], ...] | None = None,
+) -> DockerTimeoutResult:
     return DockerTimeoutResult(
         commands=commands,
         logs_ref="sha256:" + "e" * 64,
         started_at=TIMESTAMP,
         completed_at=TIMESTAMP,
+        readiness=readiness_evidence() if readiness is None else readiness,
     )
 
 
@@ -253,6 +265,44 @@ def test_denial_is_policy_failure_with_complete_evidence(tmp_path: Path) -> None
     assert executor.configurations == []
     assert len(store.get(TASK_EXECUTION_ID)["evaluationResultIds"]) == 2
     assert artifacts.list_by_task_execution(TASK_EXECUTION_ID)
+
+
+def test_incomplete_readiness_skips_candidate_evaluations(tmp_path: Path) -> None:
+    store, handler, task, artifacts, _executor = setup_handler(
+        tmp_path,
+        timed_out(readiness=()),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.failure_class is FailureClass.RECOVERABLE
+    execution = store.get(TASK_EXECUTION_ID)
+    assert len(execution["toolInvocationIds"]) == 1
+    assert "evaluationResultIds" not in execution
+    assert artifacts.list_by_task_execution(TASK_EXECUTION_ID) == ()
+
+
+def test_startup_failure_skips_candidate_evaluations(tmp_path: Path) -> None:
+    store, handler, task, artifacts, executor = setup_handler(
+        tmp_path,
+        completed(
+            command(("python", "-m", "build")),
+            command(("python", "-m", "pytest")),
+        ),
+    )
+
+    def unavailable(_configuration):
+        raise RuntimeError("image unavailable")
+
+    executor.start = unavailable
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.failure_class is FailureClass.RECOVERABLE
+    execution = store.get(TASK_EXECUTION_ID)
+    invocation = store.get(execution["toolInvocationIds"][0])
+    assert invocation["failureClass"] == "STARTUP"
+    assert "evaluationResultIds" not in execution
+    assert artifacts.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
 def test_malformed_executor_evidence_is_classified_and_reported(tmp_path: Path) -> None:
@@ -515,6 +565,10 @@ def resource_collection(*, timeout_ms: int = 30_000) -> tuple[ResourceCollection
             "validation": {
                 "toolRef": TOOL_REF,
                 "image": "python@sha256:" + "a" * 64,
+                "requiredExecutables": [
+                    {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\."},
+                    {"argv": ["git", "--version"], "versionPattern": "^git version 2\\."},
+                ],
                 "commands": [
                     {"type": "build", "argv": ["python", "-m", "build"]},
                     {"type": "test", "argv": ["python", "-m", "pytest"]},

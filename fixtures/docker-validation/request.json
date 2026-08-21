@@ -2,10 +2,14 @@
   "toolRef": {
     "kind": "Tool",
     "name": "docker-validation",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "input": {
-    "image": "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "image": "ghcr.io/example/aep-validation@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requiredExecutables": [
+      {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\."},
+      {"argv": ["git", "--version"], "versionPattern": "^git version 2\\."}
+    ],
     "commands": [
       {
         "argv": [

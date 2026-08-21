@@ -1,18 +1,22 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
-  "metadata": {"name": "run-validation", "version": "1.0.0"},
+  "metadata": {"name": "run-validation", "version": "1.1.0"},
   "spec": {
     "objective": "Compile and run the locked repository test suite in an isolated, network-disabled container.",
     "outputs": {"type": "object"},
     "requiredContext": ["prior-artifacts", "policies"],
     "evaluations": [
-      {"kind": "Evaluation", "name": "repository-build", "version": "1.0.0"},
-      {"kind": "Evaluation", "name": "repository-tests", "version": "1.0.0"}
+      {"kind": "Evaluation", "name": "repository-build", "version": "1.1.0"},
+      {"kind": "Evaluation", "name": "repository-tests", "version": "1.1.0"}
     ],
     "policies": [{"kind": "Policy", "name": "validation-capabilities", "version": "1.0.0"}],
     "validation": {
-      "toolRef": {"kind": "Tool", "name": "docker-validation", "version": "1.0.0"},
-      "image": "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+      "toolRef": {"kind": "Tool", "name": "docker-validation", "version": "1.1.0"},
+      "image": "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73",
+      "requiredExecutables": [
+        {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\."},
+        {"argv": ["git", "--version"], "versionPattern": "^git version 2\\."}
+      ],
       "commands": [
         {"type": "build", "argv": ["python", "/workspace/deploy/validation/offline_bootstrap.py", "--workspace", "/workspace"]},
         {"type": "test", "argv": ["python", "-m", "pytest", "/workspace/tests"]}

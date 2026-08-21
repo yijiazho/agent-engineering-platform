@@ -199,7 +199,7 @@ def test_knowledge_and_validation_are_repository_bound_and_bounded(
         "tests/",
     } <= paths
 
-    validation = resources.get(ResourceRef("Task", "run-validation", "1.0.0")).data[
+    validation = resources.get(ResourceRef("Task", "run-validation", "1.1.0")).data[
         "spec"
     ]["validation"]
     assert validation["image"].count("@sha256:") == 1
@@ -216,13 +216,32 @@ def test_knowledge_and_validation_are_repository_bound_and_bounded(
         "containerPath": "/workspace",
         "readOnly": False,
     }
-    docker = resources.get(ResourceRef("Tool", "docker-validation", "1.0.0"))
+    docker = resources.get(ResourceRef("Tool", "docker-validation", "1.1.0"))
     assert "network:none" in docker.data["spec"]["permissions"]
     assert validation["resources"] == {
         "cpuLimit": 2,
         "memoryBytes": 1073741824,
     }
     assert validation["timeoutMs"] == 600000
+
+
+def test_validation_image_lock_matches_the_consumed_resource_and_build_source(
+    resources: ResourceCollection,
+) -> None:
+    validation_root = ROOT / "deploy" / "validation"
+    image_lock = json.loads((validation_root / "image.lock.json").read_text(encoding="utf-8"))
+    dockerfile = (validation_root / "Dockerfile").read_text(encoding="utf-8")
+    validation = resources.get(ResourceRef("Task", "run-validation", "1.1.0")).data[
+        "spec"
+    ]["validation"]
+
+    assert validation["image"] == image_lock["image"] == EXPECTED["validation"]["image"]
+    assert image_lock["baseImage"] == EXPECTED["validation"]["baseImage"]
+    assert image_lock["aptSnapshot"] == EXPECTED["validation"]["aptSnapshot"]
+    assert f"FROM {image_lock['baseImage']}" in dockerfile
+    assert image_lock["aptSnapshot"] in dockerfile
+    for package, version in image_lock["packages"].items():
+        assert f"{package}={version}" in dockerfile
 
 
 def test_offline_wheelhouse_exactly_matches_hash_locked_artifacts() -> None:
@@ -283,7 +302,7 @@ def test_locked_project_and_dependencies_are_installed():
         if os.name == "nt"
         else environment_root / "bin" / "python"
     )
-    validation = resources.get(ResourceRef("Task", "run-validation", "1.0.0")).data[
+    validation = resources.get(ResourceRef("Task", "run-validation", "1.1.0")).data[
         "spec"
     ]["validation"]
     command_environment = {

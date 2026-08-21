@@ -28,7 +28,8 @@
         "name": "docker-validation",
         "version": "1.0.0"
       },
-      "image": "python@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "image": "ghcr.io/example/aep-validation@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "requiredExecutables": [{"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\."}, {"argv": ["git", "--version"], "versionPattern": "^git version 2\\."}],
       "commands": [
         {
           "type": "build",

@@ -174,7 +174,7 @@ request/token reservations, uncapped numeric `Retry-After`, bounded
 exponential backoff with injected jitter/time, normalized actionable 429
 classification, safe persisted evidence and lifecycle events, and scheduler
 `retryNotBefore` coordination. The self-hosting Resource chain is versioned
-through `default-reasoning:1.1.0` and `issue-to-pr:1.1.0` with the 32,000-token
+through `default-reasoning:1.1.0` and `issue-to-pr:1.2.0` with the 32,000-token
 output allowance retained.
 Safe coordinator deadlines are durably checkpointed and restored across worker
 restarts, and delayed admissions revalidate provider-wide throttle changes
