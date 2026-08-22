@@ -83,6 +83,21 @@ Use the persisted MTP-10 evidence as the reference shape:
 The implementation loop must not require another live GitHub issue until the
 exact candidate validation image passes the credential-free regression gates.
 
+The first corrected-image retry proved that image availability and executable
+readiness are necessary but not sufficient. WorkflowExecution
+`workflowexecution-3a9fa81a-5da9-5aae-9da1-c9070af40749`, bound to repository
+revision `3435ec6fdc8c1028327b9f0cae7997c94700a635`, used validation image
+`sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a`.
+Image readiness passed and the offline build command exited `0`, but the full
+test command exited `1` because
+`test_dogfood_accepts_clean_windows_crlf_resource_checkout` relied on
+`core.autocrlf=true` producing CRLF bytes on the Linux validation platform.
+The host-side checks did not expose the failure before the image was consumed,
+but it failed in the environment defined by `deploy/validation/Dockerfile`.
+This escaped the pre-publication checks because no required, checked-in gate
+built that Dockerfile and ran the complete production command sequence inside
+its resulting image.
+
 ## Deliverable
 
 Implement a dedicated, reproducible validation image and validation-readiness
@@ -112,6 +127,22 @@ contract that:
   execution worktree, then fixes or isolates assumptions that incorrectly
   depend on the host platform, ambient environment, or a clean control-plane
   checkout;
+* provides one checked-in, credential-free verification entrypoint under
+  `deploy/validation/` that builds `deploy/validation/Dockerfile` and runs the
+  exact RunValidation readiness probes, offline bootstrap, and complete test
+  command with the production workspace mount, working directory, disabled
+  network, resource bounds, and command order;
+* makes that entrypoint the shared local and CI release gate, rather than
+  maintaining a synthetic smoke test or a second command sequence that can
+  drift from the RunValidation Resource;
+* verifies both the image built from the reviewed Dockerfile and the published
+  immutable digest selected for `image.lock.json`; promotion must prove that
+  the digest being recorded is the same image that passed the gate and must
+  rerun the credential-free probes by digest;
+* constructs platform-specific fixtures, including Windows CRLF checkouts,
+  explicitly so their semantics are reproducible inside the Linux validation
+  container and do not depend on the Docker host's operating system or global
+  Git configuration;
 * preserves security tests for symlink races, Git hooks, ambient credentials,
   path confinement, revision binding, and network denial rather than skipping
   them to make validation pass;
@@ -148,6 +179,28 @@ access, deployment authority, or undeclared network dependencies.
 * The exact image completes `deploy/validation/offline_bootstrap.py` using only
   the committed hash-locked wheelhouse. Tests prove that package-index and
   external network access remain unavailable.
+* A documented, checked-in verification entrypoint builds
+  `deploy/validation/Dockerfile` and exits nonzero unless the image readiness
+  probes, `deploy/validation/offline_bootstrap.py`, and
+  `python -m pytest /workspace/tests` all succeed in the resulting Linux image.
+  It uses the same commands and isolation inputs as the versioned
+  RunValidation Resource; tests reject command, image, mount, network, working
+  directory, or resource-limit drift between the entrypoint, Resource, lock,
+  and deterministic fixture.
+* The verification entrypoint runs from a clean baseline checkout and from a
+  separate writable execution checkout containing a small allowed
+  documentation change. It never modifies or mounts the immutable Resource
+  checkout as the candidate workspace.
+* Repository CI invokes the same entrypoint on a Docker-capable Linux worker
+  whenever the validation Dockerfile, lock, bootstrap, dependency inputs,
+  RunValidation Resource, or repository tests change. A failing readiness,
+  build, or test command fails the required gate and prevents the image digest
+  or AEP release from being treated as validated.
+* The image publication procedure promotes the image that passed the
+  Dockerfile gate, resolves its registry manifest digest, reruns the Python and
+  Git probes using that digest with `--network none`, and only then updates
+  `image.lock.json` and the versioned Resource graph. Tests reject a lock that
+  names an unverified or differently built digest.
 * The complete `python -m pytest /workspace/tests` suite passes inside the
   exact pinned image at the recorded clean base revision. A small permitted
   documentation-only change also passes from a dirty execution worktree,
@@ -160,6 +213,11 @@ access, deployment authority, or undeclared network dependencies.
 * Filesystem symlink/race, Git hook and credential isolation, patch safety,
   checkout fencing, and repository revision tests execute in the Linux
   validation sandbox and retain their security guarantees.
+* The Windows CRLF deployment test passes in the Linux validation image because
+  its fixture creates and verifies CRLF worktree content explicitly. The test
+  does not infer Windows checkout behavior from the host platform, ambient Git
+  configuration, or `core.autocrlf` alone, and still proves that a real content
+  change makes the Resource checkout dirty.
 * A successful Docker ToolInvocation records two successful command outcomes,
   build/test EvaluationResults both report `PASS`, and the immutable
   Evaluation report retains image digest, command identity, duration, exit
@@ -186,3 +244,17 @@ access, deployment authority, or undeclared network dependencies.
   runbook, image build files, schemas, Resources, fixtures, this task, and
   `docs/execution-plan.md` describe the same final image, readiness,
   classification, isolation, and operator behavior.
+
+## Implementation State
+
+The dedicated image, immutable digest wiring, offline dependency bootstrap,
+production readiness evidence, Dockerfile-based verification entrypoint, and
+Linux CI/release gate are implemented. The complete suite passes against both
+the source-built image and the promoted published digest in separate clean and
+documentation-only dirty Linux workspaces, and the CRLF fixture is
+host-independent. Promotion records the exact tested artifact identity rather
+than requiring later builds to reproduce build-created metadata. GitHub Actions
+run `32553884007` passed the complete source-built and published-image gate from
+clean Linux checkout `73f3d480aab67005975f369651cc44e734471e56`. The task
+remains In Progress until the operator-controlled MTP-10 rerun records passing
+build and repository-test Evaluations before proceeding to EvaluateAcceptance.

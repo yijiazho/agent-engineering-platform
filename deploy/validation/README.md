@@ -6,12 +6,13 @@ without network access.
 
 `Dockerfile` builds the dedicated validation image from a digest-pinned Python
 base and adds only Git and CA certificates. The published digest in
-`image.lock.json` must match `.ai/tasks/run-validation.yaml`. Before enabling
-ingress, use `docker run --rm --network none <pinned-image> python --version`
-and `git --version`; do not mount host executables or credentials. RunValidation
-repeats those bounded checks in its sandbox before build/test commands. A
-missing executable or version mismatch is configuration evidence, not a failed
-candidate test.
+`image.lock.json` must match `.ai/tasks/run-validation.yaml` and the
+deterministic bundle fixture. The lock also records the image configuration
+digest captured during promotion and every isolation input consumed by
+`verify.py`.
+RunValidation repeats the bounded readiness checks in its sandbox before
+build/test commands. A missing executable or version mismatch is configuration
+evidence, not a failed candidate test.
 
 `offline-requirements.txt` pins every runtime, test, and Python build dependency
 and records the accepted SHA-256 wheel hashes. `wheelhouse/` contains only those
@@ -34,3 +35,68 @@ python -m pytest
 The focused test rejects a missing, additional, or hash-mismatched wheel and
 executes both configured validation commands in a fresh environment with index
 access disabled.
+
+## Required Validation Gate
+
+Run the one checked-in gate from a clean release checkout:
+
+```powershell
+python deploy/validation/verify.py verify
+```
+
+The gate reads the versioned RunValidation Resource, image lock, and
+deterministic fixture. It fails on drift, builds this Dockerfile for
+`linux/amd64` from a temporary context containing only the Dockerfile, and runs
+the declared Python and Git probes without credentials or networking. It runs
+the exact offline bootstrap and complete test command in separate clean and
+bounded documentation-dirty workspaces against both the fresh source build and
+the locked published digest. Every container uses `/workspace`, `--network
+none`, two CPUs, 1 GiB of memory, the declared command order, and the shared
+600-second deadline. The Resource checkout is never mounted as a candidate
+workspace. Release mode rejects a dirty checkout before Docker sees the
+Dockerfile; the explicit development mode is the only exception. After command
+evidence is captured, the container restores permissions only within each
+disposable candidate workspace so a non-root Linux runner can remove files
+created by the root container process.
+
+During development only, include the current tracked and untracked working-tree
+snapshot without claiming release validation:
+
+```powershell
+python deploy/validation/verify.py candidate --include-working-tree
+```
+
+On a clean Docker-capable Linux worker, CI first invokes `candidate` without
+registry credentials. Only after the fresh source image passes does CI obtain a
+repository-scoped, read-only package token and invoke `published
+--verify-workspaces`. Checkout credential persistence is disabled, and the
+Docker build context cannot contain `.git`, the source tree, or runner
+credential files. Registry credentials are never passed to a build or
+validation container and are removed after published-image verification.
+
+## Publish And Promote
+
+Authenticate Docker to the target registry, choose a non-floating candidate
+tag, and let the same entrypoint build and test before it pushes:
+
+```powershell
+python deploy/validation/verify.py promote `
+  --target ghcr.io/yijiazho/agent-engineering-platform-validation:aep-047-next
+```
+
+Promotion exits nonzero unless both source workspaces pass. It pushes that
+tested image, resolves the registry-reported manifest digest, pulls it by
+digest, proves that its image configuration digest equals the tested source
+image, and reruns both readiness probes by digest with networking disabled. It
+prints a small JSON record containing `image` and `verifiedImageId`; it does not
+edit Resources.
+
+In a follow-up reviewed change, copy those two values into
+`image.lock.json`, update the RunValidation Resource and deterministic fixture,
+version every affected immutable Resource reference, and run `verify` again.
+Never record a digest obtained from a separately rebuilt or merely tagged
+image. Before public ingress, the credential-free published-image preflight is:
+
+```powershell
+python deploy/validation/verify.py published
+```

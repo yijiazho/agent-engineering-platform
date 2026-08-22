@@ -247,6 +247,7 @@ review:
 ```powershell
 python -m pytest tests/test_self_hosting_resource_bundle.py
 python -m pytest
+python deploy/validation/verify.py verify
 ```
 
 Validation starts from the separately published immutable validation image,
@@ -266,8 +267,17 @@ and CPU, memory, timeout, and retry limits are explicit.
 
 `deploy/validation/image.lock.json` records the consumed validation-image
 digest, immutable Python base digest, pinned Debian package versions, and dated
-Debian snapshot. The bundle contract test rejects drift between that lock, the
-RunValidation Task, the expected bundle, and the Dockerfile.
+Debian snapshot. It also records the configuration digest captured when the
+published artifact was promoted and the exact production gate inputs. The checked-in verification
+entrypoint rejects drift between that lock, the RunValidation Task, the
+expected bundle, and the Dockerfile; builds the reviewed Dockerfile; and runs
+the complete production command sequence in clean and documentation-only dirty
+Linux workspaces. It independently verifies the promoted image identity and
+runs the same clean/dirty suite plus both network-disabled readiness probes by
+published digest. A fresh rebuild is not required to reproduce Docker's
+build-created configuration metadata.
+See [the validation image runbook](deploy/validation/README.md) for local,
+CI, and promotion commands.
 
 The wheelhouse includes CPython 3.12 artifacts for the Linux validation
 container and Windows local contract proof. Refresh it only from
@@ -535,7 +545,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 46 implementation tasks are complete.
+contracts are established, and 43 of the 47 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -622,9 +632,11 @@ Implemented foundations currently include:
   credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work is operator activation and resumption of the controlled live
-dogfood pilot, including MTP-09/MTP-10 verification of the bounded AnalyzeIssue
-package against the existing authorized issue. See
+The remaining work includes finishing model-rate-limit verification and then
+resuming the controlled live dogfood pilot. AEP-047's automated clean and dirty
+source-built and exact-published-image gates pass locally and on the clean Linux
+CI worker; the task remains in progress until a controlled MTP-10 rerun records
+passing build and repository-test Evaluations. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

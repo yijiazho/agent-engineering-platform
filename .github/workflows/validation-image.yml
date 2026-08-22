@@ -1,0 +1,58 @@
+name: Validation image gate
+
+on:
+  pull_request:
+    paths:
+      - "deploy/validation/**"
+      - ".ai/tasks/run-validation.yaml"
+      - ".ai/tools/docker-validation.yaml"
+      - "fixtures/**"
+      - "schemas/**"
+      - "requirements-dev.lock"
+      - "pyproject.toml"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+      - ".gitattributes"
+      - ".github/workflows/validation-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/validation/**"
+      - ".ai/tasks/run-validation.yaml"
+      - ".ai/tools/docker-validation.yaml"
+      - "fixtures/**"
+      - "schemas/**"
+      - "requirements-dev.lock"
+      - "pyproject.toml"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+      - ".gitattributes"
+      - ".github/workflows/validation-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the reviewed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Build and verify the fresh source image
+        run: python3 deploy/validation/verify.py candidate
+      - name: Authenticate for locked published-image verification
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Verify the locked published image
+        run: python3 deploy/validation/verify.py published --verify-workspaces
+      - name: Remove registry credentials
+        if: always()
+        run: docker logout ghcr.io

@@ -150,9 +150,7 @@ if ($resourcePath.StartsWith($statePath + '\', [StringComparison]::OrdinalIgnore
 if ($statePath.StartsWith($resourcePath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'State overlaps Resource checkout' }
 
 docker manifest inspect "$imageRepository@sha256:$imageDigest" | Out-Null
-docker pull ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a
-docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a python --version
-docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a git --version
+python deploy/validation/verify.py published
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml config --quiet
 ```
 
@@ -170,14 +168,29 @@ $selfHostingRoot = (Resolve-Path .\deploy\self-hosting).Path
 }
 ```
 
-Pass only if the registry manifest and validation image resolve, the Compose
+Pass only if the registry manifest and validation image resolve, its image
+configuration identity matches the value captured during promotion, both credential-free
+readiness probes pass by digest with networking disabled, the Compose
 configuration is valid, the checkout is clean and detached at the pin, the two
 host roots do not overlap, and all three results report `Exists=True` and
 `NonEmpty=True`. Do not display the rendered secret contents or the private key.
 
 ### MTP-02: Credential-Free Regression Gate
 
-Run the tests from the exact release checkout used to build the pinned image:
+From a clean release checkout, run the same Docker-capable Linux gate required
+by CI:
+
+```powershell
+python deploy/validation/verify.py verify
+```
+
+This command rejects a dirty release checkout and contract drift before it
+builds the reviewed Dockerfile from a Dockerfile-only context. It runs the exact
+readiness, offline bootstrap, and complete test sequence in separate clean and
+documentation-only dirty workspaces against both the fresh build and published
+digest. It also proves the published digest has the configuration identity
+captured during promotion and repeats the credential-free probes by digest.
+For focused diagnosis, the host-side suites may also be run directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_mvp_harness.py tests/test_dogfood_deployment.py
@@ -187,9 +200,11 @@ Run the tests from the exact release checkout used to build the pinned image:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Pass only if every command exits `0`. These tests prove deterministic allowed
-and blocked paths with fakes; they do not replace the live provider and pilot
-tests below.
+Pass only if the Docker gate exits `0`. The focused commands must also pass when
+used for diagnosis, but they do not replace the Dockerfile-built Linux gate or
+the live provider and pilot tests below. See
+`deploy/validation/README.md` for the guarded publication procedure; never
+update the Resource graph from a separately rebuilt or merely retagged image.
 
 ### MTP-03: Cold Start, Identity, And Stability
 
