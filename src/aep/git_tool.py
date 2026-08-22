@@ -1005,9 +1005,13 @@ class _GitToolExecution(ToolExecution):
             )
             self._commands.append(result)
             raise _CommandTimeout(result)
+        credential_configuration = (
+            ("-c", "credential.helper=") if environment else ()
+        )
         controlled_arguments = (
             "-c",
             f"core.hooksPath={self._sandbox.disabled_hooks_path}",
+            *credential_configuration,
             *arguments,
         )
         scoped_environment = {

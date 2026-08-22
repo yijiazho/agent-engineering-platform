@@ -48,6 +48,7 @@ class LocalGitSandbox:
 
     def __init__(self) -> None:
         self.environments: list[dict[str, str]] = []
+        self.arguments: list[tuple[str, ...]] = []
 
     def run(
         self,
@@ -59,6 +60,7 @@ class LocalGitSandbox:
         stdin: bytes | None = None,
     ) -> GitSandboxCommandResult:
         self.environments.append(dict(environment))
+        self.arguments.append(tuple(arguments))
         process_environment = dict(environment)
         if os.name == "nt":
             process_environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
@@ -759,6 +761,10 @@ def test_push_credentials_are_scoped_to_push_and_lease_is_closed(
             "AEP_GIT_CREDENTIAL_FILE": "sandbox:/tmp/credential",
         }
     ]
+    push_arguments = next(
+        arguments for arguments in sandbox.arguments if "push" in arguments
+    )
+    assert ("-c", "credential.helper=") == push_arguments[2:4]
 
 
 def test_push_credential_acquisition_uses_remaining_deadline_and_times_out(

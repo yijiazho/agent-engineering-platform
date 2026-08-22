@@ -94,6 +94,9 @@ Python executable. The helper answers only Git username and password prompts,
 fails closed for every other invocation, and receives only askpass and
 credential variables. Each lease clears its environment and removes its helper
 and private directory after fetch or push, including failure and timeout paths.
+Authenticated Git commands also apply an empty command-scoped
+`credential.helper` value, resetting any helper configured in the repository
+before the token-bearing process starts.
 
 Before `git push`, the Git Tool executes both expected prompts using the same
 minimal helper environment. A deterministic helper configuration/startup

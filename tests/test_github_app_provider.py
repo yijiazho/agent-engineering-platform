@@ -587,6 +587,19 @@ def test_real_askpass_and_subprocess_sandbox_push_to_local_auth_endpoint(
         revision = _git(repository, "rev-parse", "HEAD")
         branch = "aep/execution/askpass-integration"
         _git(repository, "switch", "-c", branch)
+        credential_helper_marker = tmp_path / "configured-helper-ran"
+        configured_helper = tmp_path / "configured-credential-helper.sh"
+        configured_helper.write_text(
+            "#!/bin/sh\n: > '" + str(credential_helper_marker) + "'\nexit 1\n",
+            encoding="utf-8",
+        )
+        configured_helper.chmod(0o700)
+        _git(
+            repository,
+            "config",
+            "credential.helper",
+            f"!{configured_helper}",
+        )
         transport = ScriptedTransport(
             [response(200, {"id": 137}), token_response(synthetic_token)]
         )
@@ -652,6 +665,7 @@ def test_real_askpass_and_subprocess_sandbox_push_to_local_auth_endpoint(
             for item in sandbox.environments
         )
         assert list((tmp_path / "leases").iterdir()) == []
+        assert not credential_helper_marker.exists()
         assert synthetic_token not in repr(result.output)
         assert synthetic_token not in logs.get(result.logs_ref)
     finally:

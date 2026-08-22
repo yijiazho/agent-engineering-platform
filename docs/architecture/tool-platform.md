@@ -566,7 +566,9 @@ Authenticated push preserves a minimal subprocess environment:
 `GIT_CONFIG_NOSYSTEM`, disabled terminal prompting, and only the scoped askpass
 path/requirement plus ephemeral username/password. The GitHub App lease helper
 uses the running service's validated absolute interpreter and is preflighted
-for the two supported prompts before remote mutation begins. Startup drift is
+for the two supported prompts before remote mutation begins. An empty
+command-scoped `credential.helper` resets repository-local helper configuration
+before the credential-bearing push. Startup drift is
 stable Tool `STARTUP` evidence with `NOT_ATTEMPTED`; after Git push starts, an
 unconfirmed exit or timeout is `UNKNOWN` and requires exact remote branch/head
 reconciliation. Command evidence records bounded redacted metadata and a
