@@ -30,7 +30,7 @@ from aep.github_tool import (
     GitHubProviderError,
     GitHubToolAdapter,
 )
-from aep.resource_loader import ResourceCollection
+from aep.resource_loader import ResourceCollection, ResourceLoader, ResourceRef
 from aep.runtime_store import InMemoryRuntimeObjectStore
 from aep.task_execution import FailureClass
 from aep.tool_runtime import (
@@ -64,9 +64,11 @@ class FakeGitTool(GitTool):
         store: InMemoryRuntimeObjectStore,
         *,
         failure: ToolFailureClass | None = None,
+        repository: str = "octo/repo",
     ) -> None:
         self.store = store
         self.failure = failure
+        self.repository = repository
         self.calls: list[ToolRequest] = []
 
     def invoke(
@@ -88,7 +90,7 @@ class FakeGitTool(GitTool):
         failure = self.failure if operation == "push_branch" else None
         output = {
             "operation": operation,
-            "repository": "octo/repo",
+            "repository": self.repository,
             "branch": request.input["branch"],
             "revision": HEAD_REVISION,
             "baseRevision": request.input["expectedRevision"],
@@ -258,7 +260,6 @@ def test_success_publishes_after_all_three_policy_gates() -> None:
         for item in execution["policyDecisionIds"]
         if store.get(item)["gate"] == "PUBLICATION"
     )
-    assert publication["publicationTarget"]["headRevision"] == HEAD_REVISION
     assert publication["publicationTarget"]["commitToolInvocationId"] == (
         execution["toolInvocationIds"][0]
     )
@@ -272,6 +273,30 @@ def test_success_publishes_after_all_three_policy_gates() -> None:
         execution["toolInvocationIds"][0]
     )
     assert description["policyDecisionIds"] == execution["policyDecisionIds"]
+
+
+def test_repository_resources_authorize_all_three_gates_and_create_one_fake_pr() -> None:
+    store, handler, task, artifacts, git, github = setup_handler(
+        repository_resources=True
+    )
+
+    result = handler.execute(task, store.get(CREATE_ID))
+
+    assert result.succeeded is True
+    execution = store.get(CREATE_ID)
+    decisions = [store.get(item) for item in execution["policyDecisionIds"]]
+    assert [(item["gate"], item["action"], item["decision"]) for item in decisions] == [
+        ("PUBLICATION", "github.create_pr", "ALLOW"),
+        ("PRE_EXECUTION_CAPABILITY", "git.push", "ALLOW"),
+        ("PRE_EXECUTION_CAPABILITY", "github.create_pr", "ALLOW"),
+    ]
+    publication = decisions[0]
+    assert publication["policyRefs"] == [
+        {"kind": "Policy", "name": "publication-evidence", "version": "1.1.0"}
+    ]
+    assert publication["evaluatedRule"]["ruleIndex"] == 0
+    assert len(github.calls) == 1
+    assert len(artifacts.list_by_task_execution(CREATE_ID)) == 1
 
 
 def test_emergency_disable_prevents_commit_push_and_pull_request() -> None:
@@ -339,15 +364,16 @@ def test_checkout_bound_working_branch_drives_commit_push_and_pull_request(
 
 @pytest.mark.parametrize("effect", ["deny", "require-approval"])
 def test_publication_gate_blocks_all_remote_mutations(effect: str) -> None:
-    store, handler, task, _artifacts, git, github = setup_handler(
+    store, handler, task, artifacts, git, github = setup_handler(
         publication_effect=effect
     )
 
     result = handler.execute(task, store.get(CREATE_ID))
 
     assert result.failure_class is FailureClass.POLICY
-    assert [call.input["operation"] for call in git.calls] == ["commit_changes"]
+    assert git.calls == []
     assert github.calls == []
+    assert artifacts.list_by_task_execution(CREATE_ID) == ()
 
 
 @pytest.mark.parametrize("effect", ["deny", "require-approval"])
@@ -553,6 +579,7 @@ def setup_handler(
     github_outcome: Mapping[str, Any] | Exception | None = None,
     fail_description_once: bool = False,
     publication_guard=None,
+    repository_resources: bool = False,
 ):
     store, acceptance_handler, acceptance_task, base_artifacts = setup_acceptance()
     acceptance_result = acceptance_handler.execute(
@@ -658,9 +685,18 @@ def setup_handler(
             capability_policy,
         ),
     )
-    store.create(create_execution(CREATE_ID, attempt=1), deterministic_key="create-pr-task")
+    if repository_resources:
+        resources = ResourceLoader(ROOT).load()
+        task = resources.get(ResourceRef("Task", "create-pull-request", "1.2.0"))
+        assert task is not None
+    repository_spec = resources.workspace.data["spec"]["repository"]
+    repository = f"{repository_spec['owner']}/{repository_spec['name']}"
+    store.create(
+        create_execution(CREATE_ID, attempt=1, task_ref=dict(task.data["metadata"]) | {"kind": "Task"}),
+        deterministic_key="create-pr-task",
+    )
     event = {
-        "repository": {"full_name": "octo/repo"},
+        "repository": {"full_name": repository},
         "issue": {"number": 34, "title": "Add publication"},
     }
     store.update_status(
@@ -670,7 +706,7 @@ def setup_handler(
         updated_at=TIMESTAMP,
         changes={"eventId": "event-34"},
     )
-    git = FakeGitTool(store, failure=git_failure)
+    git = FakeGitTool(store, failure=git_failure, repository=repository)
     github = FakeGitHubClient(github_outcome)
     handler = CreatePullRequestTaskHandler(
         resources=resources,
@@ -685,7 +721,11 @@ def setup_handler(
     return store, handler, task, artifacts, git, github
 
 
-def create_execution(execution_id: str, *, attempt: int) -> dict[str, Any]:
+def create_execution(
+    execution_id: str, *, attempt: int, task_ref: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    selected_task_ref = dict(task_ref or ref("Task", "create-pull-request"))
+    selected_task_ref.pop("description", None)
     return {
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "TaskExecution",
@@ -697,10 +737,10 @@ def create_execution(execution_id: str, *, attempt: int) -> dict[str, Any]:
             "actor": "workflow-scheduler",
             "workflowExecutionId": WORKFLOW_ID,
             "repositoryRevision": REVISION,
-            "resourceRefs": [ref("Task", "create-pull-request")],
+            "resourceRefs": [selected_task_ref],
         },
         "workflowExecutionId": WORKFLOW_ID,
-        "taskRef": ref("Task", "create-pull-request"),
+        "taskRef": selected_task_ref,
         "attempt": attempt,
         "status": "RUNNING",
         "workingBranch": "agent/aep-034",

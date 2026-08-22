@@ -59,3 +59,6 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md)
 * [AEP-044: Stabilize Self-Hosting Dogfood Startup](tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md)
 * [AEP-045: Optimize Context Token Efficiency](tasks/AEP-045-optimize-context-token-efficiency.md)
+* [AEP-046: Coordinate Model Rate Limits](tasks/AEP-046-coordinate-model-rate-limits.md)
+* [AEP-047: Build Hermetic Validation Image](tasks/AEP-047-build-hermetic-validation-image.md)
+* [AEP-048: Align Publication Policy Evidence Contract](tasks/AEP-048-align-publication-policy-evidence-contract.md)

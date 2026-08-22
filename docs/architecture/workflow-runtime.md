@@ -435,6 +435,18 @@ summarizes both outcomes and retains the input patch in provenance. Only a
 technically successful Tool result with two passing evaluations allows the Task
 to succeed.
 
+The deterministic `CreatePullRequest` handler evaluates the canonical
+Publication Policy evidence summary before creating a commit. The summary is
+exactly `patchGenerated`, `validationRan`, `requiredArtifactsPresent`,
+`requiredEvaluationsPresent`, `allRequiredEvaluationsPassed`,
+`noPriorPolicyViolation`, and `failures`; its runtime schema rejects vocabulary
+drift. The self-hosting graph pins `publication-evidence:1.1.0` through
+`create-pull-request:1.2.0` and `issue-to-pr:1.3.0`. Only a matching Publication
+Policy allow proceeds to the separate `git.push` capability decision and Git
+mutation, followed by a separate `github.create_pr` capability decision and PR
+mutation. A denial produces neither Git ToolInvocation, GitHub call, nor
+`PULL_REQUEST_DESCRIPTION` artifact.
+
 The AgentInvocation coordinator then combines that immutable package with the
 resolved Prompt, Model configuration, and output schema. It persists the
 AgentInvocation and each ModelInvocation, including token, latency, cost, and

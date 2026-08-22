@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from aep.mvp_harness import PR_URL, run_mvp_harness
+from aep.publication_policy import PUBLICATION_EVIDENCE_FIELDS
 
 
 ROOT = Path(__file__).parents[1]
@@ -47,6 +48,19 @@ def test_fixture_issue_runs_the_complete_mvp_dag_deterministically() -> None:
         "ALLOW",
         "ALLOW",
     ]
+    publication = next(
+        item for item in result.policy_decisions if item["gate"] == "PUBLICATION"
+    )
+    assert tuple(publication["evidence"]) == PUBLICATION_EVIDENCE_FIELDS
+    assert publication["evidence"] == {
+        "patchGenerated": True,
+        "validationRan": True,
+        "requiredArtifactsPresent": True,
+        "requiredEvaluationsPresent": True,
+        "allRequiredEvaluationsPassed": True,
+        "noPriorPolicyViolation": True,
+        "failures": [],
+    }
     assert {item["traceId"] for item in result.runtime_history} == {
         result.workflow_execution["traceId"]
     }
@@ -69,10 +83,7 @@ def test_publication_denial_persists_evidence_and_never_calls_github() -> None:
 
     assert result.task_names == EXPECTED_TASKS
     assert result.workflow_execution["status"] == "FAILED"
-    assert [item["decision"] for item in result.policy_decisions] == [
-        "ALLOW",
-        "DENY",
-    ]
+    assert [item["decision"] for item in result.policy_decisions] == ["DENY"]
     assert result.github_request_count == 0
     assert "push_branch" not in result.git_operations
     assert result.pull_request_url is None

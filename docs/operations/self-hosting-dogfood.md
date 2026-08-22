@@ -478,11 +478,13 @@ counts = collections.Counter((value.get('kind'), value.get('status', '')) for va
 tasks = [value for value in related if value.get('kind') == 'TaskExecution']
 contexts = [value for value in related if value.get('kind') == 'ContextPackage']
 prs = [value for value in related if value.get('kind') == 'GeneratedArtifact' and value.get('artifactType') == 'PULL_REQUEST_DESCRIPTION']
+policies = [value for value in related if value.get('kind') == 'PolicyDecision']
 print({'workflowExecutionId': workflow['id'], 'traceId': workflow.get('traceId'), 'status': workflow.get('status'), 'repositoryRevision': workflow.get('repositoryRevision')})
 print({'kindStatusCounts': sorted((kind, status, count) for (kind, status), count in counts.items())})
 print({'tasks': [(value.get('taskRef', {}).get('name'), value.get('attempt'), value.get('status'), value.get('workingBranch')) for value in tasks]})
 print({'contexts': [(value.get('taskRef', {}).get('name'), value.get('tokenBudget'), value.get('tokenCount'), value.get('truncation'), value.get('tokenEstimate', {}).get('breakdown')) for value in contexts]})
 print({'pullRequests': [(value.get('pullRequestNumber'), value.get('pullRequestUrl'), value.get('headRevision')) for value in prs]})
+print({'policyDecisions': [{'id': value.get('id'), 'gate': value.get('gate'), 'action': value.get('action'), 'decision': value.get('decision'), 'reason': value.get('reason'), 'policyRefs': value.get('policyRefs'), 'repositoryRevision': value.get('repositoryRevision'), 'matchedRules': value.get('matchedRules'), 'evaluatedRule': value.get('evaluatedRule'), 'evidence': value.get('evidence'), 'generatedArtifactIds': value.get('generatedArtifactIds'), 'evaluationResultIds': value.get('evaluationResultIds')} for value in policies]})
 '@
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c $runtimeAudit
 ```
@@ -521,7 +523,9 @@ GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
 * Docker build and test commands both completed successfully with networking
   disabled and the pinned validation image;
 * acceptance evaluation used only same-revision successful evidence;
-* Publication Policy allowed the candidate only after validation;
+* Publication Policy used `publication-evidence:1.1.0`, reported all six
+  canonical boolean evidence fields as true and `failures: []`, matched rule
+  zero, and allowed the candidate before any Git mutation;
 * separate `git.push` and `github.create_pr` capability decisions allowed the
   two external mutations; and
 * the final PR artifact records provider request identity, PR URL/number, pushed
@@ -530,6 +534,13 @@ GeneratedArtifacts, EvaluationResults, and PolicyDecisions. Specifically verify:
 Any failed ModelInvocation, validation, Evaluation, PolicyDecision, push, or PR
 mutation is a failed pilot until explained. An `UNKNOWN` provider mutation must
 be reconciled by owner/head/base before any retry.
+
+For a Publication Policy denial, classify safe metadata before retrying. A
+non-empty `evidence.failures` is an evidence-integrity denial and must be fixed
+at the named persisted identity or revision. Empty failures with empty
+`matchedRules` and no `evaluatedRule` is a Resource/runtime contract mismatch;
+verify the exact Policy, Task, and Workflow versions. Do not print artifact
+bodies, webhook payloads, credentials, or command output during this audit.
 
 For a provider failure, do not immediately reopen or relabel the issue. A
 temporary token/request throttle may retry after `retryEligibleAt`. `quota`,

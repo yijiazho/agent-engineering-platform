@@ -491,9 +491,13 @@ For an accepted event, the controllers perform the following bounded flow:
    networking disabled, and persist separate build and test evidence.
 8. Aggregate required artifacts and EvaluationResults without an LLM and fail
    closed if evidence is missing, failed, or from another revision.
-9. Evaluate Publication Policy before any external publication, then separately
-   authorize `git.push` and `github.create_pr` through Pre-Execution Capability
-   Policy.
+9. Evaluate Publication Policy before any Git mutation. Its canonical evidence
+   summary contains `patchGenerated`, `validationRan`,
+   `requiredArtifactsPresent`, `requiredEvaluationsPresent`,
+   `allRequiredEvaluationsPassed`, `noPriorPolicyViolation`, and `failures`.
+   Every boolean must be true and `failures` empty for the self-hosting
+   `github.create_pr` rule to match. Then separately authorize `git.push` and
+   `github.create_pr` through Pre-Execution Capability Policy.
 10. Push the execution branch, create one idempotent pull request against the
     configured default branch, link the triggering issue, and include the plan
     and validation summary. The MVP never merges the pull request.
@@ -545,7 +549,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 47 implementation tasks are complete.
+contracts are established, and 43 of the 48 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -632,11 +636,16 @@ Implemented foundations currently include:
   credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work includes finishing model-rate-limit verification and then
-resuming the controlled live dogfood pilot. AEP-047's automated clean and dirty
-source-built and exact-published-image gates pass locally and on the clean Linux
-CI worker; the task remains in progress until a controlled MTP-10 rerun records
-passing build and repository-test Evaluations. See
+The repository now aligns `publication-evidence:1.1.0` with the canonical
+runtime evidence contract through `create-pull-request:1.2.0` and
+`issue-to-pr:1.3.0`. Credential-free local and source/published exact-image
+verification pass. Remaining work includes finishing model-rate-limit
+verification, publishing the corrected immutable generation, and
+then resuming the controlled live dogfood pilot. AEP-047's
+automated clean and dirty source-built and exact-published-image gates pass
+locally and on the clean Linux CI worker, and the latest MTP-10 run recorded
+passing build, repository-test, and acceptance Evaluations before AEP-048's
+earlier publication-rule mismatch denied pull-request creation. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

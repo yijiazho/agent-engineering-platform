@@ -25,10 +25,10 @@ or `Blocked` as implementation state changes.
 | Status | Count |
 | ------ | ----: |
 | Completed | 43 |
-| In Progress | 4 |
+| In Progress | 5 |
 | Not Started | 0 |
 | Blocked | 0 |
-| Total | 47 |
+| Total | 48 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -172,7 +172,8 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 44 | [AEP-045: Optimize Context Token Efficiency](tasks/AEP-045-optimize-context-token-efficiency.md) | In Progress |
 | 45 | [AEP-046: Coordinate Model Rate Limits](tasks/AEP-046-coordinate-model-rate-limits.md) | In Progress |
 | 46 | [AEP-047: Build Hermetic Validation Image](tasks/AEP-047-build-hermetic-validation-image.md) | In Progress |
-| 47 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
+| 47 | [AEP-048: Align Publication Policy Evidence Contract](tasks/AEP-048-align-publication-policy-evidence-contract.md) | In Progress |
+| 48 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 
 ---
 
@@ -222,11 +223,12 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-040 | AEP-003, AEP-017, AEP-020, AEP-025, AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
 | AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Completed |
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
-| AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047 | In Progress |
+| AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047, AEP-048 | In Progress |
 | AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
 | AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | In Progress |
 | AEP-046 | AEP-010, AEP-036, AEP-040, AEP-042, AEP-045 | In Progress |
 | AEP-047 | AEP-023, AEP-027, AEP-032, AEP-039, AEP-040 | In Progress |
+| AEP-048 | AEP-028, AEP-034, AEP-037, AEP-040, AEP-047 | In Progress |
 
 ---
 
@@ -239,7 +241,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Workflow Runtime | AEP-009, AEP-010, AEP-011, AEP-012, AEP-013, AEP-014 | Completed |
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018, AEP-045 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024 | Completed |
-| Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028 | Completed |
+| Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028, AEP-048 | In Progress |
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
 | Deployment And Observability | AEP-035, AEP-036, AEP-037 | Completed |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043, AEP-044, AEP-046, AEP-047 | In Progress |

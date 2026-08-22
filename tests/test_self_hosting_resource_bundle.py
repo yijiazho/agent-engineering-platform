@@ -7,6 +7,12 @@ import subprocess
 import sys
 
 import pytest
+from jsonschema import Draft202012Validator
+
+from aep.publication_policy import (
+    PUBLICATION_EVIDENCE_BOOLEAN_FIELDS,
+    PUBLICATION_EVIDENCE_FIELDS,
+)
 
 from aep.resource_loader import (
     MissingResourceReferenceError,
@@ -180,6 +186,42 @@ def test_capabilities_fail_closed_and_publication_is_exclusive(
     assert resources.get(
         ResourceRef(**_ref_kwargs(publication_tools["githubToolRef"]))
     ).data["spec"]["capabilities"] == ["github.create_pr"]
+
+
+def test_publication_policy_semantically_matches_canonical_runtime_evidence(
+    resources: ResourceCollection,
+) -> None:
+    task = resources.get(
+        ResourceRef(
+            "Task",
+            "create-pull-request",
+            EXPECTED["resourceVersions"]["createPullRequestTask"],
+        )
+    )
+    policy = resources.get(
+        ResourceRef(
+            "Policy",
+            "publication-evidence",
+            EXPECTED["resourceVersions"]["publicationEvidencePolicy"],
+        )
+    )
+    assert task is not None and policy is not None
+    assert {
+        "kind": "Policy",
+        "name": policy.name,
+        "version": policy.version,
+    } in task.data["spec"]["policies"]
+    evidence = {
+        name: True for name in PUBLICATION_EVIDENCE_BOOLEAN_FIELDS
+    } | {"failures": []}
+    assert tuple(evidence) == PUBLICATION_EVIDENCE_FIELDS
+    conditions = policy.data["spec"]["rules"][0]["conditions"]
+    assert Draft202012Validator(conditions).is_valid(
+        {
+            "candidateAction": {"action": "github.create_pr"},
+            "evidence": evidence,
+        }
+    )
 
 
 def test_knowledge_and_validation_are_repository_bound_and_bounded(

@@ -457,6 +457,17 @@ and repository revision. Missing or mismatched evidence, a failed result, or an
 earlier `DENY` fails closed before an allow rule can take effect. An earlier
 unresolved `REQUIRE_APPROVAL` remains approval-required.
 
+The evaluator owns one canonical evidence-summary contract.
+`patchGenerated` means a required artifact is a PATCH; `validationRan` means at
+least one required EvaluationResult was declared; `requiredArtifactsPresent`
+and `requiredEvaluationsPresent` mean every declared identity was supplied;
+`allRequiredEvaluationsPassed` means the required set is non-empty and every
+result is terminal `SUCCEEDED`/`PASS`; `noPriorPolicyViolation` means no prior
+decision is `DENY`; and `failures` is the ordered list of evidence-integrity
+diagnostics. The first six fields are booleans. The self-hosting allow rule
+requires all six to be true and `failures` to be empty. Missing, renamed, or
+additional summary fields cannot match that versioned rule.
+
 The caller's evidence mappings are not trusted by themselves. Every required
 runtime object is validated against its kind-specific schema and must exactly
 match the immutable object resolved from the runtime store. Malformed,
@@ -471,6 +482,12 @@ persisted decision records the exact artifact, evaluation, and prior-decision
 identifiers, publication target, evidence summary, matched and winning rules,
 and explanation. The evaluator does not push Git state or invoke a publication
 provider.
+
+The self-hosting immutable graph is `publication-evidence:1.1.0` referenced by
+`create-pull-request:1.2.0`, which is referenced by `issue-to-pr:1.3.0`.
+Publication Policy is evaluated before the handler creates a local commit. An
+allow is followed by distinct `git.push` and `github.create_pr` capability
+decisions immediately before their corresponding external mutations.
 
 ---
 
