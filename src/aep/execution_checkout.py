@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 from threading import Event, Lock, Thread
@@ -26,6 +27,8 @@ from uuid import uuid4
 
 _REVISION = re.compile(r"^[0-9a-f]{40}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_SCOPED_CREDENTIAL_VARIABLE = re.compile(r"^AEP_[A-Z0-9_]+$")
+_GIT_CREDENTIAL_VARIABLES = frozenset({"GIT_ASKPASS", "GIT_ASKPASS_REQUIRE"})
 class CheckoutFailureClass(str, Enum):
     """Failure classes understood by control-plane retry policy."""
 
@@ -380,7 +383,13 @@ class NoSourceCredentials:
 class GitRepositorySource:
     """Git-backed source cache with credentials injected only into processes."""
 
-    def __init__(self, remote_url: str, *, timeout_seconds: float = 60.0) -> None:
+    def __init__(
+        self,
+        remote_url: str,
+        *,
+        timeout_seconds: float = 60.0,
+        git_executable: Path | str | None = None,
+    ) -> None:
         parsed = urlsplit(remote_url)
         if parsed.scheme in {"http", "https"} and (
             parsed.username
@@ -401,6 +410,20 @@ class GitRepositorySource:
             )
         self._remote_url = remote_url
         self._timeout = timeout_seconds
+        executable = shutil.which("git") if git_executable is None else str(git_executable)
+        candidate = Path(executable) if executable else None
+        if (
+            candidate is None
+            or not candidate.is_absolute()
+            or not candidate.is_file()
+            or not os.access(candidate, os.X_OK)
+        ):
+            raise CheckoutProvisionError(
+                CheckoutFailureClass.CONFIGURATION,
+                "git_executable_unavailable",
+                "repository source Git executable must be an absolute executable file",
+            )
+        self._git_executable = str(candidate.resolve())
 
     def materialize(
         self,
@@ -413,6 +436,14 @@ class GitRepositorySource:
         mutation_lease: Callable[[], AbstractContextManager[None]],
     ) -> SourceRevision:
         environment = {str(key): str(value) for key, value in credentials.items()}
+        unexpected = sorted(
+            key
+            for key in environment
+            if key not in _GIT_CREDENTIAL_VARIABLES
+            and _SCOPED_CREDENTIAL_VARIABLE.fullmatch(key) is None
+        )
+        if unexpected:
+            raise _source_configuration("unsafe_source_credential_environment")
         environment.update(
             {
                 "GIT_TERMINAL_PROMPT": "0",
@@ -422,6 +453,8 @@ class GitRepositorySource:
                 "GIT_CONFIG_VALUE_0": "",
             }
         )
+        if os.name == "nt" and os.environ.get("SYSTEMROOT"):
+            environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
         with mutation_lease():
             cache_path.parent.mkdir(parents=True, exist_ok=True)
         if cache_path.exists():
@@ -436,7 +469,7 @@ class GitRepositorySource:
         else:
             with mutation_lease():
                 self._run(
-                    ("git", "clone", "--bare", "--no-tags", "--", self._remote_url, str(cache_path)),
+                    ("clone", "--bare", "--no-tags", "--", self._remote_url, str(cache_path)),
                     cwd=cache_path.parent,
                     environment=environment,
                 )
@@ -453,26 +486,36 @@ class GitRepositorySource:
         ).strip().casefold()
         if not _REVISION.fullmatch(revision):
             raise _source_recoverable("source_revision_invalid")
-        commit = subprocess.run(
-            ("git", "-C", str(cache_path), "cat-file", "-e", f"{expected_revision}^{{commit}}"),
-            env={**os.environ, **environment},
-            capture_output=True,
-            check=False,
-            timeout=self._timeout,
-        )
+        try:
+            commit = subprocess.run(
+                (
+                    self._git_executable,
+                    "-C",
+                    str(cache_path),
+                    "cat-file",
+                    "-e",
+                    f"{expected_revision}^{{commit}}",
+                ),
+                env=dict(environment),
+                capture_output=True,
+                check=False,
+                timeout=self._timeout,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise _source_recoverable("source_unavailable") from error
         if commit.returncode != 0:
             raise _source_configuration("missing_commit")
         return SourceRevision(cache_path.resolve(), repository, revision)
 
     def _git(self, cwd: Path, arguments: Sequence[str], environment: Mapping[str, str]) -> str:
-        return self._run(("git", "-C", str(cwd), *arguments), cwd=cwd, environment=environment)
+        return self._run(("-C", str(cwd), *arguments), cwd=cwd, environment=environment)
 
     def _run(self, arguments: Sequence[str], *, cwd: Path, environment: Mapping[str, str]) -> str:
         try:
             result = subprocess.run(
-                arguments,
+                (self._git_executable, *arguments),
                 cwd=cwd,
-                env={**os.environ, **environment},
+                env=dict(environment),
                 capture_output=True,
                 check=False,
                 timeout=self._timeout,
@@ -1641,6 +1684,10 @@ _SOURCE_FAILURES: Mapping[
     "source_identity_mismatch": (
         CheckoutFailureClass.CONFIGURATION,
         "repository source identity does not match configuration",
+    ),
+    "unsafe_source_credential_environment": (
+        CheckoutFailureClass.CONFIGURATION,
+        "repository source credentials contain an unsupported environment variable",
     ),
     "missing_commit": (
         CheckoutFailureClass.CONFIGURATION,
