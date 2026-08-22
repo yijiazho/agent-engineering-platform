@@ -150,9 +150,9 @@ if ($resourcePath.StartsWith($statePath + '\', [StringComparison]::OrdinalIgnore
 if ($statePath.StartsWith($resourcePath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'State overlaps Resource checkout' }
 
 docker manifest inspect "$imageRepository@sha256:$imageDigest" | Out-Null
-docker pull ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73
-docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73 python --version
-docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:7c2411a164b21c6f52fdd1396d757a2d65bc9bdbc6af6b7d191e1c8ac30dcc73 git --version
+docker pull ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a
+docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a python --version
+docker run --rm --network none ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a git --version
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml config --quiet
 ```
 
