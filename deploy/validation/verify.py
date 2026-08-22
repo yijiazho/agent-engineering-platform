@@ -231,7 +231,18 @@ def _verify_workspace(
                 timeout=remaining(),
             )
     finally:
-        runner.run(["docker", "rm", "-f", name], timeout=30)
+        try:
+            runner.run(
+                [
+                    "docker", "exec", name, "chmod", "-R", "a+rwX",
+                    contract.container_path,
+                ],
+                timeout=30,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+        finally:
+            runner.run(["docker", "rm", "-f", name], timeout=30)
 
 
 def _tracked_snapshot(root: Path, destination: Path, runner: CommandRunner) -> None:
@@ -338,7 +349,9 @@ def _verify_image_workspaces(
     *,
     include_working_tree: bool,
 ) -> None:
-    with tempfile.TemporaryDirectory(prefix="aep-validation-gate-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix="aep-validation-gate-", ignore_cleanup_errors=True
+    ) as temporary:
         clean, dirty = _prepare_workspaces(
             ROOT,
             Path(temporary),

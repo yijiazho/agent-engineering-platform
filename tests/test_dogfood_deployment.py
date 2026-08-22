@@ -218,6 +218,8 @@ def dogfood_environment(
     git(resource_root, "config", "user.email", "aep@example.test")
     if resource_git_autocrlf is not None:
         git(resource_root, "config", "core.autocrlf", resource_git_autocrlf)
+    if resource_git_autocrlf == "true":
+        _materialize_crlf_worktree(resource_root / ".ai")
     git(resource_root, "add", ".ai")
     git(resource_root, "commit", "-m", "Pin Resources")
     revision = git_head(resource_root)

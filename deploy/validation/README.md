@@ -54,7 +54,10 @@ the locked published digest. Every container uses `/workspace`, `--network
 none`, two CPUs, 1 GiB of memory, the declared command order, and the shared
 600-second deadline. The Resource checkout is never mounted as a candidate
 workspace. Release mode rejects a dirty checkout before Docker sees the
-Dockerfile; the explicit development mode is the only exception.
+Dockerfile; the explicit development mode is the only exception. After command
+evidence is captured, the container restores permissions only within each
+disposable candidate workspace so a non-root Linux runner can remove files
+created by the root container process.
 
 During development only, include the current tracked and untracked working-tree
 snapshot without claiming release validation:
