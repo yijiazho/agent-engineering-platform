@@ -177,6 +177,10 @@ class GitToolContractError(ValueError):
     """Raised when adapter configuration cannot enforce repository boundaries."""
 
 
+class GitCredentialStartupError(RuntimeError):
+    """Safe pre-mutation failure proving the credential helper cannot start."""
+
+
 class GitInvocationIdentityConflictError(ValueError):
     """Raised when an invocation id is reused for different immutable inputs."""
 
@@ -254,6 +258,9 @@ class GitCredentialLease(Protocol):
     def environment(self) -> Mapping[str, str]:
         """Return environment entries visible only to the isolated push."""
 
+    def validate_startup(self, *, timeout_ms: int) -> None:
+        """Validate the helper without crossing the remote mutation boundary."""
+
     def close(self) -> None:
         """Revoke and remove temporary credential material."""
 
@@ -271,6 +278,9 @@ class _EmptyCredentialLease:
     @property
     def environment(self) -> Mapping[str, str]:
         return {}
+
+    def validate_startup(self, *, timeout_ms: int) -> None:
+        return None
 
     def close(self) -> None:
         return None
@@ -323,9 +333,27 @@ class FilesystemGitCommandLogStore:
 class SubprocessGitSandbox:
     """Process boundary used inside the dedicated workflow worker container."""
 
-    def __init__(self, disabled_hooks_path: Path | str) -> None:
+    def __init__(
+        self,
+        disabled_hooks_path: Path | str,
+        *,
+        git_executable: Path | str | None = None,
+    ) -> None:
         self._disabled_hooks_path = Path(disabled_hooks_path).resolve()
         self._disabled_hooks_path.mkdir(parents=True, exist_ok=True)
+        if git_executable is None:
+            self._git_executable = "git"
+        else:
+            candidate = Path(git_executable)
+            if (
+                not candidate.is_absolute()
+                or not candidate.is_file()
+                or not os.access(candidate, os.X_OK)
+            ):
+                raise GitToolContractError(
+                    "git_executable must be an absolute executable file"
+                )
+            self._git_executable = str(candidate.resolve())
 
     @property
     def disabled_hooks_path(self) -> str:
@@ -346,7 +374,7 @@ class SubprocessGitSandbox:
     ) -> GitSandboxCommandResult:
         try:
             result = subprocess.run(
-                ["git", *arguments],
+                [self._git_executable, *arguments],
                 cwd=repository,
                 env=dict(environment),
                 input=stdin,
@@ -560,6 +588,15 @@ class _GitToolExecution(ToolExecution):
                 failure_message="Git credential acquisition exceeded its deadline",
                 failure_class=ToolFailureClass.TIMEOUT,
             )
+        except GitCredentialStartupError as error:
+            self._result = self._result_record(
+                status=ToolResultStatus.FAILED,
+                output=self._failure_output(),
+                started_at=started_at,
+                started_clock=started_clock,
+                failure_message=str(error),
+                failure_class=ToolFailureClass.STARTUP,
+            )
         except Exception as error:
             self._result = self._result_record(
                 status=ToolResultStatus.FAILED,
@@ -640,6 +677,17 @@ class _GitToolExecution(ToolExecution):
                     timeout_ms=remaining_ms,
                 )
                 try:
+                    remaining_ms = int((deadline - monotonic()) * 1000)
+                    if remaining_ms < 1:
+                        raise TimeoutError("Git credential helper startup deadline expired")
+                    try:
+                        credentials.validate_startup(timeout_ms=remaining_ms)
+                    except TimeoutError:
+                        raise
+                    except Exception:
+                        raise GitCredentialStartupError(
+                            "Git credential helper failed startup validation"
+                        ) from None
                     self._run(
                         (
                             "push",
@@ -924,6 +972,8 @@ class _GitToolExecution(ToolExecution):
         return {
             "operation": self._operation,
             "repository": self._repository_id,
+            "branch": self._working_branch,
+            "baseRevision": self._expected_revision,
             "remoteMutationState": self._remote_mutation_state.value,
             "commandResults": [
                 command.metadata() for command in self._commands

@@ -143,6 +143,11 @@ class StubCredentialLease:
     def __init__(self) -> None:
         self.environment = {"AEP_GIT_CREDENTIAL_FILE": "sandbox:/tmp/credential"}
         self.closed = False
+        self.validated = False
+
+    def validate_startup(self, *, timeout_ms: int) -> None:
+        assert timeout_ms > 0
+        self.validated = True
 
     def close(self) -> None:
         self.closed = True
@@ -741,6 +746,7 @@ def test_push_credentials_are_scoped_to_push_and_lease_is_closed(
     assert len(provider.timeout_requests) == 1
     assert 0 < provider.timeout_requests[0] <= 5000
     assert provider.lease.closed
+    assert provider.lease.validated
     credential_environments = [
         value
         for value in sandbox.environments
@@ -779,6 +785,32 @@ def test_push_credential_acquisition_uses_remaining_deadline_and_times_out(
     assert len(provider.timeout_requests) == 1
     assert 0 < provider.timeout_requests[0] <= 1_000
     assert "SECRET" not in (result.failure_message or "")
+
+
+def test_credential_helper_startup_failure_is_pre_mutation_and_closes_lease(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    create_branch(repository, revision, logs)
+    provider = StubCredentialProvider()
+
+    def fail_startup(*, timeout_ms: int) -> None:
+        raise OSError("helper missing gho_STARTUPSECRET")
+
+    provider.lease.validate_startup = fail_startup  # type: ignore[method-assign]
+    result = invoke(
+        request(revision, "push_branch", capabilities=("git.push",)),
+        adapter(repository, revision, logs, credential_provider=provider),
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_class.value == "STARTUP"
+    assert result.failure_message == "Git credential helper failed startup validation"
+    assert result.output["remoteMutationState"] == "NOT_ATTEMPTED"
+    assert provider.lease.closed
+    assert not (remote / "refs" / "heads" / "agent" / "work").exists()
+    assert "STARTUPSECRET" not in logs.get(result.logs_ref)
 
 
 @pytest.mark.parametrize(

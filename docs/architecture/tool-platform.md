@@ -562,6 +562,16 @@ accepted artifact; the trailer alone is never trusted. Push then
 publishes that committed head; dirty worktree bytes are never mistaken for
 remotely reachable content.
 
+Authenticated push preserves a minimal subprocess environment:
+`GIT_CONFIG_NOSYSTEM`, disabled terminal prompting, and only the scoped askpass
+path/requirement plus ephemeral username/password. The GitHub App lease helper
+uses the running service's validated absolute interpreter and is preflighted
+for the two supported prompts before remote mutation begins. Startup drift is
+stable Tool `STARTUP` evidence with `NOT_ATTEMPTED`; after Git push starts, an
+unconfirmed exit or timeout is `UNKNOWN` and requires exact remote branch/head
+reconciliation. Command evidence records bounded redacted metadata and a
+content-addressed log, never helper source, environment, or credential values.
+
 The persisted Git Tool boundary atomically creates pending ToolInvocation
 evidence before starting an adapter operation. Its deterministic request
 fingerprint binds the task, caller, Tool version, input, capabilities, timeout,

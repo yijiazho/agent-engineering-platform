@@ -1301,11 +1301,16 @@ def _tool_failure(label: str, result: ToolResult) -> TaskExecutionResult:
     failure = result.failure_class or ToolFailureClass.ADAPTER
     if failure in {ToolFailureClass.POLICY, ToolFailureClass.BOUNDARY}:
         classification = FailureClass.POLICY
-    elif label == "Git push" and failure in {
-        ToolFailureClass.TIMEOUT,
-        ToolFailureClass.IO,
-        ToolFailureClass.STARTUP,
-    }:
+    elif (
+        label == "Git push"
+        and result.output.get("remoteMutationState") == "NOT_ATTEMPTED"
+        and failure
+        in {
+            ToolFailureClass.TIMEOUT,
+            ToolFailureClass.IO,
+            ToolFailureClass.STARTUP,
+        }
+    ):
         classification = FailureClass.RECOVERABLE
     elif failure is ToolFailureClass.VALIDATION:
         classification = FailureClass.CONFIGURATION

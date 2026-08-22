@@ -1,26 +1,39 @@
 from __future__ import annotations
 
+from base64 import b64encode
 from collections import deque
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
+import shutil
+import stat
 import subprocess
-from threading import Lock
+import sys
+from threading import Lock, Thread
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
 from aep.execution_checkout import RepositoryIdentity
-from aep.git_tool import GitSandboxCommandResult, GitToolAdapter, InMemoryGitCommandLogStore
+from aep.git_tool import (
+    GitSandboxCommandResult,
+    GitToolAdapter,
+    InMemoryGitCommandLogStore,
+    SubprocessGitSandbox,
+)
 from aep.github_app_provider import (
     GitHubAppAuthorizationError,
     GitHubAppAmbiguousMutationError,
     GitHubAppClient,
     GitHubAppConfig,
+    GitHubAppConfigurationError,
     GitHubAppGitCredentialProvider,
     GitHubAppTokenProvider,
     GitHubAppValidationError,
@@ -480,6 +493,290 @@ def test_git_credential_lease_pushes_authorized_branch_and_discards_credentials(
     assert list((tmp_path / "leases").iterdir()) == []
     persisted = repr({"input": request.input, "output": result.output, "failure": result.failure_message})
     assert "ghs_installation_secret" not in persisted
+
+
+@pytest.mark.skipif(os.name == "nt", reason="git-http-backend fixture requires POSIX CGI semantics")
+def test_real_askpass_and_subprocess_sandbox_push_to_local_auth_endpoint(
+    tmp_path: Path,
+) -> None:
+    synthetic_token = "ghs_SYNTHETIC_LOCAL_PUSH_ONLY"
+    expected_authorization = "Basic " + b64encode(
+        f"x-access-token:{synthetic_token}".encode()
+    ).decode()
+    project_root = tmp_path / "http-root"
+    project_root.mkdir()
+    remote = project_root / "remote.git"
+    subprocess.run(("git", "init", "--bare", str(remote)), check=True, capture_output=True)
+    _git(remote, "config", "http.receivepack", "true")
+    git_executable = Path(shutil.which("git") or "").resolve()
+
+    class GitHandler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+        def do_GET(self) -> None:
+            self._serve_git()
+
+        def do_POST(self) -> None:
+            self._serve_git()
+
+        def _serve_git(self) -> None:
+            if self.headers.get("Authorization") != expected_authorization:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="aep-test"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            parsed = urlsplit(self.path)
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_length)
+            environment = {
+                "GIT_PROJECT_ROOT": str(project_root),
+                "GIT_HTTP_EXPORT_ALL": "1",
+                "PATH_INFO": parsed.path,
+                "QUERY_STRING": parsed.query,
+                "REQUEST_METHOD": self.command,
+                "CONTENT_TYPE": self.headers.get("Content-Type", ""),
+                "CONTENT_LENGTH": str(content_length),
+                "REMOTE_USER": "x-access-token",
+            }
+            completed = subprocess.run(
+                [str(git_executable), "http-backend"],
+                env=environment,
+                input=body,
+                capture_output=True,
+                check=False,
+            )
+            headers, response_body = completed.stdout.split(b"\r\n\r\n", 1)
+            status = 200
+            response_headers: list[tuple[str, str]] = []
+            for raw in headers.decode("latin-1").split("\r\n"):
+                name, value = raw.split(":", 1)
+                if name.casefold() == "status":
+                    status = int(value.strip().split(" ", 1)[0])
+                else:
+                    response_headers.append((name.strip(), value.strip()))
+            self.send_response(status)
+            for name, value in response_headers:
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), GitHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        repository = tmp_path / "work"
+        repository.mkdir()
+        _git(repository, "init")
+        _git(repository, "config", "user.name", "AEP Test")
+        _git(repository, "config", "user.email", "aep@example.test")
+        _git(
+            repository,
+            "remote",
+            "add",
+            "origin",
+            f"http://127.0.0.1:{server.server_port}/remote.git",
+        )
+        (repository / "file.txt").write_text("one\n", encoding="utf-8")
+        _git(repository, "add", "file.txt")
+        _git(repository, "commit", "-m", "fixture")
+        revision = _git(repository, "rev-parse", "HEAD")
+        branch = "aep/execution/askpass-integration"
+        _git(repository, "switch", "-c", branch)
+        transport = ScriptedTransport(
+            [response(200, {"id": 137}), token_response(synthetic_token)]
+        )
+        credentials = GitHubAppGitCredentialProvider(
+            config(), tokens=tokens(transport), lease_root=tmp_path / "leases"
+        )
+
+        class RecordingSandbox(SubprocessGitSandbox):
+            def __init__(self) -> None:
+                super().__init__(
+                    tmp_path / "disabled-hooks", git_executable=git_executable
+                )
+                self.environments: list[dict[str, str]] = []
+
+            def run(self, **kwargs):
+                self.environments.append(dict(kwargs["environment"]))
+                return super().run(**kwargs)
+
+        sandbox = RecordingSandbox()
+        logs = InMemoryGitCommandLogStore()
+        adapter = GitToolAdapter(
+            repository=repository,
+            repository_id="acme/widgets",
+            expected_revision=revision,
+            working_branch=branch,
+            log_store=logs,
+            sandbox=sandbox,
+            credential_provider=credentials,
+        )
+        request = ToolRequest(
+            tool_ref={"kind": "Tool", "name": "git", "version": "1.0.0"},
+            input={
+                "operation": "push_branch",
+                "expectedRevision": revision,
+                "branch": branch,
+            },
+            caller=ToolCaller(kind="TaskExecution", id="task-push-integration"),
+            capabilities=("git.push",),
+            timeout_ms=10_000,
+            correlation={
+                "traceId": "trace-push-integration",
+                "workflowExecutionId": "workflow-push-integration",
+                "taskExecutionId": "task-push-integration",
+            },
+        )
+        result = adapter.start(request).wait(10_000)
+
+        assert result is not None and result.status is ToolResultStatus.SUCCEEDED
+        assert result.output["remoteMutationState"] == "CONFIRMED"
+        assert _git(remote, "rev-parse", f"refs/heads/{branch}") == revision
+        allowed = {
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_TERMINAL_PROMPT",
+            "GIT_ASKPASS",
+            "GIT_ASKPASS_REQUIRE",
+            "AEP_GITHUB_USERNAME",
+            "AEP_GITHUB_PASSWORD",
+        }
+        assert all(set(item) <= allowed for item in sandbox.environments)
+        assert not any(
+            {"PATH", "HOME", "HTTP_PROXY", "HTTPS_PROXY", "GIT_CONFIG_GLOBAL"}
+            & set(item)
+            for item in sandbox.environments
+        )
+        assert list((tmp_path / "leases").iterdir()) == []
+        assert synthetic_token not in repr(result.output)
+        assert synthetic_token not in logs.get(result.logs_ref)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_askpass_helper_runs_with_only_scoped_environment_and_fails_closed(
+    tmp_path: Path,
+) -> None:
+    synthetic_token = "ghs_SYNTHETIC_ASKPASS_ONLY"
+    transport = ScriptedTransport(
+        [response(200, {"id": 137}), token_response(synthetic_token)]
+    )
+    root = tmp_path / "leases"
+    provider = GitHubAppGitCredentialProvider(
+        config(), tokens=tokens(transport), lease_root=root
+    )
+    lease = provider.acquire(remote="origin", branch="aep/execution/abc")
+    environment = dict(lease.environment)
+    helper = Path(environment["GIT_ASKPASS"])
+    lease_directory = helper.parent
+    command = [str(helper)] if os.name != "nt" else [sys.executable, str(helper)]
+
+    assert set(environment) == {
+        "GIT_ASKPASS",
+        "GIT_ASKPASS_REQUIRE",
+        "AEP_GITHUB_USERNAME",
+        "AEP_GITHUB_PASSWORD",
+    }
+    assert not {
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_TERMINAL_PROMPT",
+    }.intersection(environment)
+    if os.name != "nt":
+        assert stat.S_IMODE(lease_directory.stat().st_mode) == 0o700
+        assert stat.S_IMODE(helper.stat().st_mode) == 0o700
+    assert helper.read_text(encoding="utf-8").splitlines()[0] == (
+        f"#!{Path(sys.executable).resolve()}"
+    )
+
+    username = subprocess.run(
+        [*command, "Username for 'https://github.com':"],
+        env=environment,
+        capture_output=True,
+        check=False,
+    )
+    password = subprocess.run(
+        [*command, "Password for 'https://github.com':"],
+        env=environment,
+        capture_output=True,
+        check=False,
+    )
+    unsupported = subprocess.run(
+        [*command, "Credential for 'https://github.com':"],
+        env=environment,
+        capture_output=True,
+        check=False,
+    )
+    assert username.returncode == 0 and username.stdout == b"x-access-token"
+    assert password.returncode == 0
+    assert sha256(password.stdout).digest() == sha256(synthetic_token.encode()).digest()
+    assert username.stderr == password.stderr == b""
+    assert unsupported.returncode != 0
+    assert unsupported.stdout == unsupported.stderr == b""
+
+    lease.validate_startup(timeout_ms=5_000)
+    lease.close()
+    lease.close()
+    assert not lease_directory.exists()
+    assert lease.environment == {}
+    persisted = repr(
+        {
+            "username": username.returncode,
+            "password": password.returncode,
+            "unsupported": unsupported.returncode,
+            "environment": lease.environment,
+        }
+    )
+    assert synthetic_token not in persisted
+
+
+def test_askpass_rejects_unsafe_or_missing_interpreter(tmp_path: Path) -> None:
+    provider_tokens = tokens(ScriptedTransport([]))
+    for interpreter in ("python", tmp_path / "missing-python"):
+        with pytest.raises(GitHubAppConfigurationError, match="absolute executable"):
+            GitHubAppGitCredentialProvider(
+                config(),
+                tokens=provider_tokens,
+                lease_root=tmp_path / "leases",
+                interpreter=interpreter,
+            )
+
+
+def test_askpass_partial_creation_and_token_failure_remove_private_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "leases"
+    provider = GitHubAppGitCredentialProvider(
+        config(), tokens=tokens(ScriptedTransport([])), lease_root=root
+    )
+
+    def fail_open(*args, **kwargs):
+        raise OSError("synthetic creation failure")
+
+    monkeypatch.setattr("aep.github_app_provider.os.open", fail_open)
+    with pytest.raises(Exception, match="could not be created"):
+        provider.acquire(remote="origin", branch="aep/execution/abc")
+    assert list(root.iterdir()) == []
+
+    monkeypatch.undo()
+    failing = GitHubAppGitCredentialProvider(
+        config(),
+        tokens=tokens(ScriptedTransport([RuntimeError("synthetic token failure")])),
+        lease_root=root,
+    )
+    with pytest.raises(RuntimeError, match="synthetic token failure"):
+        failing.acquire(remote="origin", branch="aep/execution/abc")
+    assert list(root.iterdir()) == []
 
 
 def test_source_credential_binding_rejects_another_repository(tmp_path: Path) -> None:

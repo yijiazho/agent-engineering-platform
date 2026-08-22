@@ -16,7 +16,10 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
+import sys
 from threading import Condition
+from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
@@ -545,17 +548,72 @@ class GitHubAppClient:
 
 
 class _GitCredentialLease:
-    def __init__(self, token: str, askpass_path: Path) -> None:
+    def __init__(
+        self,
+        token: str,
+        askpass_path: Path,
+        lease_directory: Path,
+        interpreter: Path,
+    ) -> None:
         self._environment = {
             "GIT_ASKPASS": str(askpass_path), "GIT_ASKPASS_REQUIRE": "force",
             "AEP_GITHUB_USERNAME": "x-access-token", "AEP_GITHUB_PASSWORD": token,
         }
         self._path = askpass_path
+        self._directory = lease_directory
+        self._interpreter = interpreter
         self._closed = False
 
     @property
     def environment(self) -> Mapping[str, str]:
         return {} if self._closed else dict(self._environment)
+
+    def validate_startup(self, *, timeout_ms: int) -> None:
+        """Prove the helper can answer both expected prompts before Git starts."""
+
+        if self._closed:
+            raise GitHubAppConfigurationError("Git credential lease is closed")
+        if timeout_ms < 1:
+            raise TimeoutError("Git credential helper startup deadline expired")
+        deadline = monotonic() + (timeout_ms / 1000)
+        command = (
+            [str(self._path)]
+            if os.name != "nt"
+            else [str(self._interpreter), str(self._path)]
+        )
+        expected = (
+            ("Username for 'https://github.com':", "AEP_GITHUB_USERNAME"),
+            ("Password for 'https://github.com':", "AEP_GITHUB_PASSWORD"),
+        )
+        try:
+            for prompt, key in expected:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "Git credential helper startup exceeded its deadline"
+                    )
+                completed = subprocess.run(
+                    [*command, prompt],
+                    env=dict(self._environment),
+                    capture_output=True,
+                    check=False,
+                    timeout=remaining,
+                )
+                if (
+                    completed.returncode != 0
+                    or completed.stderr
+                    or completed.stdout.decode("utf-8", errors="strict")
+                    != self._environment[key]
+                ):
+                    raise GitHubAppConfigurationError(
+                        "Git credential helper startup validation failed"
+                    )
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("Git credential helper startup exceeded its deadline") from None
+        except (OSError, UnicodeError):
+            raise GitHubAppConfigurationError(
+                "Git credential helper could not be started"
+            ) from None
 
     def close(self) -> None:
         if self._closed:
@@ -567,18 +625,40 @@ class _GitCredentialLease:
             self._path.unlink(missing_ok=True)
         except OSError:
             pass
+        try:
+            self._directory.rmdir()
+        except OSError:
+            pass
         self._closed = True
 
 
 class GitHubAppGitCredentialProvider:
     """Supply one-use askpass leases for source fetches and authorized pushes."""
 
-    def __init__(self, config: GitHubAppConfig, *, tokens: GitHubAppTokenProvider, lease_root: Path | str) -> None:
+    def __init__(
+        self,
+        config: GitHubAppConfig,
+        *,
+        tokens: GitHubAppTokenProvider,
+        lease_root: Path | str,
+        interpreter: Path | str | None = None,
+    ) -> None:
         if tokens.config != config:
             raise GitHubAppConfigurationError("GitHub token and Git credential bindings differ")
         self.config = config
         self._tokens = tokens
         self._root = Path(lease_root).resolve()
+        candidate = Path(sys.executable if interpreter is None else interpreter)
+        if (
+            not candidate.is_absolute()
+            or any(character.isspace() for character in str(candidate))
+            or not candidate.is_file()
+            or not os.access(candidate, os.X_OK)
+        ):
+            raise GitHubAppConfigurationError(
+                "Git credential helper interpreter must be an absolute executable file"
+            )
+        self._interpreter = candidate.resolve()
 
     def acquire(self, *, remote: str | None = None, branch: str | None = None, repository: RepositoryIdentity | None = None, timeout_ms: int | None = None) -> _GitCredentialLease:
         if repository is not None and repository.canonical.casefold() != f"github:{self.config.repository_id}".casefold():
@@ -594,17 +674,28 @@ class GitHubAppGitCredentialProvider:
             raise GitHubProviderError(
                 "Git credential lease directory is unavailable", retryable=True
             ) from None
-        path = self._root / f"askpass-{os.urandom(16).hex()}.py"
+        lease_directory = self._root / f"lease-{os.urandom(16).hex()}"
+        path = lease_directory / "askpass.py"
         script = (
-            "#!/usr/bin/env python3\nimport os,sys\n"
-            "key='AEP_GITHUB_USERNAME' if 'username' in sys.argv[1].lower() else 'AEP_GITHUB_PASSWORD'\n"
-            "sys.stdout.write(os.environ.get(key,''))\n"
+            f"#!{self._interpreter}\nimport os,sys\n"
+            "if len(sys.argv)!=2: raise SystemExit(2)\n"
+            "prompt=sys.argv[1].casefold()\n"
+            "key=('AEP_GITHUB_USERNAME' if 'username' in prompt else "
+            "'AEP_GITHUB_PASSWORD' if 'password' in prompt else None)\n"
+            "if key is None or key not in os.environ: raise SystemExit(2)\n"
+            "sys.stdout.write(os.environ[key])\n"
         )
         try:
-            path.write_text(script, encoding="utf-8")
-            path.chmod(0o700)
+            lease_directory.mkdir(mode=0o700)
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as helper:
+                helper.write(script)
         except OSError:
             path.unlink(missing_ok=True)
+            try:
+                lease_directory.rmdir()
+            except OSError:
+                pass
             raise GitHubProviderError("Git credential lease could not be created", retryable=True) from None
         try:
             return _GitCredentialLease(
@@ -612,9 +703,15 @@ class GitHubAppGitCredentialProvider:
                     timeout_ms=10_000 if timeout_ms is None else timeout_ms
                 ),
                 path,
+                lease_directory,
+                self._interpreter,
             )
         except Exception:
             path.unlink(missing_ok=True)
+            try:
+                lease_directory.rmdir()
+            except OSError:
+                pass
             raise
 
 
@@ -627,6 +724,43 @@ class GitHubAppProviderBundle:
 
     def readiness(self, *, timeout_ms: int = 10_000) -> dict[str, Any]:
         return self.tokens.readiness(timeout_ms=timeout_ms)
+
+
+def git_credential_helper_readiness() -> dict[str, str]:
+    """Run a credential-free proof of the service askpass executable contract."""
+
+    helper_config = GitHubAppConfig(
+        app_id=1,
+        owner="aep-readiness",
+        repository="askpass",
+        authorized_branch_prefix="aep/execution/",
+    )
+
+    class _SyntheticTokens:
+        config = helper_config
+
+        @staticmethod
+        def token(*, timeout_ms: int) -> str:
+            if timeout_ms < 1:
+                raise TimeoutError("Git credential helper readiness deadline expired")
+            return "synthetic-readiness-value"
+
+    with TemporaryDirectory(prefix="aep-askpass-readiness-") as lease_root:
+        provider = GitHubAppGitCredentialProvider(
+            helper_config,
+            tokens=_SyntheticTokens(),  # type: ignore[arg-type]
+            lease_root=lease_root,
+        )
+        lease = provider.acquire(
+            remote="origin",
+            branch="aep/execution/readiness",
+            timeout_ms=5_000,
+        )
+        try:
+            lease.validate_startup(timeout_ms=5_000)
+        finally:
+            lease.close()
+    return {"interpreter": str(Path(sys.executable).resolve()), "status": "READY"}
 
 
 def github_app_provider_from_environment(
@@ -807,3 +941,9 @@ def _der_integer(value: tuple[int, bytes]) -> int:
     if value[0] != 2 or not value[1]:
         raise ValueError("not a DER integer")
     return int.from_bytes(value[1], "big", signed=False)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] != ["askpass-readiness"]:
+        raise SystemExit("usage: python -m aep.github_app_provider askpass-readiness")
+    print(json.dumps(git_credential_helper_readiness(), sort_keys=True))
