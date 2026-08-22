@@ -223,7 +223,7 @@ def dogfood_environment(
     revision = git_head(resource_root)
     git(resource_root, "checkout", "--detach", revision)
     if resource_git_autocrlf == "true":
-        git(resource_root, "checkout-index", "--force", "--all")
+        _materialize_crlf_worktree(resource_root / ".ai")
     environment = {
         "AEP_SERVICE_NAME": service,
         "AEP_SERVICE_PORT": "0",
@@ -248,6 +248,16 @@ def dogfood_environment(
     if resource_git_autocrlf is not None:
         environment["AEP_RESOURCE_GIT_AUTOCRLF"] = resource_git_autocrlf
     return environment
+
+
+def _materialize_crlf_worktree(root: Path) -> None:
+    """Create Windows checkout bytes without relying on the host Git build."""
+
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        content = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        path.write_bytes(content.replace(b"\n", b"\r\n"))
 
 
 def git_head(repository: Path) -> str:

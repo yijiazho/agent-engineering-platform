@@ -641,6 +641,23 @@ The executor checks them inside the network-disabled container before it runs
 build or test commands. A missing executable or incompatible version is a
 configuration image-readiness failure, not candidate test evidence.
 
+The checked-in validation-image gate consumes that same versioned Task rather
+than duplicating its commands. On a Docker-capable Linux worker it builds the
+reviewed Dockerfile for the production platform and exercises two separate,
+writable execution checkouts: an unchanged clean snapshot and a snapshot with
+only the declared documentation change. Neither checkout is the immutable
+Resource checkout. Both use the Task's mount, working directory, network,
+resource limits, probe order, command order, and shared timeout.
+
+The image lock records both the registry manifest digest consumed by the Task
+and the Docker image configuration digest produced by the source build. Release
+verification fails unless a source build has that identity, the published
+manifest resolves to the same identity, and the Python and Git probes pass by
+immutable digest with networking disabled. Promotion pushes the already tested
+local image, resolves the registry-reported digest, compares its configuration
+identity, and reruns the probes before that digest may be proposed for the
+versioned Resource graph.
+
 The production Docker CLI executor creates one invocation-scoped container with
 networking disabled by default, the authorized mount, and configured CPU and
 memory limits. Every command executes with `/workspace` as its working

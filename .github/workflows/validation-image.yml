@@ -1,0 +1,46 @@
+name: Validation image gate
+
+on:
+  pull_request:
+    paths:
+      - "deploy/validation/**"
+      - ".ai/tasks/run-validation.yaml"
+      - ".ai/tools/docker-validation.yaml"
+      - "fixtures/**"
+      - "schemas/**"
+      - "requirements-dev.lock"
+      - "pyproject.toml"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+      - ".gitattributes"
+      - ".github/workflows/validation-image.yml"
+  push:
+    branches: [main]
+    paths:
+      - "deploy/validation/**"
+      - ".ai/tasks/run-validation.yaml"
+      - ".ai/tools/docker-validation.yaml"
+      - "fixtures/**"
+      - "schemas/**"
+      - "requirements-dev.lock"
+      - "pyproject.toml"
+      - "src/**"
+      - "tests/**"
+      - "docs/**"
+      - ".gitattributes"
+      - ".github/workflows/validation-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out the reviewed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build and verify source and published validation images
+        run: python3 deploy/validation/verify.py verify
