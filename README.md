@@ -632,11 +632,11 @@ Implemented foundations currently include:
   credential leases, stable provider failures, and secret-free readiness.
 
 
-The remaining work includes observing the checked-in Dockerfile-based Linux
-validation gate in CI, finishing model-rate-limit verification, and then
+The remaining work includes finishing model-rate-limit verification and then
 resuming the controlled live dogfood pilot. AEP-047's automated clean and dirty
-exact-image gates pass locally; the task remains in progress until a controlled
-MTP-10 rerun records passing build and repository-test Evaluations. See
+source-built and exact-published-image gates pass locally and on the clean Linux
+CI worker; the task remains in progress until a controlled MTP-10 rerun records
+passing build and repository-test Evaluations. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

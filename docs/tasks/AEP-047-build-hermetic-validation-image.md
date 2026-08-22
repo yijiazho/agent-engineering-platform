@@ -253,7 +253,8 @@ Linux CI/release gate are implemented. The complete suite passes against both
 the source-built image and the promoted published digest in separate clean and
 documentation-only dirty Linux workspaces, and the CRLF fixture is
 host-independent. Promotion records the exact tested artifact identity rather
-than requiring later builds to reproduce build-created metadata. The task remains In Progress until the
-checked-in gate is observed on the clean CI checkout and the operator-controlled
-MTP-10 rerun records passing build and repository-test Evaluations before
-proceeding to EvaluateAcceptance.
+than requiring later builds to reproduce build-created metadata. GitHub Actions
+run `32553884007` passed the complete source-built and published-image gate from
+clean Linux checkout `73f3d480aab67005975f369651cc44e734471e56`. The task
+remains In Progress until the operator-controlled MTP-10 rerun records passing
+build and repository-test Evaluations before proceeding to EvaluateAcceptance.
