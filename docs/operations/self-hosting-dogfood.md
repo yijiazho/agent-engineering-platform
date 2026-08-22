@@ -169,7 +169,7 @@ $selfHostingRoot = (Resolve-Path .\deploy\self-hosting).Path
 ```
 
 Pass only if the registry manifest and validation image resolve, its image
-configuration identity matches the tested source build, both credential-free
+configuration identity matches the value captured during promotion, both credential-free
 readiness probes pass by digest with networking disabled, the Compose
 configuration is valid, the checkout is clean and detached at the pin, the two
 host roots do not overlap, and all three results report `Exists=True` and
@@ -184,12 +184,13 @@ by CI:
 python deploy/validation/verify.py verify
 ```
 
-This command builds the reviewed Dockerfile, rejects contract drift, and runs
-the exact readiness, offline bootstrap, and complete test command sequence in
-separate clean and documentation-only dirty workspaces. It then proves the
-published digest has the source image's configuration identity and repeats the
-credential-free probes by digest. For focused diagnosis, the host-side suites
-may also be run directly:
+This command rejects a dirty release checkout and contract drift before it
+builds the reviewed Dockerfile from a Dockerfile-only context. It runs the exact
+readiness, offline bootstrap, and complete test sequence in separate clean and
+documentation-only dirty workspaces against both the fresh build and published
+digest. It also proves the published digest has the configuration identity
+captured during promotion and repeats the credential-free probes by digest.
+For focused diagnosis, the host-side suites may also be run directly:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_mvp_harness.py tests/test_dogfood_deployment.py

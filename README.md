@@ -267,13 +267,15 @@ and CPU, memory, timeout, and retry limits are explicit.
 
 `deploy/validation/image.lock.json` records the consumed validation-image
 digest, immutable Python base digest, pinned Debian package versions, and dated
-Debian snapshot. It also records the configuration digest of the source-built
-image and the exact production gate inputs. The checked-in verification
+Debian snapshot. It also records the configuration digest captured when the
+published artifact was promoted and the exact production gate inputs. The checked-in verification
 entrypoint rejects drift between that lock, the RunValidation Task, the
 expected bundle, and the Dockerfile; builds the reviewed Dockerfile; and runs
 the complete production command sequence in clean and documentation-only dirty
-Linux workspaces. It then proves that the published digest resolves to the same
-image and repeats both readiness probes by digest with networking disabled.
+Linux workspaces. It independently verifies the promoted image identity and
+runs the same clean/dirty suite plus both network-disabled readiness probes by
+published digest. A fresh rebuild is not required to reproduce Docker's
+build-created configuration metadata.
 See [the validation image runbook](deploy/validation/README.md) for local,
 CI, and promotion commands.
 

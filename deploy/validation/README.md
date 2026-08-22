@@ -7,8 +7,9 @@ without network access.
 `Dockerfile` builds the dedicated validation image from a digest-pinned Python
 base and adds only Git and CA certificates. The published digest in
 `image.lock.json` must match `.ai/tasks/run-validation.yaml` and the
-deterministic bundle fixture. The lock also records the source image
-configuration digest and every isolation input consumed by `verify.py`.
+deterministic bundle fixture. The lock also records the image configuration
+digest captured during promotion and every isolation input consumed by
+`verify.py`.
 RunValidation repeats the bounded readiness checks in its sandbox before
 build/test commands. A missing executable or version mismatch is configuration
 evidence, not a failed candidate test.
@@ -45,13 +46,15 @@ python deploy/validation/verify.py verify
 
 The gate reads the versioned RunValidation Resource, image lock, and
 deterministic fixture. It fails on drift, builds this Dockerfile for
-`linux/amd64`, verifies that the build has the locked image identity, and runs
-the declared Python and Git probes without credentials or networking. It then
-runs the exact offline bootstrap and complete test command in two separate
-writable workspaces: one clean snapshot and one containing only a bounded
-documentation change. Both containers use `/workspace`, `--network none`, two
-CPUs, 1 GiB of memory, the declared command order, and the shared 600-second
-deadline. The Resource checkout is never mounted as a candidate workspace.
+`linux/amd64` from a temporary context containing only the Dockerfile, and runs
+the declared Python and Git probes without credentials or networking. It runs
+the exact offline bootstrap and complete test command in separate clean and
+bounded documentation-dirty workspaces against both the fresh source build and
+the locked published digest. Every container uses `/workspace`, `--network
+none`, two CPUs, 1 GiB of memory, the declared command order, and the shared
+600-second deadline. The Resource checkout is never mounted as a candidate
+workspace. Release mode rejects a dirty checkout before Docker sees the
+Dockerfile; the explicit development mode is the only exception.
 
 During development only, include the current tracked and untracked working-tree
 snapshot without claiming release validation:
@@ -61,6 +64,8 @@ python deploy/validation/verify.py candidate --include-working-tree
 ```
 
 CI invokes `verify`, not `candidate`, on a clean Docker-capable Linux worker.
+Checkout credential persistence is disabled, and the Docker build context
+cannot contain `.git`, the source tree, or runner credential files.
 
 ## Publish And Promote
 

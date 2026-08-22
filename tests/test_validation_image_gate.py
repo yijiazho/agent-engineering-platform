@@ -142,6 +142,74 @@ class FakeRunner(verify.CommandRunner):
         return subprocess.CompletedProcess(argv, 0, stdout="{}", stderr="")
 
 
+def test_release_gate_rejects_dirty_checkout_before_docker_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = verify.load_contract(ROOT)
+    runner = FakeRunner(contract.verified_image_id)
+    built: list[str] = []
+    monkeypatch.setattr(
+        verify,
+        "_build_source",
+        lambda *args, **kwargs: built.append("built") or contract.verified_image_id,
+    )
+    runner.run = lambda argv, **kwargs: subprocess.CompletedProcess(
+        argv, 0, stdout=" M deploy/validation/Dockerfile\n", stderr=""
+    )
+
+    with pytest.raises(verify.ValidationGateError, match="clean checkout"):
+        verify.verify_source(
+            contract,
+            runner,
+            tag="candidate",
+            include_working_tree=False,
+        )
+
+    assert built == []
+
+
+def test_source_build_uses_a_dockerfile_only_context() -> None:
+    contract = verify.load_contract(ROOT)
+
+    class BuildRunner(FakeRunner):
+        def run(self, argv, **kwargs):
+            arguments = tuple(argv)
+            if arguments[:2] == ("docker", "build"):
+                context = Path(arguments[-1])
+                dockerfile = Path(arguments[arguments.index("--file") + 1])
+                assert context != ROOT
+                assert dockerfile.parent == context
+                assert {path.name for path in context.iterdir()} == {"Dockerfile"}
+            return super().run(argv, **kwargs)
+
+    runner = BuildRunner(contract.verified_image_id)
+
+    assert verify._build_source("candidate", contract, runner) == contract.verified_image_id
+
+
+def test_source_gate_does_not_require_a_fresh_build_to_match_promoted_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = verify.load_contract(ROOT)
+    fresh_id = "sha256:" + "c" * 64
+    verified: list[str] = []
+    monkeypatch.setattr(verify, "_build_source", lambda *args, **kwargs: fresh_id)
+    monkeypatch.setattr(verify, "_probe_image", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        verify,
+        "_verify_image_workspaces",
+        lambda image, *args, **kwargs: verified.append(image),
+    )
+
+    assert verify.verify_source(
+        contract,
+        FakeRunner(contract.verified_image_id),
+        tag="candidate",
+        include_working_tree=True,
+    ) == fresh_id
+    assert verified == ["candidate"]
+
+
 def test_published_gate_rejects_a_digest_with_a_different_image_identity() -> None:
     contract = verify.load_contract(ROOT)
     runner = FakeRunner("sha256:" + "f" * 64)
@@ -161,12 +229,33 @@ def test_published_gate_reruns_credential_free_probes_by_digest() -> None:
     assert all(contract.image in call for call in probe_calls)
 
 
+def test_release_gate_runs_clean_and_dirty_suites_against_published_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = verify.load_contract(ROOT)
+    runner = FakeRunner(contract.verified_image_id)
+    verified: list[tuple[str, bool]] = []
+    monkeypatch.setattr(verify, "_require_clean_checkout", lambda *args: None)
+    monkeypatch.setattr(
+        verify,
+        "_verify_image_workspaces",
+        lambda image, contract, runner, *, include_working_tree: verified.append(
+            (image, include_working_tree)
+        ),
+    )
+
+    verify.verify_published(contract, runner, verify_workspaces=True)
+
+    assert verified == [(contract.image, False)]
+
+
 def test_ci_uses_the_checked_in_gate_for_all_validation_inputs() -> None:
     workflow = (ROOT / ".github/workflows/validation-image.yml").read_text(
         encoding="utf-8"
     )
 
     assert "python3 deploy/validation/verify.py verify" in workflow
+    assert "persist-credentials: false" in workflow
     for path in (
         "deploy/validation/**",
         ".ai/tasks/run-validation.yaml",

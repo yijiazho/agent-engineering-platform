@@ -109,7 +109,7 @@ def load_contract(root: Path = ROOT) -> ValidationContract:
         raise ValidationGateError("lock image was not selected by the verification gate")
     verified_image_id = str(gate.get("verifiedImageId", ""))
     if not DIGEST_PATTERN.fullmatch(verified_image_id):
-        raise ValidationGateError("lock requires a verified source image configuration digest")
+        raise ValidationGateError("lock requires a promoted image configuration digest")
     if gate.get("network") != "none" or gate.get("workdir") != "/workspace":
         raise ValidationGateError("validation gate must disable networking and use /workspace")
     if gate.get("platform") != "linux/amd64":
@@ -301,33 +301,43 @@ def _prepare_workspaces(
     return clean, dirty
 
 
+def _require_clean_checkout(root: Path, runner: CommandRunner) -> None:
+    status = runner.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=root,
+        capture=True,
+    ).stdout
+    if status:
+        raise ValidationGateError(
+            "release verification requires a clean checkout; "
+            "use --include-working-tree only for development"
+        )
+
+
 def _build_source(tag: str, contract: ValidationContract, runner: CommandRunner) -> str:
-    runner.run(
-        [
-            "docker", "build", "--pull=false", "--platform", contract.platform,
-            "--file", str(ROOT / "deploy/validation/Dockerfile"),
-            "--label", f"org.opencontainers.image.source={SOURCE_LABEL}",
-            "--tag", tag, str(ROOT),
-        ],
-        timeout=max(1200, contract.timeout_ms / 1000),
-    )
+    with tempfile.TemporaryDirectory(prefix="aep-validation-build-context-") as temporary:
+        context = Path(temporary)
+        dockerfile = context / "Dockerfile"
+        shutil.copy2(ROOT / "deploy/validation/Dockerfile", dockerfile)
+        runner.run(
+            [
+                "docker", "build", "--pull=false", "--platform", contract.platform,
+                "--file", str(dockerfile),
+                "--label", f"org.opencontainers.image.source={SOURCE_LABEL}",
+                "--tag", tag, str(context),
+            ],
+            timeout=max(1200, contract.timeout_ms / 1000),
+        )
     return _image_id(tag, runner)
 
 
-def verify_source(
+def _verify_image_workspaces(
+    image: str,
     contract: ValidationContract,
     runner: CommandRunner,
     *,
-    tag: str,
     include_working_tree: bool,
-    require_locked_identity: bool,
-) -> str:
-    image_id = _build_source(tag, contract, runner)
-    if require_locked_identity and image_id != contract.verified_image_id:
-        raise ValidationGateError(
-            "reviewed Dockerfile image differs from the image identity recorded in the lock"
-        )
-    _probe_image(tag, contract, runner)
+) -> None:
     with tempfile.TemporaryDirectory(prefix="aep-validation-gate-") as temporary:
         clean, dirty = _prepare_workspaces(
             ROOT,
@@ -336,20 +346,51 @@ def verify_source(
             runner,
             include_working_tree=include_working_tree,
         )
-        _verify_workspace(tag, clean, "clean", contract, runner)
-        _verify_workspace(tag, dirty, "dirty", contract, runner)
+        _verify_workspace(image, clean, "clean", contract, runner)
+        _verify_workspace(image, dirty, "dirty", contract, runner)
+
+
+def verify_source(
+    contract: ValidationContract,
+    runner: CommandRunner,
+    *,
+    tag: str,
+    include_working_tree: bool,
+) -> str:
+    if not include_working_tree:
+        _require_clean_checkout(ROOT, runner)
+    image_id = _build_source(tag, contract, runner)
+    _probe_image(tag, contract, runner)
+    _verify_image_workspaces(
+        tag, contract, runner, include_working_tree=include_working_tree
+    )
     return image_id
 
 
-def verify_published(contract: ValidationContract, runner: CommandRunner) -> str:
+def verify_published(
+    contract: ValidationContract,
+    runner: CommandRunner,
+    *,
+    verify_workspaces: bool = False,
+    include_working_tree: bool = False,
+) -> str:
+    if verify_workspaces and not include_working_tree:
+        _require_clean_checkout(ROOT, runner)
     runner.run(["docker", "manifest", "inspect", contract.image], capture=True)
     runner.run(["docker", "pull", "--platform", contract.platform, contract.image])
     image_id = _image_id(contract.image, runner)
     if image_id != contract.verified_image_id:
         raise ValidationGateError(
-            "published digest does not resolve to the source image that passed the gate"
+            "published digest does not resolve to the image recorded during promotion"
         )
     _probe_image(contract.image, contract, runner)
+    if verify_workspaces:
+        _verify_image_workspaces(
+            contract.image,
+            contract,
+            runner,
+            include_working_tree=include_working_tree,
+        )
     return image_id
 
 
@@ -368,7 +409,6 @@ def promote(
         runner,
         tag=candidate,
         include_working_tree=include_working_tree,
-        require_locked_identity=False,
     )
     runner.run(["docker", "tag", candidate, target])
     pushed = runner.run(["docker", "push", target], capture=True)
@@ -403,7 +443,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     runner,
                     tag=arguments.tag,
                     include_working_tree=arguments.include_working_tree,
-                    require_locked_identity=False,
                 )
             }
         elif arguments.mode == "verify":
@@ -412,9 +451,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 runner,
                 tag=arguments.tag,
                 include_working_tree=arguments.include_working_tree,
-                require_locked_identity=True,
             )
-            published_id = verify_published(contract, runner)
+            published_id = verify_published(
+                contract,
+                runner,
+                verify_workspaces=True,
+                include_working_tree=arguments.include_working_tree,
+            )
             result = {"sourceImageId": source_id, "publishedImageId": published_id}
         elif arguments.mode == "published":
             result = {"publishedImageId": verify_published(contract, runner)}

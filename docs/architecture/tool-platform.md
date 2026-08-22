@@ -650,13 +650,16 @@ Resource checkout. Both use the Task's mount, working directory, network,
 resource limits, probe order, command order, and shared timeout.
 
 The image lock records both the registry manifest digest consumed by the Task
-and the Docker image configuration digest produced by the source build. Release
-verification fails unless a source build has that identity, the published
-manifest resolves to the same identity, and the Python and Git probes pass by
-immutable digest with networking disabled. Promotion pushes the already tested
-local image, resolves the registry-reported digest, compares its configuration
-identity, and reruns the probes before that digest may be proposed for the
-versioned Resource graph.
+and the Docker image configuration digest captured during promotion. Release
+verification runs the complete clean/dirty suite independently against a fresh
+source build and that locked published artifact. It does not compare a later
+rebuild's configuration digest because Docker and package installation may
+create non-semantic metadata. Promotion pushes the already tested local image,
+resolves the registry-reported digest, compares its configuration identity,
+and reruns the probes before that digest may be proposed for the versioned
+Resource graph. The gate rejects a dirty release checkout before building and
+uses a Dockerfile-only context so checkout credentials and repository contents
+are unavailable to build instructions.
 
 The production Docker CLI executor creates one invocation-scoped container with
 networking disabled by default, the authorized mount, and configured CPU and
