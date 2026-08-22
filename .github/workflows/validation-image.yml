@@ -34,6 +34,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   verify:
@@ -44,5 +45,14 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Build and verify source and published validation images
-        run: python3 deploy/validation/verify.py verify
+      - name: Build and verify the fresh source image
+        run: python3 deploy/validation/verify.py candidate
+      - name: Authenticate for locked published-image verification
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Verify the locked published image
+        run: python3 deploy/validation/verify.py published --verify-workspaces
+      - name: Remove registry credentials
+        if: always()
+        run: docker logout ghcr.io

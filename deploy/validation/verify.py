@@ -445,6 +445,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--tag", default="aep-validation-gate:local")
     parser.add_argument("--target")
     parser.add_argument("--include-working-tree", action="store_true")
+    parser.add_argument("--verify-workspaces", action="store_true")
     arguments = parser.parse_args(argv)
     contract = load_contract()
     runner = CommandRunner()
@@ -473,7 +474,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             result = {"sourceImageId": source_id, "publishedImageId": published_id}
         elif arguments.mode == "published":
-            result = {"publishedImageId": verify_published(contract, runner)}
+            result = {
+                "publishedImageId": verify_published(
+                    contract,
+                    runner,
+                    verify_workspaces=arguments.verify_workspaces,
+                    include_working_tree=arguments.include_working_tree,
+                )
+            }
         else:
             if not arguments.target:
                 raise ValidationGateError("promotion requires --target")

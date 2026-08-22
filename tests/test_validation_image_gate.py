@@ -254,8 +254,17 @@ def test_ci_uses_the_checked_in_gate_for_all_validation_inputs() -> None:
         encoding="utf-8"
     )
 
-    assert "python3 deploy/validation/verify.py verify" in workflow
+    source = "python3 deploy/validation/verify.py candidate"
+    login = "docker login ghcr.io"
+    published = "python3 deploy/validation/verify.py published --verify-workspaces"
+    assert source in workflow
+    assert login in workflow
+    assert published in workflow
+    assert workflow.index(source) < workflow.index(login) < workflow.index(published)
     assert "persist-credentials: false" in workflow
+    assert "packages: read" in workflow
+    assert "GHCR_TOKEN: ${{ github.token }}" in workflow
+    assert "docker logout ghcr.io" in workflow
     for path in (
         "deploy/validation/**",
         ".ai/tasks/run-validation.yaml",

@@ -66,9 +66,13 @@ snapshot without claiming release validation:
 python deploy/validation/verify.py candidate --include-working-tree
 ```
 
-CI invokes `verify`, not `candidate`, on a clean Docker-capable Linux worker.
-Checkout credential persistence is disabled, and the Docker build context
-cannot contain `.git`, the source tree, or runner credential files.
+On a clean Docker-capable Linux worker, CI first invokes `candidate` without
+registry credentials. Only after the fresh source image passes does CI obtain a
+repository-scoped, read-only package token and invoke `published
+--verify-workspaces`. Checkout credential persistence is disabled, and the
+Docker build context cannot contain `.git`, the source tree, or runner
+credential files. Registry credentials are never passed to a build or
+validation container and are removed after published-image verification.
 
 ## Publish And Promote
 
