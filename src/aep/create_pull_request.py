@@ -1303,6 +1303,7 @@ def _tool_failure(label: str, result: ToolResult) -> TaskExecutionResult:
         classification = FailureClass.POLICY
     elif (
         label == "Git push"
+        and isinstance(result.output, Mapping)
         and result.output.get("remoteMutationState") == "NOT_ATTEMPTED"
         and failure
         in {

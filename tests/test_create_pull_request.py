@@ -12,7 +12,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
-from aep.create_pull_request import CreatePullRequestTaskHandler
+from aep.create_pull_request import CreatePullRequestTaskHandler, _tool_failure
 from aep.execution_checkout import (
     CheckoutState,
     ExecutionCheckout,
@@ -439,6 +439,24 @@ def test_pre_mutation_helper_startup_failure_is_recoverable() -> None:
     push = store.get(store.get(CREATE_ID)["toolInvocationIds"][-1])
     assert push["output"]["remoteMutationState"] == "NOT_ATTEMPTED"
     assert github.calls == []
+
+
+def test_push_failure_without_mutation_evidence_is_permanent() -> None:
+    result = ToolResult(
+        status=ToolResultStatus.FAILED,
+        output=None,
+        logs_ref=None,
+        metrics=ToolMetrics(duration_ms=1),
+        started_at=TIMESTAMP,
+        completed_at=TIMESTAMP,
+        failure_class=ToolFailureClass.STARTUP,
+        failure_message="Git adapter did not start",
+    )
+
+    failure = _tool_failure("Git push", result)
+
+    assert failure.failure_class is FailureClass.PERMANENT
+    assert failure.message == "Git push failed: Git adapter did not start"
 
 
 def test_provider_failure_is_persisted_and_not_repeated() -> None:
