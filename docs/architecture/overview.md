@@ -415,6 +415,14 @@ Human Approval (optional)
 Publish Results
 ```
 
+For the self-hosting pull-request path, Publication Policy consumes the
+canonical fields `patchGenerated`, `validationRan`,
+`requiredArtifactsPresent`, `requiredEvaluationsPresent`,
+`allRequiredEvaluationsPassed`, `noPriorPolicyViolation`, and `failures`.
+Version `publication-evidence:1.1.0` allows only `github.create_pr` when all six
+booleans are true and the failure list is empty; unmatched input remains
+`DENY`. Git push and GitHub PR creation remain separate capability gates.
+
 This lifecycle is identical regardless of workflow purpose.
 
 Only resource definitions change.

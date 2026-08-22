@@ -486,6 +486,25 @@
                   "effect": { "type": "string", "enum": ["allow", "deny", "require-approval"] }
                 }
               }
+            },
+            "repositoryRevision": { "$ref": "#/$defs/repositoryRevision" },
+            "publicationTarget": { "$ref": "#/$defs/jsonObject" },
+            "generatedArtifactIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "evaluationResultIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "priorPolicyDecisionIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["patchGenerated", "validationRan", "requiredArtifactsPresent", "requiredEvaluationsPresent", "allRequiredEvaluationsPassed", "noPriorPolicyViolation", "failures"],
+              "properties": {
+                "patchGenerated": { "type": "boolean" },
+                "validationRan": { "type": "boolean" },
+                "requiredArtifactsPresent": { "type": "boolean" },
+                "requiredEvaluationsPresent": { "type": "boolean" },
+                "allRequiredEvaluationsPassed": { "type": "boolean" },
+                "noPriorPolicyViolation": { "type": "boolean" },
+                "failures": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+              }
             }
           },
           "allOf": [
@@ -504,6 +523,30 @@
                   "resourceScope",
                   "evaluatedRule",
                   "matchedRules"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "gate": { "const": "PUBLICATION" }
+                },
+                "required": ["gate"]
+              },
+              "then": {
+                "required": [
+                  "approvalRequired",
+                  "evaluatedAt",
+                  "subject",
+                  "resourceScope",
+                  "evaluatedRule",
+                  "matchedRules",
+                  "repositoryRevision",
+                  "publicationTarget",
+                  "generatedArtifactIds",
+                  "evaluationResultIds",
+                  "priorPolicyDecisionIds",
+                  "evidence"
                 ]
               }
             }

@@ -130,6 +130,41 @@ class CreatePullRequestTaskHandler:
             evidence = self._accepted_evidence(task_execution, workflow)
             issue = self._issue(workflow, configuration["repository"])
             title, body = self._description(issue, evidence)
+            commit_id = self._runtime_id(
+                "toolinvocation", f"{task_execution['id']}:git-commit"
+            )
+            push_id = self._runtime_id(
+                "toolinvocation", f"{task_execution['id']}:git-push"
+            )
+            candidate_action = {
+                "action": CREATE_PR_CAPABILITY,
+                "target": {
+                    "repository": configuration["repository"],
+                    "head": configuration["head"],
+                    "base": configuration["base"],
+                    "repositoryRevision": workflow["repositoryRevision"],
+                    "commitToolInvocationId": commit_id,
+                    "pushToolInvocationId": push_id,
+                },
+            }
+            publication = self._evaluate_publication(
+                task,
+                task_execution,
+                workflow,
+                configuration,
+                evidence,
+                candidate_action,
+            )
+            self._attach(
+                task_execution["id"],
+                {"policyDecisionIds": [publication["id"]]},
+            )
+            if publication["decision"] != "ALLOW":
+                return TaskExecutionResult.failure(
+                    FailureClass.POLICY,
+                    f"Publication Policy {publication['decision']}: {publication['reason']}",
+                )
+
             push_policy = self._evaluate_capability(
                 task_execution,
                 workflow,
@@ -154,9 +189,6 @@ class CreatePullRequestTaskHandler:
                     f"git.push {push_policy['decision']}: {push_policy['reason']}",
                 )
 
-            commit_id = self._runtime_id(
-                "toolinvocation", f"{task_execution['id']}:git-commit"
-            )
             patch_artifact = next(
                 item
                 for item in evidence["artifacts"]
@@ -210,39 +242,6 @@ class CreatePullRequestTaskHandler:
                 return TaskExecutionResult.failure(
                     FailureClass.PERMANENT,
                     "Git commit did not produce a distinct immutable head revision",
-                )
-
-            push_id = self._runtime_id(
-                "toolinvocation", f"{task_execution['id']}:git-push"
-            )
-            candidate_action = {
-                "action": CREATE_PR_CAPABILITY,
-                "target": {
-                    "repository": configuration["repository"],
-                    "head": configuration["head"],
-                    "base": configuration["base"],
-                    "repositoryRevision": workflow["repositoryRevision"],
-                    "headRevision": head_revision,
-                    "commitToolInvocationId": commit_invocation["id"],
-                    "pushToolInvocationId": push_id,
-                },
-            }
-            publication = self._evaluate_publication(
-                task,
-                task_execution,
-                workflow,
-                configuration,
-                evidence,
-                candidate_action,
-            )
-            self._attach(
-                task_execution["id"],
-                {"policyDecisionIds": [publication["id"]]},
-            )
-            if publication["decision"] != "ALLOW":
-                return TaskExecutionResult.failure(
-                    FailureClass.POLICY,
-                    f"Publication Policy {publication['decision']}: {publication['reason']}",
                 )
 
             if not self._publication_guard():
@@ -1046,7 +1045,7 @@ class CreatePullRequestTaskHandler:
                 "successful GitHub invocation lacks pull-request evidence"
             )
         timestamp = self._timestamp()
-        policy_ids = [push_policy["id"], publication["id"], github_policy["id"]]
+        policy_ids = [publication["id"], push_policy["id"], github_policy["id"]]
         content = {
             "title": title,
             "body": body,

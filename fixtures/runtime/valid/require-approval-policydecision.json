@@ -13,7 +13,7 @@
       {
         "kind": "Policy",
         "name": "publication-policy",
-        "version": "1.0.0"
+        "version": "1.1.0"
       }
     ]
   },
@@ -23,12 +23,35 @@
     {
       "kind": "Policy",
       "name": "publication-policy",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ],
   "action": "github.create_pr",
   "decision": "REQUIRE_APPROVAL",
   "reason": "Opening a pull request requires approval.",
   "approvalRequired": true,
-  "evaluatedAt": "2026-07-09T10:04:00Z"
+  "evaluatedAt": "2026-07-09T10:04:00Z",
+  "subject": "TaskExecution:taskexecution-000000000001",
+  "resourceScope": {"repository": "acme/widgets"},
+  "evaluatedRule": null,
+  "matchedRules": [],
+  "repositoryRevision": "1111111111111111111111111111111111111111",
+  "publicationTarget": {
+    "repository": "acme/widgets",
+    "head": "aep/execution/example",
+    "base": "main",
+    "repositoryRevision": "1111111111111111111111111111111111111111"
+  },
+  "generatedArtifactIds": ["generatedartifact-111111111111"],
+  "evaluationResultIds": ["evaluationresult-111111111111"],
+  "priorPolicyDecisionIds": [],
+  "evidence": {
+    "patchGenerated": true,
+    "validationRan": true,
+    "requiredArtifactsPresent": true,
+    "requiredEvaluationsPresent": true,
+    "allRequiredEvaluationsPassed": true,
+    "noPriorPolicyViolation": true,
+    "failures": []
+  }
 }

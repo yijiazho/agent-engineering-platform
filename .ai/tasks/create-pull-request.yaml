@@ -1,6 +1,6 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
-  "metadata": {"name": "create-pull-request", "version": "1.1.0"},
+  "metadata": {"name": "create-pull-request", "version": "1.2.0"},
   "spec": {
     "objective": "Publish accepted changes as an unmerged pull request against main.",
     "agentRef": {"kind": "Agent", "name": "pr-writer", "version": "1.1.0"},
@@ -8,7 +8,7 @@
     "requiredContext": ["issue", "prior-artifacts", "policies"],
     "inputContextTokenBudget": 32000,
     "policies": [
-      {"kind": "Policy", "name": "publication-evidence", "version": "1.0.0"},
+      {"kind": "Policy", "name": "publication-evidence", "version": "1.1.0"},
       {"kind": "Policy", "name": "publication-capabilities", "version": "1.0.0"}
     ],
     "publication": {

@@ -416,7 +416,7 @@ def test_pre_execution_decision_schema_rejects_incomplete_fixture() -> None:
     assert list(_policy_decision_validator().iter_errors(fixture))
 
 
-def test_publication_decision_schema_does_not_require_pre_execution_evidence() -> None:
+def test_publication_decision_schema_accepts_complete_safe_evidence() -> None:
     fixture = _load_json(
         ROOT / "fixtures/runtime/valid/require-approval-policydecision.json"
     )

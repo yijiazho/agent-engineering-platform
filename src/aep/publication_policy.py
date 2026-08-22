@@ -40,6 +40,19 @@ _EFFECT_DECISION = {
     "deny": PolicyDecision.DENY,
 }
 
+# This is the authoritative vocabulary supplied to versioned publication Policy
+# conditions and persisted in PolicyDecision.evidence. Changing it is a public
+# contract change and requires a new Policy Resource version.
+PUBLICATION_EVIDENCE_BOOLEAN_FIELDS = (
+    "patchGenerated",
+    "validationRan",
+    "requiredArtifactsPresent",
+    "requiredEvaluationsPresent",
+    "allRequiredEvaluationsPassed",
+    "noPriorPolicyViolation",
+)
+PUBLICATION_EVIDENCE_FIELDS = (*PUBLICATION_EVIDENCE_BOOLEAN_FIELDS, "failures")
+
 
 class PublicationPolicyContractError(ValueError):
     """Raised when publication inputs cannot form trustworthy evidence."""
@@ -143,7 +156,12 @@ class PublicationPolicy:
             "noPriorPolicyViolation": not any(
                 value.get("decision") == "DENY" for value in prior_records.values()
             ),
+            "failures": evidence_failures,
         }
+        if tuple(evidence_summary) != PUBLICATION_EVIDENCE_FIELDS:
+            raise PublicationPolicyContractError(
+                "publication evidence summary does not match the canonical contract"
+            )
         policy_input = {
             "candidateAction": deepcopy(dict(candidate_action)),
             "evidence": evidence_summary,
@@ -224,7 +242,7 @@ class PublicationPolicy:
             "generatedArtifactIds": list(artifact_ids),
             "evaluationResultIds": list(evaluation_ids),
             "priorPolicyDecisionIds": list(prior_records),
-            "evidence": evidence_summary | {"failures": evidence_failures},
+            "evidence": evidence_summary,
         }
         _validate_decision(record)
         key = _decision_key(

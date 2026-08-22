@@ -1,13 +1,18 @@
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from aep.capability_policy import ApplicablePolicy, PolicyScope
 from aep.publication_policy import (
+    PUBLICATION_EVIDENCE_BOOLEAN_FIELDS,
+    PUBLICATION_EVIDENCE_FIELDS,
     PublicationPolicy,
     PublicationPolicyContractError,
     PublicationPolicyIdentityConflictError,
 )
+from aep.resource_loader import ResourceLoader, ResourceRef
 from aep.runtime_store import InMemoryRuntimeObjectStore
 
 
@@ -17,6 +22,14 @@ TRACE_ID = "trace-publication-1"
 REVISION = "1" * 40
 ARTIFACT_ID = "generatedartifact-cccccccccccc"
 EVALUATION_ID = "evaluationresult-dddddddddddd"
+ROOT = Path(__file__).parents[1]
+
+
+def repository_policy() -> dict:
+    resources = ResourceLoader(ROOT).load()
+    loaded = resources.get(ResourceRef("Policy", "publication-evidence", "1.1.0"))
+    assert loaded is not None
+    return loaded.data
 
 
 def policy(effect: str = "allow", *, reason: str = "Evidence permits publication", conditions=None) -> dict:
@@ -77,18 +90,20 @@ def evaluation(*, outcome: str = "PASS", status: str = "SUCCEEDED") -> dict:
 
 
 def evaluate(*, store=None, artifacts=None, evaluations=None, required_artifacts=None,
-             required_evaluations=None, prior=None, policies=None, decision_id="policydecision-eeeeeeeeeeee"):
+             required_evaluations=None, prior=None, policies=None,
+             decision_id="policydecision-eeeeeeeeeeee", action="github.create_pr"):
     runtime_store = store or InMemoryRuntimeObjectStore()
     artifact_values = [artifact()] if artifacts is None else artifacts
     evaluation_values = [evaluation()] if evaluations is None else evaluations
     prior_values = [] if prior is None else prior
     for value in [*artifact_values, *evaluation_values, *prior_values]:
-        runtime_store.create(value, deterministic_key=f"test-evidence:{value['id']}")
+        if runtime_store.get(value["id"]) is None:
+            runtime_store.create(value, deterministic_key=f"test-evidence:{value['id']}")
     return PublicationPolicy(runtime_store).evaluate(
         decision_id=decision_id,
         task_execution_id=TASK_ID,
         candidate_action={
-            "action": "github.create_pr",
+            "action": action,
             "target": {
                 "repository": "acme/widgets",
                 "head": "agent/change",
@@ -146,7 +161,7 @@ def test_prior_denial_overrides_an_allow_rule() -> None:
     prior = {
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "PolicyDecision",
-        "id": "policydecision-prior11111111",
+        "id": "policydecision-a11111111111",
         "traceId": TRACE_ID,
         "createdAt": "2026-08-06T10:00:00Z",
         "updatedAt": "2026-08-06T10:00:00Z",
@@ -174,6 +189,26 @@ def test_require_approval_rule_is_returned_and_explained() -> None:
     assert result["decision"] == "REQUIRE_APPROVAL"
     assert result["approvalRequired"] is True
     assert result["reason"] == "Owner approval required"
+
+
+def test_prior_require_approval_remains_approval_required() -> None:
+    store = InMemoryRuntimeObjectStore()
+    prior = evaluate(
+        store=store,
+        decision_id="policydecision-a22222222222",
+        policies=[ApplicablePolicy(PolicyScope.TASK, policy("require-approval"))],
+    )
+
+    result = evaluate(
+        store=store,
+        decision_id="policydecision-a33333333333",
+        prior=[prior],
+        policies=[ApplicablePolicy(PolicyScope.TASK, repository_policy())],
+    )
+
+    assert result["decision"] == "REQUIRE_APPROVAL"
+    assert result["evaluatedRule"] is None
+    assert result["priorPolicyDecisionIds"] == [prior["id"]]
 
 
 def test_most_restrictive_matching_publication_rule_wins() -> None:
@@ -204,6 +239,81 @@ def test_rule_conditions_can_match_evidence_summary() -> None:
     )
 
     assert evaluate(policies=[ApplicablePolicy(PolicyScope.WORKSPACE, matching)])["decision"] == "ALLOW"
+
+
+def test_repository_policy_matches_the_canonical_runtime_evidence() -> None:
+    result = evaluate(
+        policies=[ApplicablePolicy(PolicyScope.TASK, repository_policy())]
+    )
+
+    assert result["decision"] == "ALLOW"
+    assert tuple(result["evidence"]) == PUBLICATION_EVIDENCE_FIELDS
+    assert result["policyRefs"] == [
+        {"kind": "Policy", "name": "publication-evidence", "version": "1.1.0"}
+    ]
+    assert result["matchedRules"] == [
+        {
+            "scope": "Task",
+            "policyRef": result["policyRefs"][0],
+            "ruleIndex": 0,
+            "effect": "allow",
+        }
+    ]
+    assert result["evaluatedRule"] == result["matchedRules"][0]
+
+
+@pytest.mark.parametrize("field", PUBLICATION_EVIDENCE_BOOLEAN_FIELDS)
+@pytest.mark.parametrize("change", ["false", "missing"])
+def test_repository_rule_rejects_each_false_or_missing_canonical_field(
+    field: str, change: str
+) -> None:
+    conditions = repository_policy()["spec"]["rules"][0]["conditions"]
+    evidence = {
+        name: True for name in PUBLICATION_EVIDENCE_BOOLEAN_FIELDS
+    } | {"failures": []}
+    if change == "false":
+        evidence[field] = False
+    else:
+        evidence.pop(field)
+
+    assert not Draft202012Validator(conditions).is_valid(
+        {
+            "candidateAction": {"action": "github.create_pr"},
+            "evidence": evidence,
+        }
+    )
+
+
+def test_repository_rule_rejects_failures_unknown_action_and_vocabulary_drift() -> None:
+    conditions = repository_policy()["spec"]["rules"][0]["conditions"]
+    evidence = {
+        name: True for name in PUBLICATION_EVIDENCE_BOOLEAN_FIELDS
+    } | {"failures": ["unsafe"]}
+    assert not Draft202012Validator(conditions).is_valid(
+        {"candidateAction": {"action": "git.push"}, "evidence": evidence}
+    )
+    evidence["failures"] = []
+    evidence["renamedField"] = True
+    assert not Draft202012Validator(conditions).is_valid(
+        {"candidateAction": {"action": "github.create_pr"}, "evidence": evidence}
+    )
+
+
+def test_repository_policy_denies_unknown_action_in_production_path() -> None:
+    result = evaluate(
+        action="git.push",
+        policies=[ApplicablePolicy(PolicyScope.TASK, repository_policy())],
+    )
+
+    assert result["decision"] == "DENY"
+    assert result["matchedRules"] == []
+    assert result["evaluatedRule"] is None
+
+
+def test_malformed_publication_conditions_fail_closed_as_configuration_error() -> None:
+    malformed = policy(conditions={"type": "not-a-json-schema-type"})
+    with pytest.raises(PublicationPolicyContractError, match="invalid conditions"):
+        evaluate(policies=[ApplicablePolicy(PolicyScope.TASK, malformed)])
 
 
 def test_no_matching_rule_denies_by_default() -> None:
@@ -280,6 +390,16 @@ def test_non_publication_policy_is_rejected() -> None:
 def test_mismatched_revision_provenance_denies() -> None:
     value = artifact()
     value["repositoryRevision"] = "2" * 40
+
+    result = evaluate(artifacts=[value])
+
+    assert result["decision"] == "DENY"
+    assert "mismatched provenance" in result["reason"]
+
+
+def test_cross_workflow_provenance_denies() -> None:
+    value = artifact()
+    value["provenance"]["workflowExecutionId"] = "workflowexecution-cccccccccccc"
 
     result = evaluate(artifacts=[value])
 

@@ -379,17 +379,52 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         "action": CREATE_PR_CAPABILITY,
         "decision": "ALLOW",
         "reason": "Evaluated output may be published.",
+        "approvalRequired": False,
+        "evaluatedAt": "2026-07-30T12:00:00Z",
+        "subject": f"TaskExecution:{TASK_ID}",
         "policyRefs": [
             {
                 "kind": "Policy",
                 "name": "publication",
-                "version": "1.0.0",
+                "version": "1.1.0",
             }
         ],
         "repositoryRevision": REVISION,
         "evaluationResultIds": [EVALUATION_ID, ACCEPTANCE_EVALUATION_ID],
         "generatedArtifactIds": [ARTIFACT_ID],
+        "priorPolicyDecisionIds": [],
         "resourceScope": {"repository": "acme/widgets"},
+        "evaluatedRule": {
+            "scope": "Task",
+            "policyRef": {
+                "kind": "Policy",
+                "name": "publication",
+                "version": "1.1.0",
+            },
+            "ruleIndex": 0,
+            "effect": "allow",
+        },
+        "matchedRules": [
+            {
+                "scope": "Task",
+                "policyRef": {
+                    "kind": "Policy",
+                    "name": "publication",
+                    "version": "1.1.0",
+                },
+                "ruleIndex": 0,
+                "effect": "allow",
+            }
+        ],
+        "evidence": {
+            "patchGenerated": True,
+            "validationRan": True,
+            "requiredArtifactsPresent": True,
+            "requiredEvaluationsPresent": True,
+            "allRequiredEvaluationsPassed": True,
+            "noPriorPolicyViolation": True,
+            "failures": [],
+        },
         "publicationTarget": {
             "repository": "acme/widgets",
             "head": "aep/issue-42",

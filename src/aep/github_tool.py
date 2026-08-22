@@ -547,7 +547,6 @@ class PersistedPublicationPolicyVerifier:
             "head": request.input["head"],
             "base": request.input["base"],
             "repositoryRevision": revision,
-            "headRevision": head_revision,
             "commitToolInvocationId": evidence["commitToolInvocationId"],
             "pushToolInvocationId": evidence["pushToolInvocationId"],
         }
