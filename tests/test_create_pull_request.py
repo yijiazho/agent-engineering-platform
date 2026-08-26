@@ -64,7 +64,7 @@ class FakeGitTool(GitTool):
         store: InMemoryRuntimeObjectStore,
         *,
         failure: ToolFailureClass | None = None,
-        repository: str = "octo/repo",
+        repository: str = RepositoryIdentity("github", "octo", "repo").canonical,
     ) -> None:
         self.store = store
         self.failure = failure
@@ -745,7 +745,11 @@ def setup_handler(
         updated_at=TIMESTAMP,
         changes={"eventId": "event-34"},
     )
-    git = FakeGitTool(store, failure=git_failure, repository=repository)
+    git = FakeGitTool(
+        store,
+        failure=git_failure,
+        repository=RepositoryIdentity("github", *repository.split("/")).canonical,
+    )
     github = FakeGitHubClient(github_outcome)
     handler = CreatePullRequestTaskHandler(
         resources=resources,

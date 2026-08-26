@@ -605,6 +605,14 @@ separately binds repository, head, base, `PUBLICATION` gate, and action before
 `github.create_pr` authorization. Caller assertions or a changed target cannot
 grant publication.
 
+Repository identity has two deliberate boundary representations. Checkout and
+Git Tool evidence use canonical `github:<owner>/<name>` values owned by
+`RepositoryIdentity`; GitHub API calls use provider-native `<owner>/<name>`.
+Before commit or push evidence is accepted, the publication verifier parses
+both through that identity contract and compares provider, owner, and name.
+Malformed, unsupported, or mismatched identities fail closed before the
+GitHub provider is called; arbitrary prefix stripping is not permitted.
+
 Provider calls return cancellable execution handles before network work can
 block the Tool Runtime. Safe issue reads honor provider retry-after hints within
 the single Tool deadline and record immutable evidence for every attempt.

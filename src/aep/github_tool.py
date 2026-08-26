@@ -22,6 +22,7 @@ from aep.tool_runtime import (
     SEMVER_PATTERN,
     invoke_tool,
 )
+from aep.execution_checkout import repository_identities_match
 
 
 JsonObject = Mapping[str, Any]
@@ -414,7 +415,11 @@ class PersistedPublicationPolicyVerifier:
             and commit_input.get("commitMessage")
             and commit_input.get("expectedPatchSha256") == patch_digest
             and commit_output.get("operation") == "commit_changes"
-            and commit_output.get("repository") == request.input["repository"]
+            and repository_identities_match(
+                commit_output.get("repository", ""),
+                request.input["repository"],
+                provider="github",
+            )
             and commit_output.get("branch") == request.input["head"]
             and commit_output.get("baseRevision") == revision
             and commit_output.get("revision") == head_revision
@@ -473,8 +478,17 @@ class PersistedPublicationPolicyVerifier:
             "revision": head_revision,
             "remoteMutationState": "CONFIRMED",
         }
+        push_output = push.get("output", {})
         if any(
-            push.get("output", {}).get(key) != value
+            (
+                not repository_identities_match(
+                    push_output.get("repository", ""),
+                    request.input["repository"],
+                    provider="github",
+                )
+                if key == "repository"
+                else push_output.get(key) != value
+            )
             for key, value in expected_push_output.items()
         ):
             return PublicationVerification(False, "Git push target mismatch")
