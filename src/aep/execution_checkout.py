@@ -95,6 +95,48 @@ class RepositoryIdentity:
     def canonical(self) -> str:
         return f"{self.provider.casefold()}:{self.owner.casefold()}/{self.name.casefold()}"
 
+    @classmethod
+    def from_canonical(
+        cls, value: str, *, expected_provider: str | None = None
+    ) -> "RepositoryIdentity":
+        """Parse the provider-qualified identity used by checkout and Git evidence."""
+        if not isinstance(value, str) or value.count(":") != 1:
+            raise ValueError("repository identity is not canonical")
+        provider, path = value.split(":", 1)
+        parts = path.split("/")
+        if len(parts) != 2:
+            raise ValueError("repository identity is not canonical")
+        identity = cls(provider, parts[0], parts[1])
+        if identity.canonical != value.casefold():
+            raise ValueError("repository identity is not canonical")
+        if expected_provider is not None and provider.casefold() != expected_provider.casefold():
+            raise ValueError("repository provider mismatch")
+        return identity
+
+    @classmethod
+    def from_native(
+        cls, value: str, *, provider: str
+    ) -> "RepositoryIdentity":
+        """Parse provider-native coordinates such as GitHub's ``owner/name``."""
+        if not isinstance(value, str) or value.count("/") != 1 or ":" in value:
+            raise ValueError("repository identity is not provider-native")
+        owner, name = value.split("/", 1)
+        return cls(provider, owner, name)
+
+
+def repository_identities_match(
+    canonical: str, native: str, *, provider: str
+) -> bool:
+    """Compare checkout-bound canonical and provider-native repository identities."""
+    try:
+        canonical_identity = RepositoryIdentity.from_canonical(
+            canonical, expected_provider=provider
+        )
+        native_identity = RepositoryIdentity.from_native(native, provider=provider)
+    except (CheckoutProvisionError, ValueError):
+        return False
+    return canonical_identity.canonical == native_identity.canonical
+
 
 @dataclass(frozen=True, slots=True)
 class CheckoutRequest:

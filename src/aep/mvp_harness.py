@@ -41,6 +41,7 @@ from aep.git_tool import (
 )
 from aep.github_events import EventDeduplicator, normalize_github_issue_created
 from aep.github_tool import GitHubToolAdapter
+from aep.execution_checkout import RepositoryIdentity
 from aep.model_invocation import FakeModelAdapter, ModelResponse, ModelUsage
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
@@ -483,7 +484,7 @@ def _git(root: Path, *arguments: str) -> str:
 def _git_adapter(root: Path, revision: str) -> GitToolAdapter:
     return GitToolAdapter(
         repository=root,
-        repository_id="octo-org/octo-repo",
+        repository_id=RepositoryIdentity("github", "octo-org", "octo-repo").canonical,
         expected_revision=revision,
         working_branch=BRANCH,
         log_store=InMemoryGitCommandLogStore(),

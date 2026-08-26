@@ -123,6 +123,12 @@ reconcile rather than duplicate the PR. Timeouts and retryable server responses
 after a PR POST are recorded as an unknown mutation outcome and are not
 automatically replayed.
 
+Git evidence records canonical `github:<owner>/<name>`, while this provider's
+API request uses native `<owner>/<name>`. The publication verifier owns the
+conversion and requires provider, owner, and name to match. Malformed or
+mismatched identities are local pre-provider failures; never strip prefixes or
+call GitHub to diagnose them.
+
 One monotonic deadline covers installation lookup, token creation, duplicate
 lookup, and PR creation. Each request receives only the remaining time. A
 timeout before the PR POST begins is `NOT_ATTEMPTED` and may be retried; a

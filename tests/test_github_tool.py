@@ -297,7 +297,7 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         },
         "output": {
             "operation": "commit_changes",
-            "repository": "acme/widgets",
+            "repository": "github:acme/widgets",
             "branch": "aep/issue-42",
             "baseRevision": REVISION,
             "revision": HEAD_REVISION,
@@ -316,7 +316,7 @@ def persisted_evidence() -> dict[str, dict[str, Any]]:
         },
         "output": {
             "operation": "push_branch",
-            "repository": "acme/widgets",
+            "repository": "github:acme/widgets",
             "branch": "aep/issue-42",
             "revision": HEAD_REVISION,
             "remoteMutationState": "CONFIRMED",
@@ -662,6 +662,68 @@ def test_schema_valid_cross_task_publication_graph_is_allowed() -> None:
     )
     assert records[POLICY_ID]["taskExecutionId"] == TASK_ID
     assert records[PUSH_ID]["taskExecutionId"] == TASK_ID
+
+
+@pytest.mark.parametrize(
+    "repository",
+    [
+        "git:acme/widgets",
+        "github:other/widgets",
+        "github:acme/other",
+        "github:acme",
+        "acme/widgets:alias",
+    ],
+)
+def test_repository_identity_mismatch_is_denied_before_provider_call(
+    repository: str,
+) -> None:
+    records = persisted_evidence()
+    records[COMMIT_ID]["output"]["repository"] = repository
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+
+    result = invoke_github_tool(
+        request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda _: True,
+        publication_verifier=trusted_verifier(records),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.DENIED
+    assert result.failure_message == "Git commit evidence mismatch"
+    assert client.pull_request_calls == []
+
+
+def test_canonical_git_push_identity_is_verified_against_native_github_request() -> None:
+    records = persisted_evidence()
+    records[PUSH_ID]["output"]["repository"] = "github:acme/widgets"
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+
+    result = invoke_github_tool(
+        request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda _: True,
+        publication_verifier=trusted_verifier(records),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert client.pull_request_calls[0]["repository"] == "acme/widgets"
+
+
+def test_mismatched_canonical_git_push_identity_is_denied_before_provider_call() -> None:
+    records = persisted_evidence()
+    records[PUSH_ID]["output"]["repository"] = "github:acme/other"
+    client = FakeGitHubClient(pull_request_outcomes=[pull_request_response()])
+
+    result = invoke_github_tool(
+        request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)),
+        pre_execute_authorize=lambda _: True,
+        publication_verifier=trusted_verifier(records),
+        adapter=GitHubToolAdapter(client),
+    )
+
+    assert result.status is ToolResultStatus.DENIED
+    assert result.failure_message == "Git push target mismatch"
+    assert client.pull_request_calls == []
 
 
 @pytest.mark.parametrize(

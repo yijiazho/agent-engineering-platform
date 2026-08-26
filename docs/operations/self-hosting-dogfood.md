@@ -731,6 +731,15 @@ pull request for it. Repository mismatch, stale base revision, failed build or
 test, incomplete acceptance evidence, and the emergency marker are all
 fail-closed publication conditions.
 
+If Git push evidence is `CONFIRMED` but the later GitHub Tool rejects local
+publication evidence, classify it as a confirmed push followed by a local,
+pre-provider failure. Reconcile the exact repository, execution branch, and
+committed head against the remote before recovery. Do not automatically replay
+the push, overwrite or delete the branch, or create a PR from mismatched
+evidence. Retain the terminal execution and invocations until an explicitly
+authorized operator decision; the issue #67 branch/head and absence of a PR
+remain retained evidence.
+
 ## Run The Controlled Pilot
 
 Use one labeled, narrowly scoped issue in this repository. Record its issue
