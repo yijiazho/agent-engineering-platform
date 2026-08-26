@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+import os
 from pathlib import Path
 import subprocess
 from threading import Event, Lock, Thread
@@ -211,6 +213,87 @@ def test_missing_recorded_commit_is_configuration_failure(
 
     assert raised.value.classification is CheckoutFailureClass.CONFIGURATION
     assert raised.value.code == "missing_commit"
+
+
+def test_repository_source_uses_only_scoped_git_and_credential_environment(
+    tmp_path: Path,
+    remote_repository: tuple[Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    remote, revision = remote_repository
+    source = GitRepositorySource(str(remote))
+    original_run = subprocess.run
+    environments: list[dict[str, str]] = []
+    monkeypatch.setenv("HOME", "ambient-home-must-not-enter-git")
+    monkeypatch.setenv("HTTPS_PROXY", "http://ambient-proxy.invalid")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "ambient-gitconfig")
+    monkeypatch.setenv("AEP_AMBIENT_CREDENTIAL", "ambient-secret")
+
+    def recording_run(*args, **kwargs):
+        environments.append(dict(kwargs["env"]))
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr("aep.execution_checkout.subprocess.run", recording_run)
+    result = source.materialize(
+        repository=REPOSITORY,
+        default_branch="main",
+        expected_revision=revision,
+        cache_path=tmp_path / "cache" / "repository.git",
+        credentials={
+            "GIT_ASKPASS": str(tmp_path / "askpass"),
+            "GIT_ASKPASS_REQUIRE": "force",
+            "AEP_TEST_USERNAME": "synthetic-user",
+            "AEP_TEST_PASSWORD": "synthetic-password",
+        },
+        mutation_lease=nullcontext,
+    )
+
+    assert result.revision == revision
+    assert environments
+    allowed = {
+        "GIT_ASKPASS",
+        "GIT_ASKPASS_REQUIRE",
+        "AEP_TEST_USERNAME",
+        "AEP_TEST_PASSWORD",
+        "GIT_TERMINAL_PROMPT",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+    }
+    if os.name == "nt":
+        allowed.add("SYSTEMROOT")
+    assert all(set(environment) == allowed for environment in environments)
+    assert all(
+        not {
+            "PATH",
+            "HOME",
+            "HTTPS_PROXY",
+            "GIT_CONFIG_GLOBAL",
+            "AEP_AMBIENT_CREDENTIAL",
+        }
+        & set(environment)
+        for environment in environments
+    )
+
+
+def test_repository_source_rejects_unscoped_credential_environment(
+    tmp_path: Path, remote_repository: tuple[Path, str]
+) -> None:
+    remote, revision = remote_repository
+
+    with pytest.raises(CheckoutProvisionError) as raised:
+        GitRepositorySource(str(remote)).materialize(
+            repository=REPOSITORY,
+            default_branch="main",
+            expected_revision=revision,
+            cache_path=tmp_path / "cache" / "repository.git",
+            credentials={"HTTPS_PROXY": "http://ambient-proxy.invalid"},
+            mutation_lease=nullcontext,
+        )
+
+    assert raised.value.classification is CheckoutFailureClass.CONFIGURATION
+    assert raised.value.code == "unsafe_source_credential_environment"
 
 
 @pytest.mark.parametrize(

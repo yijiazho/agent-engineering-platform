@@ -12,7 +12,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
-from aep.create_pull_request import CreatePullRequestTaskHandler
+from aep.create_pull_request import CreatePullRequestTaskHandler, _tool_failure
 from aep.execution_checkout import (
     CheckoutState,
     ExecutionCheckout,
@@ -97,7 +97,15 @@ class FakeGitTool(GitTool):
             "changedFiles": [],
             "diff": None,
             "remoteMutationState": (
-                "CONFIRMED" if operation == "push_branch" else "NOT_ATTEMPTED"
+                (
+                    "NOT_ATTEMPTED"
+                    if failure is ToolFailureClass.STARTUP
+                    else "UNKNOWN"
+                )
+                if operation == "push_branch" and failure
+                else "CONFIRMED"
+                if operation == "push_branch"
+                else "NOT_ATTEMPTED"
             ),
             "commandResults": [],
         }
@@ -405,19 +413,50 @@ def test_github_capability_gate_allows_push_but_blocks_pr(effect: str) -> None:
     assert github.calls == []
 
 
-def test_push_failure_does_not_call_github() -> None:
+def test_unknown_push_failure_is_permanent_and_does_not_call_github() -> None:
     store, handler, task, _artifacts, git, github = setup_handler(
         git_failure=ToolFailureClass.IO
     )
 
     result = handler.execute(task, store.get(CREATE_ID))
 
-    assert result.failure_class is FailureClass.RECOVERABLE
+    assert result.failure_class is FailureClass.PERMANENT
     assert [call.input["operation"] for call in git.calls] == [
         "commit_changes",
         "push_branch",
     ]
     assert github.calls == []
+
+
+def test_pre_mutation_helper_startup_failure_is_recoverable() -> None:
+    store, handler, task, _artifacts, git, github = setup_handler(
+        git_failure=ToolFailureClass.STARTUP
+    )
+
+    result = handler.execute(task, store.get(CREATE_ID))
+
+    assert result.failure_class is FailureClass.RECOVERABLE
+    push = store.get(store.get(CREATE_ID)["toolInvocationIds"][-1])
+    assert push["output"]["remoteMutationState"] == "NOT_ATTEMPTED"
+    assert github.calls == []
+
+
+def test_push_failure_without_mutation_evidence_is_permanent() -> None:
+    result = ToolResult(
+        status=ToolResultStatus.FAILED,
+        output=None,
+        logs_ref=None,
+        metrics=ToolMetrics(duration_ms=1),
+        started_at=TIMESTAMP,
+        completed_at=TIMESTAMP,
+        failure_class=ToolFailureClass.STARTUP,
+        failure_message="Git adapter did not start",
+    )
+
+    failure = _tool_failure("Git push", result)
+
+    assert failure.failure_class is FailureClass.PERMANENT
+    assert failure.message == "Git push failed: Git adapter did not start"
 
 
 def test_provider_failure_is_persisted_and_not_repeated() -> None:

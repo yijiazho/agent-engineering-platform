@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -20,6 +22,51 @@ from aep.local_service import (
 
 
 ROOT = Path(__file__).parents[1]
+
+
+@pytest.mark.skipif(
+    os.environ.get("AEP_RUN_SERVICE_IMAGE_TESTS") != "1",
+    reason="set AEP_RUN_SERVICE_IMAGE_TESTS=1 to build the production service image",
+)
+def test_service_image_runs_askpass_with_its_absolute_interpreter(
+    tmp_path: Path,
+) -> None:
+    iid_file = tmp_path / "image-id"
+    subprocess.run(
+        (
+            "docker",
+            "build",
+            "--iidfile",
+            str(iid_file),
+            "--file",
+            str(ROOT / "deploy/local/Dockerfile"),
+            str(ROOT),
+        ),
+        check=True,
+    )
+    image = iid_file.read_text(encoding="utf-8").strip()
+    completed = subprocess.run(
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            image,
+            "/usr/local/bin/python",
+            "-m",
+            "aep.github_app_provider",
+            "askpass-readiness",
+        ),
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+    result = json.loads(completed.stdout)
+    assert result == {
+        "interpreter": "/usr/local/bin/python3.12",
+        "status": "READY",
+    }
 
 
 def test_dogfood_environment_binds_pinned_release_resources_and_providers(

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "deploy/validation/**"
+      - "deploy/local/Dockerfile"
       - ".ai/tasks/run-validation.yaml"
       - ".ai/tools/docker-validation.yaml"
       - "fixtures/**"
@@ -19,6 +20,7 @@ on:
     branches: [main]
     paths:
       - "deploy/validation/**"
+      - "deploy/local/Dockerfile"
       - ".ai/tasks/run-validation.yaml"
       - ".ai/tools/docker-validation.yaml"
       - "fixtures/**"
@@ -45,6 +47,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Build and verify the service-image askpass helper
+        env:
+          AEP_RUN_SERVICE_IMAGE_TESTS: "1"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/aep-service-image-venv"
+          "$RUNNER_TEMP/aep-service-image-venv/bin/python" -m pip install -e ".[dev]"
+          "$RUNNER_TEMP/aep-service-image-venv/bin/python" -m pytest tests/test_dogfood_deployment.py::test_service_image_runs_askpass_with_its_absolute_interpreter
       - name: Build and verify the fresh source image
         run: python3 deploy/validation/verify.py candidate
       - name: Authenticate for locked published-image verification

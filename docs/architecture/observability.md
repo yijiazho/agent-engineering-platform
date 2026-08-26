@@ -120,6 +120,12 @@ log only its immutable address. `StructuredLifecycleLogger` applies redaction
 to a deep result before invoking its injected sink and never mutates caller
 input.
 
+Git askpass evidence is limited to operation, repository, branch, safe failure
+class, remote mutation state, duration, command exit status, and the
+content-addressed redacted log reference. Helper source, interpreter output,
+credential values, scoped or ambient environment maps, provider response
+bodies, and unrestricted stderr are never lifecycle fields.
+
 ## Failure And Timing Semantics
 
 When a runtime object has a failure, the lifecycle record carries its ADR-002

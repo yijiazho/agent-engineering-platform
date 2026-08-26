@@ -723,8 +723,12 @@ before creation, and maps authentication, authorization, validation, rate
 limit, retryable service, timeout, and unknown mutation outcomes to stable Tool
 evidence. Its Git credential provider supplies one-use askpass environments to
 both source fetch and execution-branch push and removes the lease material in a
-`finally`-guarded close. Readiness proves App, installation, repository, base,
-and branch-prefix identity without returning credentials.
+`finally`-guarded close. Each helper lives in a private directory, embeds the
+verified absolute running-service interpreter, accepts only username/password
+prompts, and runs without inherited `PATH`, home, proxy, or Git configuration.
+Credential-free helper readiness executes that exact contract in the service
+image. Readiness proves App, installation, repository, base, and branch-prefix
+identity without returning credentials.
 Each provider operation carries one monotonic deadline across authentication,
 reconciliation, and mutation calls. Readiness always revalidates the current
 repository installation, and authentication or installation lookup failures
@@ -733,7 +737,10 @@ after the pull-request POST has actually begun, including when a successful
 response cannot be parsed or otherwise confirmed. Authentication transport
 timeouts retain timeout classification through the Tool execution boundary.
 The Git Tool passes its remaining deadline into Git credential acquisition,
-and credential timeouts remain Tool `TIMED_OUT` results before push begins.
+preflights the generated helper before marking push started, and keeps helper
+startup failures as `STARTUP`/`NOT_ATTEMPTED`. Credential timeouts remain Tool
+`TIMED_OUT` results before push begins; unconfirmed failures after process
+startup remain `UNKNOWN` pending exact branch/head reconciliation.
 Both primary limit evidence and secondary-limit `403` responses with
 `Retry-After` produce bounded rate-limit retry metadata.
 

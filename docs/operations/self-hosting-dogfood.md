@@ -205,6 +205,11 @@ used for diagnosis, but they do not replace the Dockerfile-built Linux gate or
 the live provider and pilot tests below. See
 `deploy/validation/README.md` for the guarded publication procedure; never
 update the Resource graph from a separately rebuilt or merely retagged image.
+The Docker-capable CI workflow separately sets
+`AEP_RUN_SERVICE_IMAGE_TESTS=1` and runs the focused service-image askpass test,
+which builds `deploy/local/Dockerfile` and executes the credential-free
+readiness command inside it. Run the same focused test locally before
+publication when the service Dockerfile or askpass executable contract changes.
 
 ### MTP-03: Cold Start, Identity, And Stability
 
@@ -276,6 +281,7 @@ available before publication.
 
 ```powershell
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c "import json,os; from aep.github_app_provider import github_app_provider_from_environment; print(json.dumps(github_app_provider_from_environment(os.environ).readiness(),sort_keys=True))"
+docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime /usr/local/bin/python -m aep.github_app_provider askpass-readiness
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime python -c "import json,os; from aep.openai_model_provider import openai_model_adapter_from_environment; print(json.dumps(openai_model_adapter_from_environment('openai',environ=os.environ).readiness(),sort_keys=True))"
 docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\compose.yaml exec -T workflow-runtime docker version --format '{{.Server.Version}}'
 ```
@@ -283,7 +289,9 @@ docker compose --env-file .\deploy\self-hosting\.env -f .\deploy\self-hosting\co
 Pass only if GitHub reports `READY` for the configured repository, App,
 installation, default branch, and authorized branch prefix; OpenAI reports
 `READY` with the expected API URL and no key; and the nested Docker client
-reports a server version. In the GitHub App UI, independently verify that it is
+reports a server version. Askpass readiness must report `READY` with
+`/usr/local/bin/python3.12`; `env python3`, a relative path, or any inherited
+`PATH` dependency fails the generation. In the GitHub App UI, independently verify that it is
 installed only on this repository with Metadata read, Issues read, Contents
 read/write, Pull requests read/write, and only the Issues webhook subscription.
 Verify that repository rules permit the App to push `aep/execution/*` branches.
@@ -535,6 +543,16 @@ Any failed ModelInvocation, validation, Evaluation, PolicyDecision, push, or PR
 mutation is a failed pilot until explained. An `UNKNOWN` provider mutation must
 be reconciled by owner/head/base before any retry.
 
+For an `UNKNOWN` Git push, also reconcile the persisted committed head against
+the exact remote execution branch before permitting later PR work. Query
+`git ls-remote --heads` and `gh pr list --head`. Absence, exact match, and
+conflict are distinct outcomes: absence confirms no branch but creates no PR;
+only the exact expected head may be reused; a conflicting head blocks the
+execution and requires isolation. Preserve the original ToolInvocation as
+`UNKNOWN`; do not rewrite it or repeat it. Inspect only structured operation,
+repository, branch, failure class, mutation state, timing, exit status, and
+redacted log address.
+
 For a Publication Policy denial, classify safe metadata before retrying. A
 non-empty `evidence.failures` is an evidence-integrity denial and must be fixed
 at the named persisted identity or revision. Empty failures with empty
@@ -758,8 +776,10 @@ Get-ChildItem C:\aep\state\agent-engineering-platform\execution-worktrees
 
 Never paste unrestricted logs into an issue. Export only structured evidence
 after checking that it contains no secret or artifact body. A dirty retained
-worktree is evidence: inspect it before cleanup. An ambiguous GitHub mutation
-must be reconciled by owner/head/base before any retry.
+worktree is evidence: inspect it before cleanup. A helper `STARTUP` failure with
+`NOT_ATTEMPTED` is safe to retry only after image correction. An ambiguous push
+or GitHub mutation must be reconciled by owner/head/base and exact head before
+any retry.
 
 ## Backup And Recovery
 

@@ -465,7 +465,10 @@ bundle included in the same immutable image.
 The concrete repository-bound provider uses GitHub App installation tokens for
 both API calls and ephemeral Git askpass leases. It performs duplicate-PR
 reconciliation before creation, caches tokens only until their refresh window,
-and exposes a secret-free App/installation readiness diagnostic. See the
+and exposes secret-free App/installation and askpass-executable readiness
+diagnostics. Askpass binds to the running service's absolute Python executable,
+runs with no inherited `PATH`, proxy, home, or Git configuration, and is
+preflighted before push enters the remote-mutation boundary. See the
 [GitHub App operator guide](docs/operations/github-app.md) for exact webhook
 subscription, least-privilege permissions, runtime inputs, installation, and
 key-rotation procedures.
@@ -549,7 +552,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 48 implementation tasks are complete.
+contracts are established, and 43 of the 49 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -633,19 +636,24 @@ Implemented foundations currently include:
   isolated deterministic branches, and evidence-gated cleanup and recovery.
 * A repository-bound GitHub App provider with renewable installation-token
   caching, live issue/PR REST operations, duplicate reconciliation, scoped Git
-  credential leases, stable provider failures, and secret-free readiness.
+  credential leases, absolute-interpreter askpass preflight, stable provider
+  failures, and secret-free readiness.
 
 
 The repository now aligns `publication-evidence:1.1.0` with the canonical
 runtime evidence contract through `create-pull-request:1.2.0` and
 `issue-to-pr:1.3.0`. Credential-free local and source/published exact-image
-verification pass. Remaining work includes finishing model-rate-limit
-verification, publishing the corrected immutable generation, and
-then resuming the controlled live dogfood pilot. AEP-047's
+verification pass. The subsequent live run passed validation, acceptance, and
+Publication Policy but exposed AEP-049 at authenticated push. The corrected
+helper now uses the running service's verified absolute interpreter, private
+one-operation lease directories, minimal-environment startup preflight, and
+pre-/post-mutation failure separation. Remaining work includes finishing
+model-rate-limit verification, publishing this corrected immutable generation,
+and then resuming the controlled live dogfood pilot. AEP-047's
 automated clean and dirty source-built and exact-published-image gates pass
 locally and on the clean Linux CI worker, and the latest MTP-10 run recorded
-passing build, repository-test, and acceptance Evaluations before AEP-048's
-earlier publication-rule mismatch denied pull-request creation. See
+passing build, repository-test, acceptance, and publication-policy evidence
+before authenticated Git push failed at askpass startup. See
 [ADR-004](docs/adr/ADR-004-self-hosting-repository-integration.md) for the
 repository-bound, generational self-hosting decision.
 

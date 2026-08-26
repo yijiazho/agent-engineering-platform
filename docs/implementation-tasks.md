@@ -62,3 +62,4 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-046: Coordinate Model Rate Limits](tasks/AEP-046-coordinate-model-rate-limits.md)
 * [AEP-047: Build Hermetic Validation Image](tasks/AEP-047-build-hermetic-validation-image.md)
 * [AEP-048: Align Publication Policy Evidence Contract](tasks/AEP-048-align-publication-policy-evidence-contract.md)
+* [AEP-049: Harden GitHub App Askpass Execution](tasks/AEP-049-harden-github-app-askpass-execution.md)
