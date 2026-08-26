@@ -3,6 +3,8 @@
 **Status:** In Progress
 
 Credential-free implementation and local contract validation are complete.
+The Docker-capable validation workflow now runs the service-image askpass gate
+for relevant source, test, documentation, and service-Dockerfile changes.
 The corrected immutable service generation still requires publication and the
 controlled MTP-09/MTP-10 live run before this task can be marked completed.
 

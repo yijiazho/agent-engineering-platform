@@ -265,7 +265,13 @@ def test_ci_uses_the_checked_in_gate_for_all_validation_inputs() -> None:
     assert "packages: read" in workflow
     assert "GHCR_TOKEN: ${{ github.token }}" in workflow
     assert "docker logout ghcr.io" in workflow
+    assert 'AEP_RUN_SERVICE_IMAGE_TESTS: "1"' in workflow
+    assert (
+        "tests/test_dogfood_deployment.py::"
+        "test_service_image_runs_askpass_with_its_absolute_interpreter"
+    ) in workflow
     for path in (
+        "deploy/local/Dockerfile",
         "deploy/validation/**",
         ".ai/tasks/run-validation.yaml",
         "fixtures/**",

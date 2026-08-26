@@ -80,6 +80,15 @@ the resolved absolute interpreter embedded in the helper (the current standard
 service image is `/usr/local/bin/python3.12`). A relative interpreter,
 `env python3`, missing file,
 or non-executable file is configuration drift and must block publication.
+The Docker-capable validation workflow builds `deploy/local/Dockerfile` and
+runs the service-image askpass pytest gate with
+`AEP_RUN_SERVICE_IMAGE_TESTS=1`; changes to the Dockerfile also trigger that
+workflow. For the equivalent focused local check, run:
+
+```powershell
+$env:AEP_RUN_SERVICE_IMAGE_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest tests/test_dogfood_deployment.py::test_service_image_runs_askpass_with_its_absolute_interpreter
+```
 
 ## Token And Mutation Behavior
 

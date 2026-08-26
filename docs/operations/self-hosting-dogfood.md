@@ -205,6 +205,11 @@ used for diagnosis, but they do not replace the Dockerfile-built Linux gate or
 the live provider and pilot tests below. See
 `deploy/validation/README.md` for the guarded publication procedure; never
 update the Resource graph from a separately rebuilt or merely retagged image.
+The Docker-capable CI workflow separately sets
+`AEP_RUN_SERVICE_IMAGE_TESTS=1` and runs the focused service-image askpass test,
+which builds `deploy/local/Dockerfile` and executes the credential-free
+readiness command inside it. Run the same focused test locally before
+publication when the service Dockerfile or askpass executable contract changes.
 
 ### MTP-03: Cold Start, Identity, And Stability
 
