@@ -87,8 +87,11 @@ def repository(tmp_path: Path) -> tuple[Path, str, GitToolAdapter]:
     git(root, "config", "user.email", "aep@example.test")
     git(root, "config", "core.autocrlf", "false")
     (root / "tracked.txt").write_bytes(b"original\n")
+    (root / "obsolete.txt").write_bytes(
+        "".join(f"obsolete {index}\n" for index in range(25)).encode("utf-8")
+    )
     (root / "caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt").write_bytes(b"unicode\n")
-    git(root, "add", "tracked.txt", "caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt")
+    git(root, "add", "tracked.txt", "obsolete.txt", "caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt")
     git(root, "commit", "-m", "fixture")
     revision = git(root, "rev-parse", "HEAD")
     adapter = GitToolAdapter(
@@ -201,6 +204,50 @@ def test_clean_patch_passes_without_mutating_repository(repository) -> None:
     assert (root / "tracked.txt").read_text(encoding="utf-8") == "original\n"
     with pytest.raises(TypeError):
         result["outcome"] = "FAIL"
+
+
+def test_large_deletion_requires_and_honors_explicit_authorization(repository) -> None:
+    root, revision, adapter = repository
+    content = (FIXTURES / "large-deletion.patch").read_bytes()
+
+    def run(result_id: str, authorized: tuple[str, ...]):
+        return evaluate_patch(
+            store=InMemoryRuntimeObjectStore(),
+            git_adapter=adapter,
+            authorize_git=lambda _request: True,
+            result_id=result_id,
+            task_execution_id="taskexecution-123456789abc",
+            evaluation_ref={"kind": "Evaluation", "name": "patch-safety", "version": "1.1.0"},
+            patch_artifact=artifact(content, revision),
+            patch_content=content,
+            expected_revision=revision,
+            allowed_paths=("obsolete.txt",),
+            required_paths=("obsolete.txt",),
+            deletion_authorized_paths=authorized,
+            working_branch="agent/work",
+            correlation={
+                "traceId": "trace-patch-evaluation",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-123456789abc",
+            },
+            timestamp="2026-08-04T00:00:00Z",
+            provenance={
+                "actor": "patch-evaluator",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-123456789abc",
+                "resourceRefs": [],
+            },
+        )
+
+    allowed = run("evaluationresult-deadbeef0002", ("obsolete.txt",))
+    denied = run("evaluationresult-deadbeef0001", ())
+
+    assert denied["outcome"] == "FAIL"
+    assert "DESTRUCTIVE_REWRITE" in error_codes(denied)
+    assert allowed["evidence"]["errors"] == []
+    assert allowed["outcome"] == "PASS"
+    assert allowed["evidence"]["changeStatistics"]["deletionAuthorized"] is True
+    assert (root / "obsolete.txt").exists()
 
 
 def test_conflicting_patch_fails_with_git_diagnostics(repository) -> None:

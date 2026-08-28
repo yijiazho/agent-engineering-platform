@@ -293,6 +293,45 @@ def test_missing_prior_plan_fails_before_model_or_tools(tmp_path: Path) -> None:
     assert adapter.requests == []
 
 
+def test_planned_new_file_uses_absent_preimage_and_is_created(tmp_path: Path) -> None:
+    empty_digest = sha256(b"").hexdigest()
+    store, handler, task, artifact_store, workspace, adapter = setup_handler(
+        tmp_path,
+        {"changes": [{
+            "path": "src/new_test.py",
+            "content": "def test_new():\n    assert True\n",
+            "preimageSha256": empty_digest,
+        }]},
+        intended_files=["src/new_test.py"],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    editable = next(
+        item
+        for item in adapter.requests[0].input["contextPackage"]["elements"]
+        if item["type"] == "editable-target"
+    )
+    assert editable["content"]["preimageState"] == "ABSENT"
+    assert editable["content"]["exists"] is False
+    assert editable["content"]["content"] == ""
+    assert editable["content"]["preimageSha256"] == empty_digest
+    assert (workspace / "src/new_test.py").read_text(encoding="utf-8") == (
+        "def test_new():\n    assert True\n"
+    )
+    execution = store.get(TASK_EXECUTION_ID)
+    reads = [
+        store.get(item)
+        for item in execution["toolInvocationIds"]
+        if store.get(item)["input"]["operation"] == "read"
+    ]
+    assert len(reads) == 2
+    assert all(item["toolRef"]["version"] == "1.0.0" for item in reads)
+    assert [item["failure"]["class"] for item in reads] == ["PERMANENT", "PERMANENT"]
+    assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID)
+
+
 def setup_handler(
     tmp_path: Path,
     output: object,

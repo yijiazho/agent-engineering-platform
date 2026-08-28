@@ -634,7 +634,8 @@ Implemented foundations currently include:
   knowledge, Resources, events, policies, and prior artifacts.
 * Revision-bound GeneratePatch editable-target context with exact UTF-8
   preimages, digest-bound model replacements, mandatory planned-file
-  dispositions, and deterministic destructive-change evidence. Candidate-file
+  dispositions, explicit absent preimages for planned creations, and
+  plan-authorized destructive-change evidence. Candidate-file
   discovery remains bounded metadata for analysis and planning.
 * Authenticated, repository-bound GitHub issue webhook ingress with shared-store
   deduplication, an atomic durable reconciliation outbox, restart-safe replay,

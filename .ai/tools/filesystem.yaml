@@ -1,11 +1,11 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
-  "metadata": {"name": "filesystem", "version": "1.0.0", "description": "Workspace-confined file writes selected by the evaluated implementation plan."},
+  "metadata": {"name": "filesystem", "version": "1.1.0", "description": "Trusted Context Builder reads and plan-scoped writes inside the execution workspace."},
   "spec": {
-    "category": "execution", "capabilities": ["filesystem.write"],
-    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "path", "content"], "properties": {"operation": {"const": "write"}, "path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}},
+    "category": "execution", "capabilities": ["filesystem.read", "filesystem.write"],
+    "inputSchema": {"type": "object", "oneOf": [{"additionalProperties": false, "required": ["operation", "path"], "properties": {"operation": {"const": "read"}, "path": {"type": "string", "minLength": 1}}}, {"additionalProperties": false, "required": ["operation", "path", "content"], "properties": {"operation": {"const": "write"}, "path": {"type": "string", "minLength": 1}, "content": {"type": "string"}}}]},
     "outputSchema": {"type": "object"},
-    "permissions": ["workspace:write"], "timeoutMs": 5000,
+    "permissions": ["workspace:read", "workspace:write"], "timeoutMs": 5000,
     "retryPolicy": {"maxAttempts": 1}
   }
 }

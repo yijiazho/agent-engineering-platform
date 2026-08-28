@@ -114,10 +114,12 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             if not isinstance(output_schema, Mapping) or not output_schema:
                 raise GeneratePatchContractError("GeneratePatch Task requires spec.outputs")
 
+            filesystem_read_ref = self._context_filesystem_ref(task_spec)
             editable_targets = self._read_editable_targets(
                 task_execution=task_execution,
                 repository_revision=str(workflow["repositoryRevision"]),
                 paths=allowed_paths,
+                tool_ref=filesystem_read_ref,
             )
             context_package = self._context_builder.build(
                 task=task,
@@ -200,10 +202,12 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 task_execution=task_execution,
                 repository_revision=str(workflow["repositoryRevision"]),
                 paths=allowed_paths,
+                tool_ref=filesystem_read_ref,
                 purpose="preimage-verification",
             )
             if any(
-                current["preimageSha256"] != original["preimageSha256"]
+                current["exists"] != original["exists"]
+                or current["preimageSha256"] != original["preimageSha256"]
                 for current, original in zip(verified_targets, editable_targets, strict=True)
             ):
                 raise GeneratePatchContractError(
@@ -299,6 +303,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 expected_revision=str(workflow["repositoryRevision"]),
                 allowed_paths=allowed_paths,
                 required_paths=allowed_paths,
+                deletion_authorized_paths=_deletion_authorized_paths(plan, allowed_paths),
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -358,12 +363,13 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
 
     def _read_editable_targets(
         self, *, task_execution: JsonMapping, repository_revision: str, paths: Sequence[str],
+        tool_ref: JsonMapping,
         purpose: str = "editable-target",
     ) -> tuple[dict[str, Any], ...]:
         targets: list[dict[str, Any]] = []
         for index, path in enumerate(paths):
             request = ToolRequest(
-                tool_ref={"kind": "Tool", "name": "filesystem", "version": "1.1.0"},
+                tool_ref=tool_ref,
                 input={"operation": "read", "path": path},
                 caller=ToolCaller(kind="ContextBuilder", id=str(task_execution["id"])),
                 capabilities=("filesystem.read",),
@@ -380,16 +386,23 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 authorize=lambda _request: True,
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
-            if result.status is not ToolResultStatus.SUCCEEDED:
+            if (
+                result.status is not ToolResultStatus.SUCCEEDED
+                and result.failure_class is not ToolFailureClass.NOT_FOUND
+            ):
                 raise GeneratePatchContractError(
                     f"editable target {path!r} could not be materialized: "
                     f"{result.failure_class.value if result.failure_class else result.status.value}"
                 )
-            output = result.output_record()
+            exists = result.status is ToolResultStatus.SUCCEEDED
+            output = result.output_record() if exists else {}
+            content = output.get("content", "")
+            digest = output.get("sha256", sha256(b"").hexdigest())
             targets.append({
                 "path": path,
-                "content": output["content"],
-                "preimageSha256": output["sha256"],
+                "exists": exists,
+                "content": content,
+                "preimageSha256": digest,
                 "repositoryRevision": repository_revision,
                 "provenance": {
                     "actor": "context-builder",
@@ -399,6 +412,22 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 },
             })
         return tuple(targets)
+
+    def _context_filesystem_ref(self, task_spec: JsonMapping) -> dict[str, str]:
+        agent_ref = _required_ref(task_spec.get("agentRef"), "Agent", "Task.spec.agentRef")
+        agent = self._require_resource(agent_ref, "Agent")
+        matches = []
+        for value in _spec(agent).get("toolRefs", ()):
+            if isinstance(value, Mapping):
+                ref = ResourceRef.from_mapping(dict(value))
+                if ref.name == "filesystem":
+                    matches.append(ref)
+        if len(matches) != 1:
+            raise GeneratePatchContractError(
+                "GeneratePatch Agent must reference exactly one versioned filesystem Tool"
+            )
+        self._require_resource(matches[0], "Tool")
+        return _ref_record(matches[0])
 
     def _implementation_plan(
         self, task_execution: JsonMapping, workflow: JsonMapping
@@ -559,6 +588,26 @@ def _allowed_paths(plan: JsonMapping) -> tuple[str, ...]:
     if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths):
         raise GeneratePatchContractError(
             "IMPLEMENTATION_PLAN.intendedFiles must contain unique normalized repository-relative paths"
+        )
+    return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _deletion_authorized_paths(
+    plan: JsonMapping, allowed_paths: Sequence[str]
+) -> tuple[str, ...]:
+    values = plan.get("deletionAuthorizedFiles", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must be an array"
+        )
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must contain unique normalized paths"
+        )
+    if not set(paths).issubset(allowed_paths):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must be a subset of intendedFiles"
         )
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
 

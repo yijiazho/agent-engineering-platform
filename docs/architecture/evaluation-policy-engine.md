@@ -269,7 +269,11 @@ completion. Its immutable evidence includes one disposition per planned file,
 line-addition and deletion counts, replacement ratio, and a deterministic
 destructive-rewrite check. An absent planned file or unexplained rewrite of at
 least 20 deleted lines where deletions exceed 80 percent of changed lines is a
-failure, even when the patch applies and every path is allowed.
+failure, even when the patch applies and every path is allowed. The evaluated
+implementation plan may list a subset of `intendedFiles` in
+`deletionAuthorizedFiles` only when deletion or substantial removal is an
+explicit issue requirement; that immutable signal permits the corresponding
+deletion-heavy diff while remaining visible in EvaluationResult evidence.
 
 For patch artifacts, deterministic evaluation first verifies the
 GeneratedArtifact content address and immutable repository revision. It then

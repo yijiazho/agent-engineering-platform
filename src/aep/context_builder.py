@@ -209,12 +209,17 @@ class ContextBuilder:
                 path = editable.get("path")
                 content = editable.get("content")
                 digest = editable.get("preimageSha256")
+                exists = editable.get("exists")
                 if not isinstance(path, str) or not path or path in seen_targets:
                     raise RequiredContextError("editable targets must have unique non-empty paths")
                 if not isinstance(content, str):
                     raise RequiredContextError(f"editable target {path!r} is not UTF-8 text")
                 encoded = content.encode("utf-8")
                 actual = sha256(encoded).hexdigest()
+                if not isinstance(exists, bool):
+                    raise RequiredContextError(f"editable target {path!r} must declare existence")
+                if not exists and content:
+                    raise RequiredContextError(f"absent editable target {path!r} must have an empty preimage")
                 if digest != actual:
                     raise RequiredContextError(f"editable target {path!r} preimage digest is stale")
                 if editable.get("repositoryRevision") != repository_revision:
@@ -224,6 +229,8 @@ class ContextBuilder:
                     "type": "editable-target",
                     "content": {
                         "path": path,
+                        "exists": exists,
+                        "preimageState": "PRESENT" if exists else "ABSENT",
                         "content": content,
                         "contentAddress": f"sha256:{actual}",
                         "preimageSha256": actual,

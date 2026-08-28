@@ -609,4 +609,6 @@ as `editable-targets`. Model output must include every planned file and echo its
 supplied `preimageSha256`. The handler rereads all targets before mutation and
 rejects drift, omissions, duplicate paths, and unbound replacements. Patch
 Evaluation records a disposition for every intended file plus added/deleted
-line counts, replacement ratio, and destructive-rewrite evidence.
+line counts, replacement ratio, explicit plan-derived deletion authorization,
+and destructive-rewrite evidence. Planned creations use an immutable `ABSENT`
+preimage and must still be absent at the pre-mutation verification read.

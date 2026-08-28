@@ -41,6 +41,7 @@ def evaluate_patch(
     expected_revision: str,
     allowed_paths: Sequence[str],
     required_paths: Sequence[str] | None = None,
+    deletion_authorized_paths: Sequence[str] = (),
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
@@ -67,6 +68,7 @@ def evaluate_patch(
     artifact = deepcopy(dict(patch_artifact))
     normalized_rules = _normalize_rules(allowed_paths)
     normalized_required = _normalize_rules(required_paths) if required_paths is not None else ()
+    normalized_deletion_authorized = _normalize_rules(deletion_authorized_paths) if deletion_authorized_paths else ()
     errors: list[dict[str, str]] = []
     logs: list[str] = []
     changed_files: list[str] = []
@@ -220,7 +222,12 @@ def evaluate_patch(
     added_lines, deleted_lines = _line_change_counts(content)
     total_changes = added_lines + deleted_lines
     replacement_ratio = deleted_lines / total_changes if total_changes else 0.0
-    destructive = deleted_lines >= 20 and replacement_ratio > 0.8
+    destructive_candidate = deleted_lines >= 20 and replacement_ratio > 0.8
+    deletion_authorized = bool(changed_files) and all(
+        _matching_rule(path, normalized_deletion_authorized) is not None
+        for path in changed_files
+    )
+    destructive = destructive_candidate and not deletion_authorized
     if destructive:
         errors.append({
             "code": "DESTRUCTIVE_REWRITE",
@@ -261,6 +268,8 @@ def evaluate_patch(
             "deletedLines": deleted_lines,
             "replacementRatio": replacement_ratio,
             "destructiveRewrite": destructive,
+            "deletionAuthorized": deletion_authorized,
+            "deletionAuthorizedPaths": list(normalized_deletion_authorized),
         },
         "git": {
             "status": git_status,
