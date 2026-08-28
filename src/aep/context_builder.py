@@ -40,6 +40,7 @@ SUPPORTED_CONTEXT: Final = frozenset(
         "issue",
         "repository-inventory",
         "candidate-files",
+        "editable-targets",
         "documentation",
         "dependency-manifests",
         "test-hints",
@@ -109,6 +110,7 @@ class ContextBuilder:
         knowledge_bases: Sequence[Resource | JsonMapping] = (),
         policies: Sequence[Resource | JsonMapping] = (),
         prior_task_execution_ids: Sequence[str] = (),
+        editable_targets: Sequence[JsonMapping] = (),
         optional_context: Sequence[str] | None = None,
         token_budget: int | None = None,
         created_at: str,
@@ -195,6 +197,41 @@ class ContextBuilder:
         mandatory: list[tuple[str, dict[str, Any]]] = []
         optional_candidates: list[tuple[str, dict[str, Any]]] = []
         mandatory.append(("task", _resource_element("task", task_data, task_ref)))
+        if "editable-targets" in required or "editable-targets" in optional:
+            if not editable_targets:
+                raise RequiredContextError("editable-targets requires every planned file preimage")
+            target = mandatory if "editable-targets" in required else optional_candidates
+            seen_targets: set[str] = set()
+            for editable in sorted(
+                editable_targets,
+                key=lambda item: (str(item.get("path", "")).casefold(), str(item.get("path", ""))),
+            ):
+                path = editable.get("path")
+                content = editable.get("content")
+                digest = editable.get("preimageSha256")
+                if not isinstance(path, str) or not path or path in seen_targets:
+                    raise RequiredContextError("editable targets must have unique non-empty paths")
+                if not isinstance(content, str):
+                    raise RequiredContextError(f"editable target {path!r} is not UTF-8 text")
+                encoded = content.encode("utf-8")
+                actual = sha256(encoded).hexdigest()
+                if digest != actual:
+                    raise RequiredContextError(f"editable target {path!r} preimage digest is stale")
+                if editable.get("repositoryRevision") != repository_revision:
+                    raise RequiredContextError(f"editable target {path!r} revision is stale")
+                seen_targets.add(path)
+                target.append(("editable-targets", {
+                    "type": "editable-target",
+                    "content": {
+                        "path": path,
+                        "content": content,
+                        "contentAddress": f"sha256:{actual}",
+                        "preimageSha256": actual,
+                        "byteCount": len(encoded),
+                        "tokenEstimate": max(1, ceil(len(encoded) / 4)),
+                    },
+                    "provenance": _json_copy(editable.get("provenance", {})),
+                }))
         if event is not None:
             mandatory.append(
                 (

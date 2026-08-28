@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import os
 import shutil
 import subprocess
@@ -311,7 +312,13 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
                     latency_ms=1,
                 ),
                 ModelResponse(
-                    output={"changes": [{"path": "src/app.py", "content": "value = 2\n"}]},
+                    output={"changes": [{
+                        "path": "src/app.py",
+                        "content": "value = 2\n",
+                        "preimageSha256": sha256(
+                            (workspace / "src" / "app.py").read_bytes()
+                        ).hexdigest(),
+                    }]},
                     usage=ModelUsage(10, 10),
                     latency_ms=1,
                 ),

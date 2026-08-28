@@ -604,3 +604,9 @@ Introducing ContextPackage as a runtime object establishes a clear architectural
 The Workflow Runtime becomes responsible only for scheduling and lifecycle management, while the Context Builder independently produces immutable, provenance-rich ContextPackages that encapsulate all information required for cognitive work.
 
 This separation improves modularity, reproducibility, observability, and future extensibility while allowing retrieval and context optimization techniques to evolve without impacting workflow execution.
+Before Code Generator invocation, the handler materializes every planned path
+as `editable-targets`. Model output must include every planned file and echo its
+supplied `preimageSha256`. The handler rereads all targets before mutation and
+rejects drift, omissions, duplicate paths, and unbound replacements. Patch
+Evaluation records a disposition for every intended file plus added/deleted
+line counts, replacement ratio, and destructive-rewrite evidence.

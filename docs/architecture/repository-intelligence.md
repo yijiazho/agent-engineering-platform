@@ -542,3 +542,7 @@ Repository Intelligence functions as the knowledge compiler of AEP.
 It continuously transforms Git repositories into immutable Repository Knowledge Graphs through deterministic analysis, AST parsing, symbol extraction, and relationship modeling.
 
 The resulting graph provides a language-agnostic semantic representation of the repository that enables the Context Builder to assemble precise, explainable, and reproducible ContextPackages without relying on source code parsing or vector search during workflow execution.
+Candidate-file results remain bounded discovery metadata. They do not authorize
+editing and do not satisfy patch input requirements. Exact editable preimages
+are materialized separately by the trusted Context Builder from the immutable
+execution checkout; Agents never call repository queries or Filesystem reads.

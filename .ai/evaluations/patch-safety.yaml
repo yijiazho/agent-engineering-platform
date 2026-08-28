@@ -1,5 +1,5 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Evaluation",
-  "metadata": {"name": "patch-safety", "version": "1.0.0"},
-  "spec": {"type": "patch", "successCriteria": ["Patch applies to the WorkflowExecution revision.", "Every changed path is listed in the evaluated implementation plan.", "Patch contains at least one change."]}
+  "metadata": {"name": "patch-safety", "version": "1.1.0"},
+  "spec": {"type": "patch", "successCriteria": ["Every planned target has an exact revision-bound preimage.", "Every generated change echoes the supplied preimage digest.", "Every intended file has a disposition and appears in the diff.", "Patch applies to the WorkflowExecution revision.", "Every changed path is listed in the evaluated implementation plan."]}
 }

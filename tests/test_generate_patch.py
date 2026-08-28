@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import os
 from pathlib import Path
 import subprocess
@@ -59,10 +60,11 @@ CHANGE_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["path", "content"],
+                "required": ["path", "content", "preimageSha256"],
                 "properties": {
                     "path": {"type": "string", "minLength": 1},
                     "content": {"type": "string"},
+                    "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                 },
             },
         }
@@ -128,14 +130,18 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
 
     execution = store.get(TASK_EXECUTION_ID)
-    assert len(execution["toolInvocationIds"]) == 3
+    assert len(execution["toolInvocationIds"]) == 5
     invocations = [store.get(item) for item in execution["toolInvocationIds"]]
     assert [item["toolRef"]["name"] for item in invocations] == [
+        "filesystem",
+        "filesystem",
         "filesystem",
         "git",
         "git",
     ]
     assert [item["input"]["operation"] for item in invocations] == [
+        "read",
+        "read",
         "write",
         "diff",
         "check_patch",
@@ -145,7 +151,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     evaluation = store.get(execution["evaluationResultIds"][0])
     artifact = artifact_store.get(execution["generatedArtifactIds"][0])
     assert evaluation["outcome"] == "PASS"
-    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[2]["id"]
+    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[4]["id"]
     assert evaluation["target"] == {"type": "GeneratedArtifact", "id": artifact["id"]}
     assert artifact["artifactType"] == "PATCH"
     assert artifact["changedFiles"] == ["src/app.py"]
@@ -189,7 +195,7 @@ def test_disallowed_model_path_is_rejected_before_any_workspace_mutation(
     assert "outside IMPLEMENTATION_PLAN.intendedFiles" in result.message
     assert not (workspace / "private/secret.txt").exists()
     execution = store.get(TASK_EXECUTION_ID)
-    assert "toolInvocationIds" not in execution
+    assert [store.get(item)["input"]["operation"] for item in execution["toolInvocationIds"]] == ["read"]
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
@@ -208,7 +214,7 @@ def test_denied_filesystem_capability_records_denial_without_writing(
     assert result.failure_class is FailureClass.POLICY
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
     execution = store.get(TASK_EXECUTION_ID)
-    invocation = store.get(execution["toolInvocationIds"][0])
+    invocation = store.get(execution["toolInvocationIds"][2])
     assert invocation["resultStatus"] == "DENIED"
     assert invocation["failure"]["class"] == "POLICY"
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
@@ -264,8 +270,8 @@ def test_filesystem_tool_failure_is_classified_and_persisted(tmp_path: Path) -> 
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
-    assert result.failure_class is FailureClass.PERMANENT
-    assert "Filesystem write" in result.message
+    assert result.failure_class is FailureClass.CONFIGURATION
+    assert "could not be materialized" in result.message
     assert not (workspace / "src/missing/app.py").exists()
     invocation = store.get(store.get(TASK_EXECUTION_ID)["toolInvocationIds"][0])
     assert invocation["status"] == "FAILED"
@@ -309,6 +315,12 @@ def setup_handler(
             plan_metadata(revision),
             implementation_plan(intended_files or ["src/app.py"]),
         )
+    if isinstance(output, dict) and isinstance(output.get("changes"), list):
+        output = json.loads(json.dumps(output))
+        for change in output["changes"]:
+            change.setdefault("preimageSha256", "0" * 64)
+            if change.get("path") == "src/app.py":
+                change["preimageSha256"] = sha256(b"value = 1\n").hexdigest()
     model = FakeModelAdapter(
         [ModelResponse(output=output, usage=ModelUsage(30, 20), latency_ms=5)]
     )
@@ -393,7 +405,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             "objective": "Generate scoped code and test changes.",
             "agentRef": ref("Agent", "code-generator"),
             "outputs": CHANGE_SCHEMA,
-            "requiredContext": ["prior-artifacts", "repository-inventory", "policies"],
+            "requiredContext": ["editable-targets", "prior-artifacts", "repository-inventory", "policies"],
             "inputContextTokenBudget": 32_000,
             "evaluations": [ref("Evaluation", "patch-safety")],
             "policies": [ref("Policy", "workspace-write")],

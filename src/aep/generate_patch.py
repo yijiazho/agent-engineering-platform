@@ -114,6 +114,11 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             if not isinstance(output_schema, Mapping) or not output_schema:
                 raise GeneratePatchContractError("GeneratePatch Task requires spec.outputs")
 
+            editable_targets = self._read_editable_targets(
+                task_execution=task_execution,
+                repository_revision=str(workflow["repositoryRevision"]),
+                paths=allowed_paths,
+            )
             context_package = self._context_builder.build(
                 task=task,
                 task_execution=task_execution,
@@ -124,6 +129,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 ),
                 policies=self._resolve_declared(task_spec.get("policies", ()), "Policy"),
                 prior_task_execution_ids=(producer_id,),
+                editable_targets=editable_targets,
                 created_at=self._timestamp(),
             )
             self._attach(task_execution["id"], {"contextPackageId": context_package["id"]})
@@ -184,7 +190,25 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     str(failure.get("message") or "Code Generator invocation failed"),
                 )
 
-            changes = _validated_changes(invocation.get("output"), allowed_paths)
+            changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
+            missing = sorted(set(allowed_paths) - {item["path"] for item in changes})
+            if missing:
+                raise GeneratePatchContractError(
+                    f"Code Generator omitted required planned files: {missing!r}"
+                )
+            verified_targets = self._read_editable_targets(
+                task_execution=task_execution,
+                repository_revision=str(workflow["repositoryRevision"]),
+                paths=allowed_paths,
+                purpose="preimage-verification",
+            )
+            if any(
+                current["preimageSha256"] != original["preimageSha256"]
+                for current, original in zip(verified_targets, editable_targets, strict=True)
+            ):
+                raise GeneratePatchContractError(
+                    "editable target preimage changed after ContextPackage construction"
+                )
             for index, change in enumerate(changes):
                 request = ToolRequest(
                     tool_ref=tools["filesystem"]["ref"],
@@ -274,6 +298,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 patch_content=patch_text,
                 expected_revision=str(workflow["repositoryRevision"]),
                 allowed_paths=allowed_paths,
+                required_paths=allowed_paths,
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -330,6 +355,50 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             ValueError,
         ) as error:
             return TaskExecutionResult.failure(FailureClass.CONFIGURATION, str(error))
+
+    def _read_editable_targets(
+        self, *, task_execution: JsonMapping, repository_revision: str, paths: Sequence[str],
+        purpose: str = "editable-target",
+    ) -> tuple[dict[str, Any], ...]:
+        targets: list[dict[str, Any]] = []
+        for index, path in enumerate(paths):
+            request = ToolRequest(
+                tool_ref={"kind": "Tool", "name": "filesystem", "version": "1.1.0"},
+                input={"operation": "read", "path": path},
+                caller=ToolCaller(kind="ContextBuilder", id=str(task_execution["id"])),
+                capabilities=("filesystem.read",),
+                timeout_ms=self._tool_timeout_ms,
+                correlation=_correlation(task_execution),
+            )
+            invocation_id = self._runtime_id(
+                "toolinvocation", f"{task_execution['id']}:{purpose}:{index}"
+            )
+            result, evidence = self._filesystem_tool.invoke(
+                invocation_id=invocation_id,
+                task_execution_id=str(task_execution["id"]),
+                request=request,
+                authorize=lambda _request: True,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+            if result.status is not ToolResultStatus.SUCCEEDED:
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} could not be materialized: "
+                    f"{result.failure_class.value if result.failure_class else result.status.value}"
+                )
+            output = result.output_record()
+            targets.append({
+                "path": path,
+                "content": output["content"],
+                "preimageSha256": output["sha256"],
+                "repositoryRevision": repository_revision,
+                "provenance": {
+                    "actor": "context-builder",
+                    "taskExecutionId": task_execution["id"],
+                    "repositoryRevision": repository_revision,
+                    "resourceRefs": [],
+                },
+            })
+        return tuple(targets)
 
     def _implementation_plan(
         self, task_execution: JsonMapping, workflow: JsonMapping
@@ -494,7 +563,11 @@ def _allowed_paths(plan: JsonMapping) -> tuple[str, ...]:
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
 
 
-def _validated_changes(output: object, allowed_paths: Sequence[str]) -> tuple[dict[str, str], ...]:
+def _validated_changes(
+    output: object,
+    allowed_paths: Sequence[str],
+    editable_targets: Sequence[JsonMapping],
+) -> tuple[dict[str, str], ...]:
     if not isinstance(output, Mapping):
         raise GeneratePatchContractError("Code Generator output must be an object")
     values = output.get("changes")
@@ -515,6 +588,11 @@ def _validated_changes(output: object, allowed_paths: Sequence[str]) -> tuple[di
         if not any(path == rule or path.startswith(f"{rule}/") for rule in allowed_paths):
             raise DisallowedPatchPathError(
                 f"Code Generator path {path!r} is outside IMPLEMENTATION_PLAN.intendedFiles"
+            )
+        target = next((item for item in editable_targets if item.get("path") == path), None)
+        if target is None or value.get("preimageSha256") != target.get("preimageSha256"):
+            raise GeneratePatchContractError(
+                f"Code Generator change for {path!r} is not bound to the supplied preimage"
             )
         seen.add(path)
         changes.append({"path": path, "content": content})

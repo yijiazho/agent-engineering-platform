@@ -40,6 +40,7 @@ def evaluate_patch(
     patch_content: str | bytes,
     expected_revision: str,
     allowed_paths: Sequence[str],
+    required_paths: Sequence[str] | None = None,
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
@@ -65,6 +66,7 @@ def evaluate_patch(
     )
     artifact = deepcopy(dict(patch_artifact))
     normalized_rules = _normalize_rules(allowed_paths)
+    normalized_required = _normalize_rules(required_paths) if required_paths is not None else ()
     errors: list[dict[str, str]] = []
     logs: list[str] = []
     changed_files: list[str] = []
@@ -205,6 +207,26 @@ def evaluate_patch(
                 }
             )
 
+    dispositions = [
+        {"path": path, "disposition": "CHANGED" if path in changed_files else "MISSING"}
+        for path in normalized_required
+    ]
+    for disposition in dispositions:
+        if disposition["disposition"] == "MISSING":
+            errors.append({
+                "code": "REQUIRED_CHANGE_MISSING",
+                "message": f"planned target {disposition['path']!r} is absent from the final diff",
+            })
+    added_lines, deleted_lines = _line_change_counts(content)
+    total_changes = added_lines + deleted_lines
+    replacement_ratio = deleted_lines / total_changes if total_changes else 0.0
+    destructive = deleted_lines >= 20 and replacement_ratio > 0.8
+    if destructive:
+        errors.append({
+            "code": "DESTRUCTIVE_REWRITE",
+            "message": "patch deletes at least 20 lines and more than 80% of changed lines",
+        })
+
     errors = sorted(errors, key=lambda item: (item["code"], item["message"]))
     logs.extend(diagnostics)
     logs.append("Patch evaluation passed" if not errors else "Patch evaluation failed")
@@ -217,6 +239,10 @@ def evaluate_patch(
         "pathBoundary": bool(changed_files) and all(
             check["allowed"] for check in boundary_checks
         ),
+        "requiredFileDisposition": all(
+            item["disposition"] == "CHANGED" for item in dispositions
+        ),
+        "destructiveChange": not destructive,
     }
     evidence = {
         "type": "patch-evaluation",
@@ -229,6 +255,13 @@ def evaluate_patch(
         "applicable": applicable,
         "diagnostics": diagnostics,
         "boundaryChecks": boundary_checks,
+        "requiredFileDispositions": dispositions,
+        "changeStatistics": {
+            "addedLines": added_lines,
+            "deletedLines": deleted_lines,
+            "replacementRatio": replacement_ratio,
+            "destructiveRewrite": destructive,
+        },
         "git": {
             "status": git_status,
             "logsRef": git_logs_ref,
@@ -281,6 +314,16 @@ def _patch_bytes(
         {"code": "INVALID_CONTENT", "message": "patch content must be text or bytes"}
     )
     return b""
+
+
+def _line_change_counts(content: bytes) -> tuple[int, int]:
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return 0, 0
+    added = sum(line.startswith("+") and not line.startswith("+++") for line in lines)
+    deleted = sum(line.startswith("-") and not line.startswith("---") for line in lines)
+    return added, deleted
 
 
 def _normalize_rules(rules: Sequence[str]) -> tuple[str, ...]:

@@ -264,6 +264,13 @@ evaluator performs neither LLM reasoning nor a Publication Policy decision.
 
 ## 9.2 Patch Evaluation
 
+Patch Evaluation distinguishes path authorization from required-change
+completion. Its immutable evidence includes one disposition per planned file,
+line-addition and deletion counts, replacement ratio, and a deterministic
+destructive-rewrite check. An absent planned file or unexplained rewrite of at
+least 20 deleted lines where deletions exceed 80 percent of changed lines is a
+failure, even when the patch applies and every path is allowed.
+
 For patch artifacts, deterministic evaluation first verifies the
 GeneratedArtifact content address and immutable repository revision. It then
 uses the repository-bound Git adapter's non-mutating applicability check and

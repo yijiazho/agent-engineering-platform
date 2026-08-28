@@ -559,7 +559,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 50 implementation tasks are complete.
+contracts are established, and 43 of the 51 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -632,6 +632,10 @@ Implemented foundations currently include:
   limits, bounded relevance retrieval, cross-category source-slice
   deduplication, safe category accounting, and provenance for repository
   knowledge, Resources, events, policies, and prior artifacts.
+* Revision-bound GeneratePatch editable-target context with exact UTF-8
+  preimages, digest-bound model replacements, mandatory planned-file
+  dispositions, and deterministic destructive-change evidence. Candidate-file
+  discovery remains bounded metadata for analysis and planning.
 * Authenticated, repository-bound GitHub issue webhook ingress with shared-store
   deduplication, an atomic durable reconciliation outbox, restart-safe replay,
   and redacted lifecycle evidence.
