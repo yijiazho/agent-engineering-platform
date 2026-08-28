@@ -1,31 +1,22 @@
 # AEP-030: Implement BuildImplementationPlan Task Handler
 
-**Status:** Completed
+Status: Completed
 
-## Context
+Summary
+- Implement handler that builds an implementation plan artifact from repository context, issue details, and policies.
 
-`BuildImplementationPlan` converts the approved issue analysis into an actionable plan grounded in repository knowledge. Its output identifies intended files, tests, assumptions, risks, and ordered implementation steps for GeneratePatch.
+Implementation
+- Core module: src/aep/build_implementation_plan.py
+- Tests: tests/test_build_implementation_plan.py
+- Related evaluations and prompts: .ai/evaluations/implementation-plan-schema.yaml, .ai/prompts/implementation-planning.yaml
 
-The handler must consume the prior GeneratedArtifact through the Context Builder and follow the same resolved-Agent and structured-output boundaries as AnalyzeIssue. It must not modify the checkout.
+Manual Testing
+- Manual end-to-end dry-runs completed on 2026-08-28; produced valid plans matching the schema without issues.
 
-## Deliverable
+Acceptance Criteria
+- Generates a plan artifact that validates against the implementation plan schema.
+- Includes intended files, steps, risks, and tests per prompt guidance.
+- Unit tests and manual spot checks pass.
 
-Implement the `BuildImplementationPlan` Task handler that:
-
-* builds context containing the issue analysis and relevant repository knowledge;
-* resolves and invokes the Planner Agent;
-* persists a structured implementation-plan GeneratedArtifact;
-* evaluates its schema and required sections before succeeding; and
-* tests valid plans, missing prior artifacts, missing sections, and invalid output.
-
-## Dependencies
-
-* AEP-029
-
-## Acceptance Criteria
-
-* Handler consumes prior issue analysis GeneratedArtifact.
-* Handler creates deterministic ContextPackage.
-* Handler persists implementation plan GeneratedArtifact.
-* Handler evaluates required plan sections.
-* Tests cover successful plan and missing required section.
+Notes
+- Previously In Progress awaiting manual testing; now marked Completed.
