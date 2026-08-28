@@ -46,9 +46,11 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "required": ["operation", "path", "content"],
             "properties": {
-                "operation": {"const": "write"},
+                "operation": {"enum": ["write", "compare_write"]},
                 "path": {"type": "string", "minLength": 1, "maxLength": 4096},
                 "content": {"type": "string"},
+                "expectedExists": {"type": "boolean"},
+                "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
         },
     ],
@@ -74,7 +76,7 @@ FILESYSTEM_OUTPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "required": ["operation", "path", "bytesWritten", "sha256"],
             "properties": {
-                "operation": {"const": "write"},
+                "operation": {"enum": ["write", "compare_write"]},
                 "path": {"type": "string"},
                 "bytesWritten": {"type": "integer", "minimum": 0},
                 "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -154,7 +156,7 @@ class FilesystemToolAdapter(ToolAdapter):
         operation = request.input["operation"]
         relative_path = request.input["path"]
 
-        if operation == "write" and "filesystem.write" not in request.capabilities:
+        if operation in {"write", "compare_write"} and "filesystem.write" not in request.capabilities:
             return _CompletedExecution(
                 self._failure(
                     started_at,
@@ -210,14 +212,34 @@ class FilesystemToolAdapter(ToolAdapter):
             else:
                 content = request.input["content"]
                 encoded = content.encode("utf-8")
-                with self._open_confined(relative, operation) as stream:
+                if operation == "compare_write":
+                    expected_exists = request.input["expectedExists"]
+                    expected_digest = request.input["expectedSha256"]
+                    actual_path = self._workspace / relative
+                    exists = actual_path.exists()
+                    if exists != expected_exists:
+                        raise FilesystemBoundaryError(
+                            f"compare-write preimage existence mismatch for {normalized_path}"
+                        )
+                    if exists:
+                        current = actual_path.read_bytes()
+                        if sha256(current).hexdigest() != expected_digest:
+                            raise FilesystemBoundaryError(
+                                f"compare-write preimage digest mismatch for {normalized_path}"
+                            )
+                if operation in {"write", "compare_write"} and relative.parent != Path("."):
+                    parent_path = (self._workspace / relative.parent).resolve()
+                    if not parent_path.is_relative_to(self._workspace):
+                        raise FilesystemBoundaryError("write parent escapes workspace")
+                    parent_path.mkdir(parents=True, exist_ok=True)
+                with self._open_confined(relative, "write") as stream:
                     stream.seek(0)
                     stream.truncate(0)
                     stream.write(encoded)
                     stream.flush()
                     os.fsync(stream.fileno())
                 output = {
-                    "operation": "write",
+                    "operation": operation,
                     "path": normalized_path,
                     "bytesWritten": len(encoded),
                     "sha256": sha256(encoded).hexdigest(),

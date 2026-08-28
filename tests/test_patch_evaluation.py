@@ -144,6 +144,7 @@ def evaluate(
     allowed_paths: tuple[str, ...] = ("tracked.txt",),
     artifact_revision: str | None = None,
     store: InMemoryRuntimeObjectStore | None = None,
+    required_insertions: tuple[str, ...] = (),
 ):
     _root, revision, adapter = repository
     content = b"" if fixture is None else (FIXTURES / fixture).read_bytes()
@@ -164,6 +165,7 @@ def evaluate(
         patch_content=content,
         expected_revision=revision,
         allowed_paths=allowed_paths,
+        required_insertions=required_insertions,
         working_branch="agent/work",
         correlation={
             "traceId": "trace-patch-evaluation",
@@ -204,6 +206,14 @@ def test_clean_patch_passes_without_mutating_repository(repository) -> None:
     assert (root / "tracked.txt").read_text(encoding="utf-8") == "original\n"
     with pytest.raises(TypeError):
         result["outcome"] = "FAIL"
+
+
+def test_required_insertions_are_checked_before_patch_pass(repository) -> None:
+    _, result = evaluate(repository, "clean.patch", required_insertions=("updated",))
+    assert result["outcome"] == "PASS"
+    _, missing = evaluate(repository, "clean.patch", required_insertions=("deploy/",))
+    assert missing["outcome"] == "FAIL"
+    assert "REQUIRED_INSERTION_MISSING" in error_codes(missing)
 
 
 def test_large_deletion_requires_and_honors_explicit_authorization(repository) -> None:

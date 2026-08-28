@@ -216,10 +216,12 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             for index, change in enumerate(changes):
                 request = ToolRequest(
                     tool_ref=tools["filesystem"]["ref"],
-                    input={
-                        "operation": "write",
+                input={
+                        "operation": "compare_write",
                         "path": change["path"],
                         "content": change["content"],
+                        "expectedExists": next(item["exists"] for item in editable_targets if item["path"] == change["path"]),
+                        "expectedSha256": next(item["preimageSha256"] for item in editable_targets if item["path"] == change["path"]),
                     },
                     caller=ToolCaller(kind="AgentInvocation", id=invocation_id),
                     capabilities=("filesystem.write",),
@@ -304,6 +306,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 allowed_paths=allowed_paths,
                 required_paths=allowed_paths,
                 deletion_authorized_paths=_deletion_authorized_paths(plan, allowed_paths),
+                required_insertions=_required_insertions(plan),
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -383,13 +386,17 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 invocation_id=invocation_id,
                 task_execution_id=str(task_execution["id"]),
                 request=request,
-                authorize=lambda _request: True,
+                authorize=self._authorize_filesystem,
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
             if (
                 result.status is not ToolResultStatus.SUCCEEDED
                 and result.failure_class is not ToolFailureClass.NOT_FOUND
             ):
+                if result.failure_class is ToolFailureClass.POLICY:
+                    raise AgentToolDeniedError(
+                        f"editable target read for {path!r} was denied by policy"
+                    )
                 raise GeneratePatchContractError(
                     f"editable target {path!r} could not be materialized: "
                     f"{result.failure_class.value if result.failure_class else result.status.value}"
@@ -610,6 +617,15 @@ def _deletion_authorized_paths(
             "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must be a subset of intendedFiles"
         )
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _required_insertions(plan: JsonMapping) -> tuple[str, ...]:
+    values = plan.get("requiredInsertions", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must be an array")
+    if any(not isinstance(value, str) or not value for value in values):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must contain non-empty strings")
+    return tuple(dict.fromkeys(values))
 
 
 def _validated_changes(

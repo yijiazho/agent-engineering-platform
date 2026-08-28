@@ -167,6 +167,7 @@ def test_capabilities_fail_closed_and_publication_is_exclusive(
         for capability in rule.get("capabilities", [])
     }
     assert allowed == {
+        "filesystem.read",
         "filesystem.write",
         "git.read",
         "docker.run",

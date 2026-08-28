@@ -42,6 +42,7 @@ def evaluate_patch(
     allowed_paths: Sequence[str],
     required_paths: Sequence[str] | None = None,
     deletion_authorized_paths: Sequence[str] = (),
+    required_insertions: Sequence[str] = (),
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
@@ -209,6 +210,17 @@ def evaluate_patch(
                 }
             )
 
+    added_text = _added_text(content)
+    missing_insertions = sorted(
+        {value for value in required_insertions if isinstance(value, str) and value}
+        - set(added_text)
+    )
+    for insertion in missing_insertions:
+        errors.append({
+            "code": "REQUIRED_INSERTION_MISSING",
+            "message": f"required insertion is absent from the patch: {insertion!r}",
+        })
+
     dispositions = [
         {"path": path, "disposition": "CHANGED" if path in changed_files else "MISSING"}
         for path in normalized_required
@@ -270,6 +282,8 @@ def evaluate_patch(
             "destructiveRewrite": destructive,
             "deletionAuthorized": deletion_authorized,
             "deletionAuthorizedPaths": list(normalized_deletion_authorized),
+            "requiredInsertions": list(required_insertions),
+            "missingInsertions": missing_insertions,
         },
         "git": {
             "status": git_status,
@@ -333,6 +347,14 @@ def _line_change_counts(content: bytes) -> tuple[int, int]:
     added = sum(line.startswith("+") and not line.startswith("+++") for line in lines)
     deleted = sum(line.startswith("-") and not line.startswith("---") for line in lines)
     return added, deleted
+
+
+def _added_text(content: bytes) -> tuple[str, ...]:
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return ()
+    return tuple(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
 
 
 def _normalize_rules(rules: Sequence[str]) -> tuple[str, ...]:

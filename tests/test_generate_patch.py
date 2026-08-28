@@ -142,7 +142,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     assert [item["input"]["operation"] for item in invocations] == [
         "read",
         "read",
-        "write",
+        "compare_write",
         "diff",
         "check_patch",
     ]
@@ -214,7 +214,7 @@ def test_denied_filesystem_capability_records_denial_without_writing(
     assert result.failure_class is FailureClass.POLICY
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
     execution = store.get(TASK_EXECUTION_ID)
-    invocation = store.get(execution["toolInvocationIds"][2])
+    invocation = store.get(execution["toolInvocationIds"][0])
     assert invocation["resultStatus"] == "DENIED"
     assert invocation["failure"]["class"] == "POLICY"
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
@@ -330,6 +330,24 @@ def test_planned_new_file_uses_absent_preimage_and_is_created(tmp_path: Path) ->
     assert all(item["toolRef"]["version"] == "1.0.0" for item in reads)
     assert [item["failure"]["class"] for item in reads] == ["PERMANENT", "PERMANENT"]
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID)
+
+
+def test_planned_new_file_creates_missing_parent_directories(tmp_path: Path) -> None:
+    empty_digest = sha256(b"").hexdigest()
+    store, handler, task, _artifacts, workspace, _adapter = setup_handler(
+        tmp_path,
+        {"changes": [{
+            "path": "src/generated/new_test.py",
+            "content": "def test_new():\n    assert True\n",
+            "preimageSha256": empty_digest,
+        }]},
+        intended_files=["src/generated/new_test.py"],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    assert (workspace / "src/generated/new_test.py").read_text(encoding="utf-8")
 
 
 def setup_handler(

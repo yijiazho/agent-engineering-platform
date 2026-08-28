@@ -17,7 +17,9 @@
       "additionalProperties": false,
       "required": ["operation", "path", "content"],
       "properties": {
-        "operation": { "const": "write" },
+        "operation": { "enum": ["write", "compare_write"] },
+        "expectedExists": { "type": "boolean" },
+        "expectedSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "content": { "type": "string" }
       }
