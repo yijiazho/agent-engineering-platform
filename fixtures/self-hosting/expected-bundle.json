@@ -22,10 +22,10 @@
   ],
   "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
   "resourceVersions": {
-    "workflow": "1.7.0",
+    "workflow": "1.8.0",
     "buildImplementationPlanTask": "1.3.0",
-    "generatePatchTask": "1.5.0",
-    "filesystemTool": "1.2.0",
+    "generatePatchTask": "1.6.0",
+    "filesystemTool": "1.3.0",
     "createPullRequestTask": "1.2.0",
     "publicationEvidencePolicy": "1.1.0",
     "model": "1.1.0",

@@ -128,6 +128,8 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 invocation_id=self._runtime_id("toolinvocation", f"{task_execution['id']}:git:preflight"),
                 task_execution=task_execution,
                 tool_ref=git_read_ref,
+                paths=allowed_paths,
+                include_ignored=True,
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [clean_evidence["id"]]})
             clean_output = clean_result.output_record() if clean_result.output is not None else {}
@@ -140,6 +142,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 repository_revision=str(workflow["repositoryRevision"]),
                 paths=allowed_paths,
                 tool_ref=filesystem_read_ref,
+                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
             )
             context_package = self._context_builder.build(
                 task=task,
@@ -225,6 +228,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 paths=allowed_paths,
                 tool_ref=filesystem_read_ref,
                 purpose="preimage-verification",
+                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
             )
             if any(
                 current["exists"] != original["exists"]
@@ -288,6 +292,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 invocation_id=diff_id,
                 task_execution=task_execution,
                 tool_ref=tools["git"]["ref"],
+                paths=allowed_paths,
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [diff_evidence["id"]]})
             if diff_result.status is not ToolResultStatus.SUCCEEDED:
@@ -445,6 +450,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     "operation": "compare_write", "path": change["path"],
                     "content": target["content"], "expectedExists": False,
                     "expectedSha256": sha256(b"").hexdigest(),
+                    "mode": target["mode"],
                 }
             elif target["exists"]:
                 payload = {
@@ -486,13 +492,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
     def _read_editable_targets(
         self, *, task_execution: JsonMapping, repository_revision: str, paths: Sequence[str],
         tool_ref: JsonMapping,
+        max_bytes: int = 4 * 1024 * 1024,
         purpose: str = "editable-target",
     ) -> tuple[dict[str, Any], ...]:
         targets: list[dict[str, Any]] = []
         for index, path in enumerate(paths):
             request = ToolRequest(
                 tool_ref=tool_ref,
-                input={"operation": "read", "path": path},
+                input={"operation": "read", "path": path, "maxBytes": max_bytes},
                 caller=ToolCaller(kind="ContextBuilder", id=str(task_execution["id"])),
                 capabilities=("filesystem.read",),
                 timeout_ms=self._tool_timeout_ms,
@@ -533,6 +540,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 "exists": exists,
                 "content": content,
                 "preimageSha256": digest,
+                "mode": output.get("mode"),
                 "repositoryRevision": repository_revision,
                 "provenance": {
                     "actor": "context-builder",
@@ -703,6 +711,8 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
         invocation_id: str,
         task_execution: JsonMapping,
         tool_ref: JsonMapping,
+        paths: Sequence[str] = (),
+        include_ignored: bool = False,
     ) -> tuple[ToolResult, RuntimeObject]:
         request = ToolRequest(
             tool_ref=tool_ref,
@@ -710,6 +720,8 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 "operation": "diff",
                 "expectedRevision": task_execution["provenance"]["repositoryRevision"],
                 "branch": self._working_branch,
+                "paths": list(paths),
+                "includeIgnored": include_ignored,
             },
             caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
             capabilities=("git.read",),
@@ -861,7 +873,11 @@ def _safe_path(value: str) -> bool:
     if not value or "\\" in value:
         return False
     path = PurePosixPath(value)
-    return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
+    return (
+        value == path.as_posix()
+        and not path.is_absolute()
+        and all(part not in {"", ".", ".."} for part in path.parts)
+    )
 
 
 def _tool_failure(result: ToolResult, operation: str) -> TaskExecutionResult:

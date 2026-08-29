@@ -191,6 +191,12 @@ missing source material or prove compliance before mutation.
   its normalized path, immutable repository revision, source provenance,
   content/preimage digest, size, and sufficient source material for the chosen
   edit representation. Ranked metadata alone cannot satisfy this requirement.
+* Editable-target reads use a byte ceiling derived from the Task input-context
+  token budget, reject non-canonical POSIX path spellings, and run only after a
+  path-scoped Git preflight rejects tracked, untracked, or ignored target state.
+* Filesystem mutations and terminal ToolInvocation evidence are atomic: an
+  evidence-persistence failure restores prior bytes and file mode before it
+  escapes, and multi-file rollback preserves the original mode of deleted files.
 * A missing, stale, unreadable, unsupported, duplicate, or over-budget target
   fails closed before Model invocation and before Filesystem mutation with
   stable, non-sensitive evidence identifying the failed target and reason.

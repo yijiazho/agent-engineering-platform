@@ -1,11 +1,11 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Agent",
-  "metadata": {"name": "code-generator", "version": "1.5.0"},
+  "metadata": {"name": "code-generator", "version": "1.6.0"},
   "spec": {
     "role": "Code Generator",
     "promptRef": {"kind": "Prompt", "name": "patch-generation", "version": "1.2.0"},
     "modelRef": {"kind": "Model", "name": "default-reasoning", "version": "1.1.0"},
-    "toolRefs": [{"kind": "Tool", "name": "filesystem", "version": "1.2.0"}, {"kind": "Tool", "name": "git", "version": "1.0.0"}],
+    "toolRefs": [{"kind": "Tool", "name": "filesystem", "version": "1.3.0"}, {"kind": "Tool", "name": "git", "version": "1.1.0"}],
     "policyRefs": [{"kind": "Policy", "name": "agent-safety", "version": "1.0.0"}, {"kind": "Policy", "name": "workspace-write", "version": "1.1.0"}],
     "outputSchema": {"type": "object", "additionalProperties": false, "required": ["changes"], "properties": {"changes": {"type": "array", "items": {"oneOf": [{"type": "object", "additionalProperties": false, "required": ["operation", "path", "content", "preimageSha256"], "properties": {"operation": {"const": "write"}, "path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}, {"type": "object", "additionalProperties": false, "required": ["operation", "path", "preimageSha256"], "properties": {"operation": {"const": "delete"}, "path": {"type": "string", "minLength": 1}, "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}]}}}}
   }

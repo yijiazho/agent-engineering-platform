@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import stat
 from time import monotonic, sleep
 from threading import RLock
 from typing import Any, BinaryIO, Callable
@@ -40,6 +41,7 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
             "properties": {
                 "operation": {"const": "read"},
                 "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "maxBytes": {"type": "integer", "minimum": 1},
             },
         },
         {
@@ -64,6 +66,7 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
                 "content": {"type": "string"},
                 "expectedExists": {"type": "boolean"},
                 "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "mode": {"type": "integer", "minimum": 0, "maximum": 4095},
             },
         },
         {
@@ -93,6 +96,7 @@ FILESYSTEM_OUTPUT_SCHEMA: dict[str, Any] = {
                 "content": {"type": "string"},
                 "sizeBytes": {"type": "integer", "minimum": 0},
                 "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "mode": {"type": "integer", "minimum": 0, "maximum": 4095},
             },
         },
         {
@@ -125,6 +129,14 @@ class FilesystemInvocationIdentityConflictError(ValueError):
 
 class FilesystemInvocationInProgressError(RuntimeError):
     """Raised when an identical invocation does not reach terminal state in time."""
+
+
+class _FilesystemPreimage:
+    def __init__(self, *, path: str, exists: bool, content: bytes, mode: int | None) -> None:
+        self.path = path
+        self.exists = exists
+        self.content = content
+        self.mode = mode
 
 
 class _CompletedExecution(ToolExecution):
@@ -231,8 +243,14 @@ class FilesystemToolAdapter(ToolAdapter):
                 self._before_open(self._workspace / relative, operation)
             if operation == "read":
                 with self._open_confined(relative, operation) as stream:
-                    content = stream.read().decode("utf-8")
-                encoded = content.encode("utf-8")
+                    max_bytes = request.input.get("maxBytes", 4 * 1024 * 1024)
+                    encoded = stream.read(max_bytes + 1)
+                    mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
+                if len(encoded) > max_bytes:
+                    raise FilesystemBoundaryError(
+                        f"read exceeds maxBytes for {normalized_path}"
+                    )
+                content = encoded.decode("utf-8")
                 output = {
                     "operation": "read",
                     "path": normalized_path,
@@ -240,6 +258,8 @@ class FilesystemToolAdapter(ToolAdapter):
                     "sizeBytes": len(encoded),
                     "sha256": sha256(encoded).hexdigest(),
                 }
+                if "maxBytes" in request.input:
+                    output["mode"] = mode
             elif operation == "compare_delete":
                 with self._open_confined(relative, "compare_write_existing") as stream:
                     current = stream.read()
@@ -287,6 +307,8 @@ class FilesystemToolAdapter(ToolAdapter):
                         stream.write(encoded)
                         stream.flush()
                         os.fsync(stream.fileno())
+                        if "mode" in request.input:
+                            self._set_handle_mode(stream.fileno(), request.input["mode"])
                 except OSError:
                     if operation == "compare_write" and expected_exists:
                         with self._open_confined(relative, "compare_write_existing") as restore:
@@ -351,6 +373,50 @@ class FilesystemToolAdapter(ToolAdapter):
                 completed_at=_timestamp(completed_at),
             )
         return _CompletedExecution(result)
+
+    def _capture_preimage(self, request: ToolRequest) -> _FilesystemPreimage | None:
+        if request.input.get("operation") not in {"write", "compare_write", "compare_delete"}:
+            return None
+        relative, normalized = self._validate_path(request.input["path"])
+        try:
+            with self._open_confined(relative, "read") as stream:
+                content = stream.read()
+                mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
+        except FileNotFoundError:
+            return _FilesystemPreimage(path=normalized, exists=False, content=b"", mode=None)
+        return _FilesystemPreimage(path=normalized, exists=True, content=content, mode=mode)
+
+    def _restore_preimage(self, preimage: _FilesystemPreimage) -> None:
+        relative, _ = self._validate_path(preimage.path)
+        if not preimage.exists:
+            try:
+                with self._open_confined(relative, "compare_write_existing"):
+                    pass
+            except FileNotFoundError:
+                return
+            (self._workspace / relative).unlink()
+            return
+        if relative.parent != Path("."):
+            (self._workspace / relative.parent).mkdir(parents=True, exist_ok=True)
+        operation = "compare_write_existing"
+        try:
+            stream = self._open_confined(relative, operation)
+        except FileNotFoundError:
+            stream = self._open_confined(relative, "compare_write_new")
+        with stream:
+            stream.seek(0)
+            stream.truncate(0)
+            stream.write(preimage.content)
+            stream.flush()
+            os.fsync(stream.fileno())
+            if preimage.mode is not None:
+                self._set_handle_mode(stream.fileno(), preimage.mode)
+
+    def _set_handle_mode(self, descriptor: int, mode: int) -> None:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            os.chmod(self._handle_path_resolver(descriptor), mode)
 
     def _validate_path(self, raw_path: str) -> tuple[Path, str]:
         relative = Path(raw_path)
@@ -517,27 +583,34 @@ class FilesystemTool:
                 return _result_from_invocation(created), created
             prior = self._await_terminal_invocation(invocation_id)
             return _result_from_invocation(prior), prior
-        try:
-            result = invoke_tool(
-                request,
-                validator=self._validator,
-                authorize=authorize,
-                adapter=self.adapter,
+        with self.adapter._mutation_lock:
+            preimage = self.adapter._capture_preimage(request)
+            try:
+                result = invoke_tool(
+                    request,
+                    validator=self._validator,
+                    authorize=authorize,
+                    adapter=self.adapter,
+                )
+            except Exception as error:
+                result = _unexpected_failure(started_at, error)
+            status = (
+                "SUCCEEDED"
+                if result.status is ToolResultStatus.SUCCEEDED
+                else "FAILED"
             )
-        except Exception as error:
-            result = _unexpected_failure(started_at, error)
-        status = (
-            "SUCCEEDED"
-            if result.status is ToolResultStatus.SUCCEEDED
-            else "FAILED"
-        )
-        persisted = self._store.update_status(
-            invocation_id,
-            status,
-            expected_status="PENDING",
-            updated_at=result.completed_at,
-            changes=_terminal_invocation_changes(result),
-        )
+            try:
+                persisted = self._store.update_status(
+                    invocation_id,
+                    status,
+                    expected_status="PENDING",
+                    updated_at=result.completed_at,
+                    changes=_terminal_invocation_changes(result),
+                )
+            except Exception:
+                if result.status is ToolResultStatus.SUCCEEDED and preimage is not None:
+                    self.adapter._restore_preimage(preimage)
+                raise
         return result, persisted
 
     def _await_terminal_invocation(self, invocation_id: str) -> RuntimeObject:

@@ -5,6 +5,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 from threading import Event, Lock
 
@@ -150,6 +151,46 @@ def test_allowed_read_records_output_log_and_toolinvocation(tmp_path: Path) -> N
     assert invocation["metrics"]["durationMs"] >= 0
     assert tool.adapter.get_log(result.logs_ref)["status"] == "SUCCEEDED"
     assert store.get(invocation["id"]) == invocation
+
+
+def test_read_stops_at_the_declared_byte_limit(tmp_path: Path) -> None:
+    (tmp_path / "large.txt").write_bytes(b"abcdef")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    result, _ = invoke(
+        tool, store, request("read", "large.txt", maxBytes=5), suffix="boundedread123456"
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+
+
+def test_terminal_persistence_failure_restores_mutated_file(tmp_path: Path) -> None:
+    target = tmp_path / "script.sh"
+    target.write_bytes(b"old\n")
+    target.chmod(0o755)
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+
+    class FailingTerminalStore(InMemoryRuntimeObjectStore):
+        def update_status(self, *args, **kwargs):
+            raise RuntimeError("terminal persistence failed")
+
+    store = FailingTerminalStore()
+    tool = FilesystemTool(tmp_path, store)
+    mutation = request(
+        "compare_write",
+        "script.sh",
+        content="new\n",
+        expectedExists=True,
+        expectedSha256=sha256(b"old\n").hexdigest(),
+    )
+
+    with pytest.raises(RuntimeError, match="terminal persistence"):
+        invoke(tool, store, mutation, suffix="persistfail123456")
+
+    assert target.read_bytes() == b"old\n"
+    assert stat.S_IMODE(target.stat().st_mode) == original_mode
 
 
 def test_allowed_write_is_authorized_before_mutation_and_records_evidence(

@@ -441,7 +441,7 @@ exactly `patchGenerated`, `validationRan`, `requiredArtifactsPresent`,
 `requiredEvaluationsPresent`, `allRequiredEvaluationsPassed`,
 `noPriorPolicyViolation`, and `failures`; its runtime schema rejects vocabulary
 drift. The self-hosting graph pins `publication-evidence:1.1.0` through
-`create-pull-request:1.2.0` and `issue-to-pr:1.7.0`. Only a matching Publication
+`create-pull-request:1.2.0` and `issue-to-pr:1.8.0`. Only a matching Publication
 Policy allow proceeds to the separate `git.push` capability decision and Git
 mutation, followed by a separate `github.create_pr` capability decision and PR
 mutation. A denial produces neither Git ToolInvocation, GitHub call, nor

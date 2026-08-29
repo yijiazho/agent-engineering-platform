@@ -12,7 +12,8 @@
         "path": { "type": "string" },
         "content": { "type": "string" },
         "sizeBytes": { "type": "integer", "minimum": 0 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 4095 }
       }
     },
     {

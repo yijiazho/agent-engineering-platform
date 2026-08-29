@@ -9,7 +9,8 @@
       "required": ["operation", "path"],
       "properties": {
         "operation": { "const": "read" },
-        "path": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "maxBytes": { "type": "integer", "minimum": 1 }
       }
     },
     {
@@ -30,6 +31,7 @@
         "operation": { "const": "compare_write" },
         "expectedExists": { "type": "boolean" },
         "expectedSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 4095 },
         "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "content": { "type": "string" }
       }

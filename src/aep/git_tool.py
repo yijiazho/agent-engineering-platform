@@ -55,6 +55,12 @@ GIT_INPUT_SCHEMA: Mapping[str, Any] = {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
         },
+        "paths": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": True,
+        },
+        "includeIgnored": {"type": "boolean"},
     },
     "allOf": [
         {
@@ -511,6 +517,8 @@ class GitToolAdapter(ToolAdapter):
                 if operation == "commit_changes"
                 else None
             ),
+            paths=tuple(str(path) for path in value.get("paths", ())),
+            include_ignored=bool(value.get("includeIgnored", False)),
             trace_id=request.trace_id,
             log_store=self._log_store,
             sandbox=self._sandbox,
@@ -531,6 +539,8 @@ class _GitToolExecution(ToolExecution):
         patch: bytes | None,
         commit_message: str | None,
         expected_patch_sha256: str | None,
+        paths: tuple[str, ...],
+        include_ignored: bool,
         trace_id: str,
         log_store: GitCommandLogStore,
         sandbox: GitSandbox,
@@ -545,6 +555,8 @@ class _GitToolExecution(ToolExecution):
         self._patch = patch
         self._commit_message = commit_message
         self._expected_patch_sha256 = expected_patch_sha256
+        self._paths = paths
+        self._include_ignored = include_ignored
         self._trace_id = trace_id
         self._log_store = log_store
         self._sandbox = sandbox
@@ -824,9 +836,12 @@ class _GitToolExecution(ToolExecution):
         revision = self._run(("rev-parse", "HEAD"), deadline).stdout.decode(
             "ascii"
         ).strip().lower()
-        status = self._run(
-            ("status", "--porcelain=v1", "-z", "--untracked-files=all"), deadline
-        ).stdout
+        status_arguments = ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+        if self._include_ignored:
+            status_arguments.append("--ignored=matching")
+        if self._paths:
+            status_arguments.extend(("--", *self._paths))
+        status = self._run(tuple(status_arguments), deadline).stdout
         changed_files = committed_changes or _parse_status(status)
         diff_value: dict[str, Any] | None = None
         applicable: bool | None = None
@@ -873,6 +888,7 @@ class _GitToolExecution(ToolExecution):
                         "--no-renames",
                         self._expected_revision,
                         "--",
+                        *self._paths,
                     ),
                     deadline,
                 ).stdout

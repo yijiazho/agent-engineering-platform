@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
-from aep.git_tool import GitTool, GitToolAdapter, git_tool_validator
+from aep.git_tool import GitTool, GitToolAdapter, _decode_patch_path, git_tool_validator
 from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import ToolCaller, ToolRequest, ToolResultStatus, invoke_tool
@@ -276,7 +276,11 @@ def evaluate_patch(
             "message": "patch deletes at least 20 lines and more than 80% of changed lines",
         })
     unpreserved_hunks = _unpreserved_hunks(content)
-    surrounding_content_preserved = not unpreserved_hunks or deletion_authorized
+    unauthorized_unpreserved_hunks = [
+        hunk for hunk in unpreserved_hunks
+        if _matching_rule(str(hunk["path"]), normalized_deletion_authorized) is None
+    ]
+    surrounding_content_preserved = not unauthorized_unpreserved_hunks
     if not surrounding_content_preserved:
         errors.append({
             "code": "SURROUNDING_CONTENT_NOT_PRESERVED",
@@ -330,6 +334,7 @@ def evaluate_patch(
             "replacementViolations": replacement_violations,
             "unsupportedAcceptanceCriteria": list(unsupported_acceptance_criteria),
             "unpreservedHunks": unpreserved_hunks,
+            "unauthorizedUnpreservedHunks": unauthorized_unpreserved_hunks,
         },
         "git": {
             "status": git_status,
@@ -395,16 +400,20 @@ def _line_change_counts(content: bytes) -> tuple[int, int]:
     return added, deleted
 
 
-def _unpreserved_hunks(content: bytes) -> list[dict[str, int]]:
+def _unpreserved_hunks(content: bytes) -> list[dict[str, int | str]]:
     """Identify multi-line replacements with no unchanged source context."""
 
-    hunks: list[dict[str, int]] = []
-    current: dict[str, int] | None = None
+    hunks: list[dict[str, int | str]] = []
+    current: dict[str, int | str] | None = None
+    path: str | None = None
     for line in content.decode("utf-8", errors="replace").splitlines():
-        if line.startswith("@@ "):
-            if current is not None and current["deletedLines"] >= 2 and not current["contextLines"]:
+        marker = _patch_marker_path(line, "--- ")
+        if marker is not None and marker != "/dev/null":
+            path = marker
+        elif line.startswith("@@ "):
+            if current is not None and int(current["deletedLines"]) >= 2 and not current["contextLines"]:
                 hunks.append(current)
-            current = {"deletedLines": 0, "addedLines": 0, "contextLines": 0}
+            current = {"path": path or "", "deletedLines": 0, "addedLines": 0, "contextLines": 0}
         elif current is not None:
             if line.startswith("-") and not line.startswith("---"):
                 current["deletedLines"] += 1
@@ -412,7 +421,7 @@ def _unpreserved_hunks(content: bytes) -> list[dict[str, int]]:
                 current["addedLines"] += 1
             elif line.startswith(" "):
                 current["contextLines"] += 1
-    if current is not None and current["deletedLines"] >= 2 and not current["contextLines"]:
+    if current is not None and int(current["deletedLines"]) >= 2 and not current["contextLines"]:
         hunks.append(current)
     return hunks
 
@@ -429,10 +438,10 @@ def _deleted_paths(content: bytes) -> list[str]:
             paths.add(current)
 
     for line in content.decode("utf-8", errors="replace").splitlines():
-        if line.startswith("diff --git a/"):
+        marker = _patch_marker_path(line, "--- ")
+        if marker is not None:
             complete_hunk()
-            parts = line.split(" ")
-            current = parts[2][2:] if len(parts) >= 3 and parts[2].startswith("a/") else None
+            current = None if marker == "/dev/null" else marker
             deleted = added = 0
         elif line.startswith("@@ "):
             complete_hunk()
@@ -457,9 +466,9 @@ def _added_text_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
     current: str | None = None
     values: dict[str, list[str]] = {}
     for line in content.decode("utf-8", errors="replace").splitlines():
-        if line.startswith("diff --git a/"):
-            parts = line.split(" ")
-            current = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else None
+        marker = _patch_marker_path(line, "+++ ")
+        if marker is not None:
+            current = None if marker == "/dev/null" else marker
         elif current is not None and line.startswith("+") and not line.startswith("+++"):
             values.setdefault(current, []).append(line[1:])
     return {path: tuple(lines) for path, lines in values.items()}
@@ -473,10 +482,10 @@ def _replaced_paths(content: bytes) -> set[str]:
         if current is not None and deleted and added:
             replaced.add(current)
     for line in content.decode("utf-8", errors="replace").splitlines():
-        if line.startswith("diff --git a/"):
+        marker = _patch_marker_path(line, "--- ")
+        if marker is not None:
             finish()
-            parts = line.split(" ")
-            current = parts[2][2:] if len(parts) >= 3 else None
+            current = None if marker == "/dev/null" else marker
             deleted = added = 0
         elif line.startswith("@@ "):
             finish()
@@ -487,6 +496,18 @@ def _replaced_paths(content: bytes) -> set[str]:
             added += 1
     finish()
     return replaced
+
+
+def _patch_marker_path(line: str, marker: str) -> str | None:
+    if not line.startswith(marker):
+        return None
+    raw = line[len(marker):].encode("utf-8")
+    path = _decode_patch_path(raw)
+    if path == "/dev/null":
+        return path
+    if path.startswith(("a/", "b/")):
+        return path[2:]
+    return None
 
 
 def _normalize_rules(rules: Sequence[str]) -> tuple[str, ...]:

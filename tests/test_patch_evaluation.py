@@ -274,6 +274,24 @@ def test_balanced_whole_file_rewrite_requires_preserved_context(repository) -> N
     assert result["evidence"]["checks"]["surroundingContentPreservation"] is False
 
 
+def test_diff_helpers_preserve_paths_with_spaces() -> None:
+    from aep.patch_evaluation import _added_text_by_path, _deleted_paths, _replaced_paths
+
+    patch = b"""diff --git a/src/file name.txt b/src/file name.txt
+--- a/src/file name.txt
++++ b/src/file name.txt
+@@ -1,2 +1,2 @@
+-old one
+-old two
++new one
++new two
+"""
+
+    assert _added_text_by_path(patch) == {"src/file name.txt": ("new one", "new two")}
+    assert _replaced_paths(patch) == {"src/file name.txt"}
+    assert _deleted_paths(patch) == []
+
+
 def test_conflicting_patch_fails_with_git_diagnostics(repository) -> None:
     _, result = evaluate(repository, "conflicting.patch")
 

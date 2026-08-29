@@ -366,6 +366,37 @@ def test_dirty_checkout_fails_before_editable_reads_or_model_invocation(tmp_path
     assert model.requests == []
 
 
+def test_ignored_planned_file_fails_before_editable_read(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "ignored.env", "content": "safe\n"}]},
+        intended_files=["ignored.env"],
+    )
+    (workspace / ".git/info/exclude").write_text("ignored.env\n", encoding="utf-8")
+    (workspace / "ignored.env").write_text("SECRET=value\n", encoding="utf-8")
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+@pytest.mark.parametrize("path", ["src/./app.py", "src//app.py"])
+def test_noncanonical_planned_path_fails_before_model(tmp_path: Path, path: str) -> None:
+    store, handler, task, _artifacts, _workspace, model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": path, "content": "value = 2\n"}]},
+        intended_files=[path],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "normalized repository-relative" in result.message
+    assert model.requests == []
+
+
 def test_utf8_decodable_binary_target_is_rejected(tmp_path: Path) -> None:
     store, handler, _task, _artifacts, workspace, _model = setup_handler(
         tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
