@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from time import monotonic, sleep
+from threading import RLock
 from typing import Any, BinaryIO, Callable
 from uuid import uuid4
 
@@ -164,6 +165,7 @@ class FilesystemToolAdapter(ToolAdapter):
         self._logs: dict[str, Mapping[str, Any]] = {}
         self._handle_path_resolver = handle_path_resolver or _open_handle_path
         self._before_open = before_open
+        self._mutation_lock = RLock()
 
     @property
     def workspace(self) -> Path:
@@ -174,6 +176,12 @@ class FilesystemToolAdapter(ToolAdapter):
         return dict(value) if value is not None else None
 
     def start(self, request: ToolRequest) -> ToolExecution:
+        if request.input.get("operation") in {"write", "compare_write", "compare_delete"}:
+            with self._mutation_lock:
+                return self._start(request)
+        return self._start(request)
+
+    def _start(self, request: ToolRequest) -> ToolExecution:
         started_at = datetime.now(UTC)
         started_clock = monotonic()
         operation = request.input["operation"]

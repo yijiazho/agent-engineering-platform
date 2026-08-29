@@ -192,8 +192,9 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     str(failure.get("message") or "Code Generator invocation failed"),
                 )
 
+            no_change_paths = _no_change_paths(plan, allowed_paths)
             changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
-            missing = sorted(set(allowed_paths) - {item["path"] for item in changes})
+            missing = sorted(set(allowed_paths) - set(no_change_paths) - {item["path"] for item in changes})
             if missing:
                 raise GeneratePatchContractError(
                     f"Code Generator omitted required planned files: {missing!r}"
@@ -217,15 +218,23 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             applied: list[dict[str, str]] = []
             for index, change in enumerate(changes):
                 target = targets_by_path[change["path"]]
+                if change["operation"] == "delete" and (
+                    not target["exists"]
+                    or change["path"] not in _deletion_authorized_paths(plan, allowed_paths)
+                ):
+                    raise GeneratePatchContractError(
+                        f"Code Generator delete for {change['path']!r} is not deletion-authorized"
+                    )
+                operation = "compare_delete" if change["operation"] == "delete" else "compare_write"
+                payload: dict[str, Any] = {
+                    "operation": operation, "path": change["path"],
+                    "expectedExists": target["exists"], "expectedSha256": target["preimageSha256"],
+                }
+                if operation == "compare_write":
+                    payload["content"] = change["content"]
                 request = ToolRequest(
                     tool_ref=tools["filesystem"]["ref"],
-                input={
-                        "operation": "compare_write",
-                        "path": change["path"],
-                        "content": change["content"],
-                        "expectedExists": target["exists"],
-                        "expectedSha256": target["preimageSha256"],
-                    },
+                    input=payload,
                     caller=ToolCaller(kind="AgentInvocation", id=invocation_id),
                     capabilities=("filesystem.write",),
                     timeout_ms=self._tool_timeout_ms,
@@ -262,11 +271,13 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [diff_evidence["id"]]})
             if diff_result.status is not ToolResultStatus.SUCCEEDED:
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return _tool_failure(diff_result, "Git diff")
             diff_output = diff_result.output_record()
             patch = diff_output.get("diff") if isinstance(diff_output, Mapping) else None
             patch_text = patch.get("text") if isinstance(patch, Mapping) else None
             if not isinstance(patch_text, str) or not patch_text:
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION, "GeneratePatch produced an empty patch"
                 )
@@ -315,9 +326,11 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 patch_content=patch_text,
                 expected_revision=str(workflow["repositoryRevision"]),
                 allowed_paths=allowed_paths,
-                required_paths=allowed_paths,
+                required_paths=tuple(path for path in allowed_paths if path not in no_change_paths),
+                no_change_paths=no_change_paths,
                 deletion_authorized_paths=_deletion_authorized_paths(plan, allowed_paths),
                 required_insertions=_required_insertions(plan),
+                unsupported_acceptance_criteria=_unsupported_acceptance_criteria(plan),
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -346,11 +359,13 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             self._attach(task_execution["id"], {"evaluationResultIds": [evaluation_id]})
             if evaluation_result["outcome"] != "PASS":
                 details = "; ".join(evaluation_result.get("logs", ()))
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION,
                     f"GeneratePatch failed Patch Evaluation: {details}",
                 )
             if changed_files != evaluation_result["evidence"]["changedFiles"]:
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 raise GeneratePatchContractError(
                     "Git diff and Patch Evaluation changed-file evidence disagree"
                 )
@@ -388,7 +403,13 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
 
         for index, change in enumerate(reversed(applied)):
             target = targets[change["path"]]
-            if target["exists"]:
+            if change["operation"] == "delete":
+                payload = {
+                    "operation": "compare_write", "path": change["path"],
+                    "content": target["content"], "expectedExists": False,
+                    "expectedSha256": sha256(b"").hexdigest(),
+                }
+            elif target["exists"]:
                 payload = {
                     "operation": "compare_write",
                     "path": change["path"],
@@ -689,6 +710,23 @@ def _required_insertions(plan: JsonMapping) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
+def _no_change_paths(plan: JsonMapping, allowed_paths: Sequence[str]) -> tuple[str, ...]:
+    values = plan.get("noChangeFiles", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.noChangeFiles must be an array")
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths) or not set(paths).issubset(allowed_paths):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.noChangeFiles must be unique intendedFiles")
+    return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
+    values = plan.get("unsupportedAcceptanceCriteria", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or any(not isinstance(value, str) or not value for value in values):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.unsupportedAcceptanceCriteria must contain non-empty strings")
+    return tuple(dict.fromkeys(values))
+
+
 def _validated_changes(
     output: object,
     allowed_paths: Sequence[str],
@@ -697,7 +735,7 @@ def _validated_changes(
     if not isinstance(output, Mapping):
         raise GeneratePatchContractError("Code Generator output must be an object")
     values = output.get("changes")
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or not values:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise GeneratePatchContractError("Code Generator output must contain changes")
     changes: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -705,10 +743,15 @@ def _validated_changes(
         if not isinstance(value, Mapping):
             raise GeneratePatchContractError("each Code Generator change must be an object")
         path, content = value.get("path"), value.get("content")
+        operation = value.get("operation", "write")
         if not isinstance(path, str) or not _safe_path(path):
             raise GeneratePatchContractError("Code Generator change path is unsafe")
-        if not isinstance(content, str):
+        if operation not in {"write", "delete"}:
+            raise GeneratePatchContractError(f"Code Generator operation for {path!r} is invalid")
+        if operation == "write" and not isinstance(content, str):
             raise GeneratePatchContractError(f"Code Generator content for {path!r} must be text")
+        if operation == "delete" and content not in {None, ""}:
+            raise GeneratePatchContractError(f"Code Generator delete for {path!r} must not include content")
         if path in seen:
             raise GeneratePatchContractError(f"Code Generator repeats path {path!r}")
         if not any(path == rule or path.startswith(f"{rule}/") for rule in allowed_paths):
@@ -721,7 +764,7 @@ def _validated_changes(
                 f"Code Generator change for {path!r} is not bound to the supplied preimage"
             )
         seen.add(path)
-        changes.append({"path": path, "content": content})
+        changes.append({"path": path, "content": content or "", "operation": operation})
     return tuple(changes)
 
 

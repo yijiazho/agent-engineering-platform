@@ -41,8 +41,10 @@ def evaluate_patch(
     expected_revision: str,
     allowed_paths: Sequence[str],
     required_paths: Sequence[str] | None = None,
+    no_change_paths: Sequence[str] = (),
     deletion_authorized_paths: Sequence[str] = (),
     required_insertions: Sequence[str] = (),
+    unsupported_acceptance_criteria: Sequence[str] = (),
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
@@ -69,6 +71,7 @@ def evaluate_patch(
     artifact = deepcopy(dict(patch_artifact))
     normalized_rules = _normalize_rules(allowed_paths)
     normalized_required = _normalize_rules(required_paths) if required_paths is not None else ()
+    normalized_no_change = _normalize_rules(no_change_paths) if no_change_paths else ()
     normalized_deletion_authorized = _normalize_rules(deletion_authorized_paths) if deletion_authorized_paths else ()
     errors: list[dict[str, str]] = []
     logs: list[str] = []
@@ -212,14 +215,16 @@ def evaluate_patch(
 
     added_text = _added_text(content)
     missing_insertions = sorted(
-        {value for value in required_insertions if isinstance(value, str) and value}
-        - set(added_text)
+        value for value in required_insertions if isinstance(value, str) and value
+        if not any(value in line for line in added_text)
     )
     for insertion in missing_insertions:
         errors.append({
             "code": "REQUIRED_INSERTION_MISSING",
             "message": f"required insertion is absent from the patch: {insertion!r}",
         })
+    for criterion in sorted({value for value in unsupported_acceptance_criteria if isinstance(value, str) and value}):
+        errors.append({"code": "UNSUPPORTED_ACCEPTANCE_CRITERION", "message": f"unsupported acceptance criterion: {criterion}"})
 
     dispositions = [
         {"path": path, "disposition": "CHANGED" if path in changed_files else "MISSING"}
@@ -231,14 +236,25 @@ def evaluate_patch(
                 "code": "REQUIRED_CHANGE_MISSING",
                 "message": f"planned target {disposition['path']!r} is absent from the final diff",
             })
+    no_change_dispositions = [
+        {"path": path, "disposition": "NO_CHANGE" if path not in changed_files else "CHANGED"}
+        for path in normalized_no_change
+    ]
+    for disposition in no_change_dispositions:
+        if disposition["disposition"] != "NO_CHANGE":
+            errors.append({"code": "NO_CHANGE_TARGET_MODIFIED", "message": f"no-change target {disposition['path']!r} appears in the final diff"})
     added_lines, deleted_lines = _line_change_counts(content)
     total_changes = added_lines + deleted_lines
     replacement_ratio = deleted_lines / total_changes if total_changes else 0.0
-    destructive_candidate = deleted_lines >= 20 and replacement_ratio > 0.8
-    deletion_authorized = bool(changed_files) and all(
-        _matching_rule(path, normalized_deletion_authorized) is not None
-        for path in changed_files
+    deleted_paths = _deleted_paths(content)
+    unauthorized_deleted_paths = sorted(
+        path for path in deleted_paths
+        if _matching_rule(path, normalized_deletion_authorized) is None
     )
+    for path in unauthorized_deleted_paths:
+        errors.append({"code": "UNAUTHORIZED_DELETION", "message": f"deleted content in {path!r} is not deletion-authorized"})
+    destructive_candidate = deleted_lines >= 20 and replacement_ratio > 0.8
+    deletion_authorized = bool(deleted_paths) and not unauthorized_deleted_paths
     destructive = destructive_candidate and not deletion_authorized
     if destructive:
         errors.append({
@@ -268,6 +284,8 @@ def evaluate_patch(
         "requiredFileDisposition": all(
             item["disposition"] == "CHANGED" for item in dispositions
         ),
+        "noChangeDisposition": all(item["disposition"] == "NO_CHANGE" for item in no_change_dispositions),
+        "acceptanceCriteria": not unsupported_acceptance_criteria,
         "destructiveChange": not destructive,
         "surroundingContentPreservation": surrounding_content_preserved,
     }
@@ -283,6 +301,7 @@ def evaluate_patch(
         "diagnostics": diagnostics,
         "boundaryChecks": boundary_checks,
         "requiredFileDispositions": dispositions,
+        "noChangeFileDispositions": no_change_dispositions,
         "changeStatistics": {
             "addedLines": added_lines,
             "deletedLines": deleted_lines,
@@ -290,8 +309,11 @@ def evaluate_patch(
             "destructiveRewrite": destructive,
             "deletionAuthorized": deletion_authorized,
             "deletionAuthorizedPaths": list(normalized_deletion_authorized),
+            "deletedPaths": deleted_paths,
+            "unauthorizedDeletedPaths": unauthorized_deleted_paths,
             "requiredInsertions": list(required_insertions),
             "missingInsertions": missing_insertions,
+            "unsupportedAcceptanceCriteria": list(unsupported_acceptance_criteria),
             "unpreservedHunks": unpreserved_hunks,
         },
         "git": {
@@ -378,6 +400,34 @@ def _unpreserved_hunks(content: bytes) -> list[dict[str, int]]:
     if current is not None and current["deletedLines"] >= 2 and not current["contextLines"]:
         hunks.append(current)
     return hunks
+
+
+def _deleted_paths(content: bytes) -> list[str]:
+    """Return files whose hunks remove more lines than they add."""
+
+    current: str | None = None
+    deleted = added = 0
+    paths: set[str] = set()
+
+    def complete_hunk() -> None:
+        if current is not None and deleted > added:
+            paths.add(current)
+
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("diff --git a/"):
+            complete_hunk()
+            parts = line.split(" ")
+            current = parts[2][2:] if len(parts) >= 3 and parts[2].startswith("a/") else None
+            deleted = added = 0
+        elif line.startswith("@@ "):
+            complete_hunk()
+            deleted = added = 0
+        elif current is not None and line.startswith("-") and not line.startswith("---"):
+            deleted += 1
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            added += 1
+    complete_hunk()
+    return sorted(paths, key=lambda value: (value.casefold(), value))
 
 
 def _added_text(content: bytes) -> tuple[str, ...]:
