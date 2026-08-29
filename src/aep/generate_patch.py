@@ -104,6 +104,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
     ) -> TaskExecutionResult:
         """Run one already-running GeneratePatch attempt."""
 
+        applied: list[dict[str, str]] = []
+        targets_by_path: dict[str, JsonMapping] = {}
+        filesystem_write_ref: JsonMapping | None = None
+        active_invocation_id: str | None = None
         try:
             workflow, event = self._validate_inputs(task, task_execution)
             plan, producer_id = self._implementation_plan(task_execution, workflow)
@@ -170,6 +174,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             invocation_id = self._runtime_id(
                 "agentinvocation", str(task_execution["id"])
             )
+            active_invocation_id = invocation_id
             invocation = invoke_agent(
                 store=self._runtime_store,
                 invocation_id=invocation_id,
@@ -215,7 +220,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     "editable target preimage changed after ContextPackage construction"
                 )
             targets_by_path = {item["path"]: item for item in editable_targets}
-            applied: list[dict[str, str]] = []
+            filesystem_write_ref = tools["filesystem"]["ref"]
             for index, change in enumerate(changes):
                 target = targets_by_path[change["path"]]
                 if change["operation"] == "delete" and (
@@ -366,6 +371,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 )
             if changed_files != evaluation_result["evidence"]["changedFiles"]:
                 self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
+                applied.clear()
                 raise GeneratePatchContractError(
                     "Git diff and Patch Evaluation changed-file evidence disagree"
                 )
@@ -374,8 +380,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             self._attach(task_execution["id"], {"generatedArtifactIds": [artifact["id"]]})
             return TaskExecutionResult.success()
         except AgentToolDeniedError as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
         except DisallowedPatchPathError as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
         except (
             AgentResolutionError,
@@ -388,7 +396,21 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             TypeError,
             ValueError,
         ) as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.CONFIGURATION, str(error))
+
+    def _rollback_if_needed(
+        self, task_execution: JsonMapping, invocation_id: str | None,
+        tool_ref: JsonMapping | None, targets: Mapping[str, JsonMapping],
+        applied: Sequence[Mapping[str, str]],
+    ) -> None:
+        if applied and invocation_id is not None and tool_ref is not None:
+            self._rollback_applied_changes(
+                task_execution=task_execution, invocation_id=invocation_id,
+                tool_ref=tool_ref, targets=targets, applied=applied,
+            )
+            if isinstance(applied, list):
+                applied.clear()
 
     def _rollback_applied_changes(
         self,
