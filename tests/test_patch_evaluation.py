@@ -260,6 +260,18 @@ def test_large_deletion_requires_and_honors_explicit_authorization(repository) -
     assert (root / "obsolete.txt").exists()
 
 
+def test_balanced_whole_file_rewrite_requires_preserved_context(repository) -> None:
+    _, result = evaluate(
+        repository,
+        "balanced-rewrite.patch",
+        allowed_paths=("obsolete.txt",),
+    )
+
+    assert result["outcome"] == "FAIL"
+    assert "SURROUNDING_CONTENT_NOT_PRESERVED" in error_codes(result)
+    assert result["evidence"]["checks"]["surroundingContentPreservation"] is False
+
+
 def test_conflicting_patch_fails_with_git_diagnostics(repository) -> None:
     _, result = evaluate(repository, "conflicting.patch")
 

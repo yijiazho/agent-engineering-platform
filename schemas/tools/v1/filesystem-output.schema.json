@@ -20,7 +20,7 @@
       "additionalProperties": false,
       "required": ["operation", "path", "bytesWritten", "sha256"],
       "properties": {
-        "operation": { "enum": ["write", "compare_write"] },
+        "operation": { "enum": ["write", "compare_write", "compare_delete"] },
         "path": { "type": "string" },
         "bytesWritten": { "type": "integer", "minimum": 0 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }

@@ -46,10 +46,33 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "required": ["operation", "path", "content"],
             "properties": {
-                "operation": {"enum": ["write", "compare_write"]},
+                "operation": {"const": "write"},
+                "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "content": {"type": "string"},
+            },
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "operation", "path", "content", "expectedExists", "expectedSha256"
+            ],
+            "properties": {
+                "operation": {"const": "compare_write"},
                 "path": {"type": "string", "minLength": 1, "maxLength": 4096},
                 "content": {"type": "string"},
                 "expectedExists": {"type": "boolean"},
+                "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            },
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["operation", "path", "expectedExists", "expectedSha256"],
+            "properties": {
+                "operation": {"const": "compare_delete"},
+                "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "expectedExists": {"const": True},
                 "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             },
         },
@@ -76,7 +99,7 @@ FILESYSTEM_OUTPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "required": ["operation", "path", "bytesWritten", "sha256"],
             "properties": {
-                "operation": {"enum": ["write", "compare_write"]},
+                "operation": {"enum": ["write", "compare_write", "compare_delete"]},
                 "path": {"type": "string"},
                 "bytesWritten": {"type": "integer", "minimum": 0},
                 "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -156,7 +179,7 @@ class FilesystemToolAdapter(ToolAdapter):
         operation = request.input["operation"]
         relative_path = request.input["path"]
 
-        if operation in {"write", "compare_write"} and "filesystem.write" not in request.capabilities:
+        if operation in {"write", "compare_write", "compare_delete"} and "filesystem.write" not in request.capabilities:
             return _CompletedExecution(
                 self._failure(
                     started_at,
@@ -209,30 +232,46 @@ class FilesystemToolAdapter(ToolAdapter):
                     "sizeBytes": len(encoded),
                     "sha256": sha256(encoded).hexdigest(),
                 }
+            elif operation == "compare_delete":
+                with self._open_confined(relative, "compare_write_existing") as stream:
+                    current = stream.read()
+                    if sha256(current).hexdigest() != request.input["expectedSha256"]:
+                        raise FilesystemBoundaryError(
+                            f"compare-delete preimage digest mismatch for {normalized_path}"
+                        )
+                (self._workspace / relative).unlink()
+                output = {
+                    "operation": operation,
+                    "path": normalized_path,
+                    "bytesWritten": 0,
+                    "sha256": sha256(b"").hexdigest(),
+                }
             else:
                 content = request.input["content"]
                 encoded = content.encode("utf-8")
-                if operation == "compare_write":
-                    expected_exists = request.input["expectedExists"]
-                    expected_digest = request.input["expectedSha256"]
-                    actual_path = self._workspace / relative
-                    exists = actual_path.exists()
-                    if exists != expected_exists:
-                        raise FilesystemBoundaryError(
-                            f"compare-write preimage existence mismatch for {normalized_path}"
-                        )
-                    if exists:
-                        current = actual_path.read_bytes()
-                        if sha256(current).hexdigest() != expected_digest:
-                            raise FilesystemBoundaryError(
-                                f"compare-write preimage digest mismatch for {normalized_path}"
-                            )
                 if operation in {"write", "compare_write"} and relative.parent != Path("."):
                     parent_path = (self._workspace / relative.parent).resolve()
                     if not parent_path.is_relative_to(self._workspace):
                         raise FilesystemBoundaryError("write parent escapes workspace")
                     parent_path.mkdir(parents=True, exist_ok=True)
-                with self._open_confined(relative, "write") as stream:
+                open_operation = "write"
+                if operation == "compare_write":
+                    expected_exists = request.input["expectedExists"]
+                    expected_digest = request.input["expectedSha256"]
+                    if not expected_exists and expected_digest != sha256(b"").hexdigest():
+                        raise FilesystemBoundaryError(
+                            f"compare-write absent preimage digest mismatch for {normalized_path}"
+                        )
+                    open_operation = (
+                        "compare_write_existing" if expected_exists else "compare_write_new"
+                    )
+                with self._open_confined(relative, open_operation) as stream:
+                    if operation == "compare_write" and expected_exists:
+                        current = stream.read()
+                        if sha256(current).hexdigest() != expected_digest:
+                            raise FilesystemBoundaryError(
+                                f"compare-write preimage digest mismatch for {normalized_path}"
+                            )
                     stream.seek(0)
                     stream.truncate(0)
                     stream.write(encoded)
@@ -325,7 +364,7 @@ class FilesystemToolAdapter(ToolAdapter):
                     f"path contains a symlink or non-directory component: {relative}"
                 ) from None
             raise
-        return os.fdopen(descriptor, "r+b" if operation == "write" else "rb")
+        return os.fdopen(descriptor, "rb" if operation == "read" else "r+b")
 
     def _open_from_pinned_workspace(self, relative: Path, operation: str) -> int:
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -344,6 +383,10 @@ class FilesystemToolAdapter(ToolAdapter):
             flags = os.O_NOFOLLOW
             if operation == "read":
                 flags |= os.O_RDONLY
+            elif operation == "compare_write_existing":
+                flags |= os.O_RDWR
+            elif operation == "compare_write_new":
+                flags |= os.O_RDWR | os.O_CREAT | os.O_EXCL
             else:
                 flags |= os.O_RDWR | os.O_CREAT
             descriptor = os.open(
@@ -747,6 +790,7 @@ def _windows_nt_open_relative(
     file_directory_file = 0x00000001
     file_non_directory_file = 0x00000040
     file_open = 0x00000001
+    file_create = 0x00000002
     file_open_if = 0x00000003
     file_open_reparse_point = 0x00200000
     file_read_attributes = 0x00000080
@@ -782,9 +826,13 @@ def _windows_nt_open_relative(
         )
     else:
         access = generic_read | synchronize
-        if operation == "write":
+        if operation != "read":
             access |= generic_write
-        disposition = file_open if operation == "read" else file_open_if
+        disposition = (
+            file_open
+            if operation in {"read", "compare_write_existing"}
+            else file_create if operation == "compare_write_new" else file_open_if
+        )
         options = (
             file_non_directory_file
             | file_open_reparse_point

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -58,7 +59,11 @@ def request(
                 else "agentinvocation-123456789abc"
             ),
         ),
-        capabilities=(f"filesystem.{operation}",),
+        capabilities=(
+            "filesystem.write"
+            if operation in {"compare_write", "compare_delete"}
+            else f"filesystem.{operation}",
+        ),
         timeout_ms=1000,
         correlation={
             "traceId": "trace-filesystem-123",
@@ -170,6 +175,34 @@ def test_allowed_write_is_authorized_before_mutation_and_records_evidence(
     assert evidence[1]["decision"] == "ALLOW"
     assert invocation["capabilities"] == ["filesystem.write"]
     assert invocation["requestFingerprint"].startswith("sha256:")
+
+
+def test_compare_write_requires_preconditions_and_checks_the_opened_file(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    target = tmp_path / "target.txt"
+    target.write_text("before", encoding="utf-8")
+    missing = request("compare_write", "target.txt", content="after")
+    result, _ = invoke(tool, store, missing)
+    assert result.failure_class is ToolFailureClass.VALIDATION
+
+    expected = sha256(b"before").hexdigest()
+    changed, _ = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "target.txt",
+            content="after",
+            expectedExists=True,
+            expectedSha256=expected,
+        ),
+        suffix="compare-write-123456",
+    )
+    assert changed.status is ToolResultStatus.SUCCEEDED
+    assert target.read_text(encoding="utf-8") == "after"
 
 
 def test_denied_write_does_not_mutate_workspace(tmp_path: Path) -> None:

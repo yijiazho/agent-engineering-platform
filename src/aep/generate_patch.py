@@ -213,15 +213,18 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 raise GeneratePatchContractError(
                     "editable target preimage changed after ContextPackage construction"
                 )
+            targets_by_path = {item["path"]: item for item in editable_targets}
+            applied: list[dict[str, str]] = []
             for index, change in enumerate(changes):
+                target = targets_by_path[change["path"]]
                 request = ToolRequest(
                     tool_ref=tools["filesystem"]["ref"],
                 input={
                         "operation": "compare_write",
                         "path": change["path"],
                         "content": change["content"],
-                        "expectedExists": next(item["exists"] for item in editable_targets if item["path"] == change["path"]),
-                        "expectedSha256": next(item["preimageSha256"] for item in editable_targets if item["path"] == change["path"]),
+                        "expectedExists": target["exists"],
+                        "expectedSha256": target["preimageSha256"],
                     },
                     caller=ToolCaller(kind="AgentInvocation", id=invocation_id),
                     capabilities=("filesystem.write",),
@@ -239,7 +242,15 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 )
                 self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
                 if result.status is not ToolResultStatus.SUCCEEDED:
+                    self._rollback_applied_changes(
+                        task_execution=task_execution,
+                        invocation_id=invocation_id,
+                        tool_ref=tools["filesystem"]["ref"],
+                        targets=targets_by_path,
+                        applied=applied,
+                    )
                     return _tool_failure(result, f"Filesystem write for {change['path']!r}")
+                applied.append(change)
 
             diff_id = self._runtime_id(
                 "toolinvocation", f"{task_execution['id']}:git:diff"
@@ -363,6 +374,56 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             ValueError,
         ) as error:
             return TaskExecutionResult.failure(FailureClass.CONFIGURATION, str(error))
+
+    def _rollback_applied_changes(
+        self,
+        *,
+        task_execution: JsonMapping,
+        invocation_id: str,
+        tool_ref: JsonMapping,
+        targets: Mapping[str, JsonMapping],
+        applied: Sequence[Mapping[str, str]],
+    ) -> None:
+        """Restore already-mutated files when a later compare-write fails."""
+
+        for index, change in enumerate(reversed(applied)):
+            target = targets[change["path"]]
+            if target["exists"]:
+                payload = {
+                    "operation": "compare_write",
+                    "path": change["path"],
+                    "content": target["content"],
+                    "expectedExists": True,
+                    "expectedSha256": sha256(change["content"].encode()).hexdigest(),
+                }
+            else:
+                payload = {
+                    "operation": "compare_delete",
+                    "path": change["path"],
+                    "expectedExists": True,
+                    "expectedSha256": sha256(change["content"].encode()).hexdigest(),
+                }
+            request = ToolRequest(
+                tool_ref=tool_ref,
+                input=payload,
+                caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
+                capabilities=("filesystem.write",),
+                timeout_ms=self._tool_timeout_ms,
+                correlation=_correlation(task_execution),
+            )
+            result, evidence = self._filesystem_tool.invoke(
+                invocation_id=self._runtime_id(
+                    "toolinvocation", f"{task_execution['id']}:filesystem:rollback:{index}"
+                ),
+                task_execution_id=str(task_execution["id"]),
+                request=request,
+                authorize=self._authorize_filesystem,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+            if result.status is not ToolResultStatus.SUCCEEDED:
+                raise GeneratePatchContractError(
+                    f"failed to roll back {change['path']!r} after a write failure"
+                )
 
     def _read_editable_targets(
         self, *, task_execution: JsonMapping, repository_revision: str, paths: Sequence[str],

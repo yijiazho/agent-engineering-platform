@@ -245,6 +245,13 @@ def evaluate_patch(
             "code": "DESTRUCTIVE_REWRITE",
             "message": "patch deletes at least 20 lines and more than 80% of changed lines",
         })
+    unpreserved_hunks = _unpreserved_hunks(content)
+    surrounding_content_preserved = not unpreserved_hunks or deletion_authorized
+    if not surrounding_content_preserved:
+        errors.append({
+            "code": "SURROUNDING_CONTENT_NOT_PRESERVED",
+            "message": "patch replaces or removes a multi-line hunk without preserved surrounding context",
+        })
 
     errors = sorted(errors, key=lambda item: (item["code"], item["message"]))
     logs.extend(diagnostics)
@@ -262,6 +269,7 @@ def evaluate_patch(
             item["disposition"] == "CHANGED" for item in dispositions
         ),
         "destructiveChange": not destructive,
+        "surroundingContentPreservation": surrounding_content_preserved,
     }
     evidence = {
         "type": "patch-evaluation",
@@ -284,6 +292,7 @@ def evaluate_patch(
             "deletionAuthorizedPaths": list(normalized_deletion_authorized),
             "requiredInsertions": list(required_insertions),
             "missingInsertions": missing_insertions,
+            "unpreservedHunks": unpreserved_hunks,
         },
         "git": {
             "status": git_status,
@@ -347,6 +356,28 @@ def _line_change_counts(content: bytes) -> tuple[int, int]:
     added = sum(line.startswith("+") and not line.startswith("+++") for line in lines)
     deleted = sum(line.startswith("-") and not line.startswith("---") for line in lines)
     return added, deleted
+
+
+def _unpreserved_hunks(content: bytes) -> list[dict[str, int]]:
+    """Identify multi-line replacements with no unchanged source context."""
+
+    hunks: list[dict[str, int]] = []
+    current: dict[str, int] | None = None
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("@@ "):
+            if current is not None and current["deletedLines"] >= 2 and not current["contextLines"]:
+                hunks.append(current)
+            current = {"deletedLines": 0, "addedLines": 0, "contextLines": 0}
+        elif current is not None:
+            if line.startswith("-") and not line.startswith("---"):
+                current["deletedLines"] += 1
+            elif line.startswith("+") and not line.startswith("+++"):
+                current["addedLines"] += 1
+            elif line.startswith(" "):
+                current["contextLines"] += 1
+    if current is not None and current["deletedLines"] >= 2 and not current["contextLines"]:
+        hunks.append(current)
+    return hunks
 
 
 def _added_text(content: bytes) -> tuple[str, ...]:
