@@ -273,18 +273,31 @@ class FilesystemToolAdapter(ToolAdapter):
                     open_operation = (
                         "compare_write_existing" if expected_exists else "compare_write_new"
                     )
-                with self._open_confined(relative, open_operation) as stream:
+                current = b""
+                try:
+                    with self._open_confined(relative, open_operation) as stream:
+                        if operation == "compare_write" and expected_exists:
+                            current = stream.read()
+                            if sha256(current).hexdigest() != expected_digest:
+                                raise FilesystemBoundaryError(
+                                    f"compare-write preimage digest mismatch for {normalized_path}"
+                                )
+                        stream.seek(0)
+                        stream.truncate(0)
+                        stream.write(encoded)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                except OSError:
                     if operation == "compare_write" and expected_exists:
-                        current = stream.read()
-                        if sha256(current).hexdigest() != expected_digest:
-                            raise FilesystemBoundaryError(
-                                f"compare-write preimage digest mismatch for {normalized_path}"
-                            )
-                    stream.seek(0)
-                    stream.truncate(0)
-                    stream.write(encoded)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+                        with self._open_confined(relative, "compare_write_existing") as restore:
+                            restore.seek(0)
+                            restore.truncate(0)
+                            restore.write(current)
+                            restore.flush()
+                            os.fsync(restore.fileno())
+                    elif operation == "compare_write":
+                        (self._workspace / relative).unlink(missing_ok=True)
+                    raise
                 output = {
                     "operation": operation,
                     "path": normalized_path,

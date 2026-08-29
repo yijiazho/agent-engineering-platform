@@ -144,7 +144,8 @@ def evaluate(
     allowed_paths: tuple[str, ...] = ("tracked.txt",),
     artifact_revision: str | None = None,
     store: InMemoryRuntimeObjectStore | None = None,
-    required_insertions: tuple[str, ...] = (),
+    required_insertions: tuple[dict[str, str], ...] = (),
+    deletion_authorized_paths: tuple[str, ...] = (),
 ):
     _root, revision, adapter = repository
     content = b"" if fixture is None else (FIXTURES / fixture).read_bytes()
@@ -166,6 +167,7 @@ def evaluate(
         expected_revision=revision,
         allowed_paths=allowed_paths,
         required_insertions=required_insertions,
+        deletion_authorized_paths=deletion_authorized_paths,
         working_branch="agent/work",
         correlation={
             "traceId": "trace-patch-evaluation",
@@ -209,9 +211,9 @@ def test_clean_patch_passes_without_mutating_repository(repository) -> None:
 
 
 def test_required_insertions_are_checked_before_patch_pass(repository) -> None:
-    _, result = evaluate(repository, "clean.patch", required_insertions=("updated",))
+    _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "updated"},), deletion_authorized_paths=("tracked.txt",))
     assert result["outcome"] == "PASS"
-    _, missing = evaluate(repository, "clean.patch", required_insertions=("deploy/",))
+    _, missing = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "deploy/"},), deletion_authorized_paths=("tracked.txt",))
     assert missing["outcome"] == "FAIL"
     assert "REQUIRED_INSERTION_MISSING" in error_codes(missing)
 

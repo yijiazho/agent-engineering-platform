@@ -112,6 +112,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             workflow, event = self._validate_inputs(task, task_execution)
             plan, producer_id = self._implementation_plan(task_execution, workflow)
             allowed_paths = _allowed_paths(plan)
+            deletion_authorized_paths = _deletion_authorized_paths(plan, allowed_paths)
+            no_change_paths = _no_change_paths(plan, allowed_paths)
+            required_insertions = _required_insertions(plan, allowed_paths)
+            unsupported_criteria = _unsupported_acceptance_criteria(plan)
             task_spec = _spec(task)
             patch_evaluation = self._patch_evaluation(task_spec)
             output_schema = task_spec.get("outputs")
@@ -119,6 +123,18 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 raise GeneratePatchContractError("GeneratePatch Task requires spec.outputs")
 
             filesystem_read_ref = self._context_filesystem_ref(task_spec)
+            git_read_ref = self._context_git_ref(task_spec)
+            clean_result, clean_evidence = self._invoke_git_diff(
+                invocation_id=self._runtime_id("toolinvocation", f"{task_execution['id']}:git:preflight"),
+                task_execution=task_execution,
+                tool_ref=git_read_ref,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [clean_evidence["id"]]})
+            clean_output = clean_result.output_record() if clean_result.output is not None else {}
+            if clean_result.status is not ToolResultStatus.SUCCEEDED or clean_output.get("changedFiles"):
+                raise GeneratePatchContractError(
+                    "GeneratePatch requires a clean checkout at the recorded repository revision"
+                )
             editable_targets = self._read_editable_targets(
                 task_execution=task_execution,
                 repository_revision=str(workflow["repositoryRevision"]),
@@ -197,7 +213,6 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     str(failure.get("message") or "Code Generator invocation failed"),
                 )
 
-            no_change_paths = _no_change_paths(plan, allowed_paths)
             changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
             missing = sorted(set(allowed_paths) - set(no_change_paths) - {item["path"] for item in changes})
             if missing:
@@ -225,7 +240,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 target = targets_by_path[change["path"]]
                 if change["operation"] == "delete" and (
                     not target["exists"]
-                    or change["path"] not in _deletion_authorized_paths(plan, allowed_paths)
+                    or change["path"] not in deletion_authorized_paths
                 ):
                     raise GeneratePatchContractError(
                         f"Code Generator delete for {change['path']!r} is not deletion-authorized"
@@ -333,9 +348,9 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 allowed_paths=allowed_paths,
                 required_paths=tuple(path for path in allowed_paths if path not in no_change_paths),
                 no_change_paths=no_change_paths,
-                deletion_authorized_paths=_deletion_authorized_paths(plan, allowed_paths),
-                required_insertions=_required_insertions(plan),
-                unsupported_acceptance_criteria=_unsupported_acceptance_criteria(plan),
+                deletion_authorized_paths=deletion_authorized_paths,
+                required_insertions=required_insertions,
+                unsupported_acceptance_criteria=unsupported_criteria,
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -508,6 +523,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             exists = result.status is ToolResultStatus.SUCCEEDED
             output = result.output_record() if exists else {}
             content = output.get("content", "")
+            if "\x00" in content:
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} contains binary NUL bytes"
+                )
             digest = output.get("sha256", sha256(b"").hexdigest())
             targets.append({
                 "path": path,
@@ -536,6 +555,22 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
         if len(matches) != 1:
             raise GeneratePatchContractError(
                 "GeneratePatch Agent must reference exactly one versioned filesystem Tool"
+            )
+        self._require_resource(matches[0], "Tool")
+        return _ref_record(matches[0])
+
+    def _context_git_ref(self, task_spec: JsonMapping) -> dict[str, str]:
+        agent_ref = _required_ref(task_spec.get("agentRef"), "Agent", "Task.spec.agentRef")
+        agent = self._require_resource(agent_ref, "Agent")
+        matches = []
+        for value in _spec(agent).get("toolRefs", ()):
+            if isinstance(value, Mapping):
+                ref = ResourceRef.from_mapping(dict(value))
+                if ref.name == "git":
+                    matches.append(ref)
+        if len(matches) != 1:
+            raise GeneratePatchContractError(
+                "GeneratePatch Agent must reference exactly one versioned git Tool"
             )
         self._require_resource(matches[0], "Tool")
         return _ref_record(matches[0])
@@ -723,13 +758,30 @@ def _deletion_authorized_paths(
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
 
 
-def _required_insertions(plan: JsonMapping) -> tuple[str, ...]:
+def _required_insertions(
+    plan: JsonMapping, allowed_paths: Sequence[str]
+) -> tuple[dict[str, str], ...]:
     values = plan.get("requiredInsertions", ())
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must be an array")
-    if any(not isinstance(value, str) or not value for value in values):
-        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must contain non-empty strings")
-    return tuple(dict.fromkeys(values))
+    records: list[dict[str, str]] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise GeneratePatchContractError(
+                "IMPLEMENTATION_PLAN.requiredInsertions must contain path/value objects"
+            )
+        path, token = value.get("path"), value.get("value")
+        if (
+            not isinstance(path, str) or path not in allowed_paths
+            or not isinstance(token, str) or not token
+        ):
+            raise GeneratePatchContractError(
+                "IMPLEMENTATION_PLAN.requiredInsertions must bind values to intendedFiles"
+            )
+        records.append({"path": path, "value": token})
+    if len({(item["path"], item["value"]) for item in records}) != len(records):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must be unique")
+    return tuple(records)
 
 
 def _no_change_paths(plan: JsonMapping, allowed_paths: Sequence[str]) -> tuple[str, ...]:

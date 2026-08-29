@@ -441,7 +441,7 @@ exactly `patchGenerated`, `validationRan`, `requiredArtifactsPresent`,
 `requiredEvaluationsPresent`, `allRequiredEvaluationsPassed`,
 `noPriorPolicyViolation`, and `failures`; its runtime schema rejects vocabulary
 drift. The self-hosting graph pins `publication-evidence:1.1.0` through
-`create-pull-request:1.2.0` and `issue-to-pr:1.3.0`. Only a matching Publication
+`create-pull-request:1.2.0` and `issue-to-pr:1.7.0`. Only a matching Publication
 Policy allow proceeds to the separate `git.push` capability decision and Git
 mutation, followed by a separate `github.create_pr` capability decision and PR
 mutation. A denial produces neither Git ToolInvocation, GitHub call, nor
@@ -604,7 +604,8 @@ Introducing ContextPackage as a runtime object establishes a clear architectural
 The Workflow Runtime becomes responsible only for scheduling and lifecycle management, while the Context Builder independently produces immutable, provenance-rich ContextPackages that encapsulate all information required for cognitive work.
 
 This separation improves modularity, reproducibility, observability, and future extensibility while allowing retrieval and context optimization techniques to evolve without impacting workflow execution.
-Before Code Generator invocation, the handler materializes every planned path
+Before Code Generator invocation, the handler verifies that the checkout has no
+diff from the recorded Git revision and materializes every planned path
 as `editable-targets`. Model output must include every planned file and echo its
 supplied `preimageSha256`. The handler rereads all targets before mutation and
 rejects drift, omissions, duplicate paths, and unbound replacements. Patch
@@ -614,3 +615,5 @@ deletion authorization, and surrounding-content-preservation evidence. Planned
 creations use an immutable `ABSENT` preimage. Mutation verifies a preimage
 through the same Filesystem handle and rolls back earlier writes through that
 Tool boundary if a later write fails.
+Plans can mark exact targets `NO_CHANGE`; required insertions are bound to their
+target paths, and authorized deletions use preimage-bound delete operations.

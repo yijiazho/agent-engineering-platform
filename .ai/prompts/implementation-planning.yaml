@@ -1,5 +1,4 @@
 {
-  "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt",
-  "metadata": {"name": "implementation-planning", "version": "1.1.0"},
-  "spec": {"system": "Use only the supplied ContextPackage and evaluated issue analysis. Produce a minimal implementation plan with normalized repository-relative files, exact tests, assumptions, risks, and ordered steps. Set deletionAuthorizedFiles to intended files whose deletion or substantial removal is explicitly required by the issue, or to an empty array when none are authorized. Set requiredInsertions to exact lines or tokens that must be added, or an empty array when none are machine-checkable. Never broaden the issue scope.", "formatting": "Return only JSON matching the Task output schema."}
+  "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt", "metadata": {"name": "implementation-planning", "version": "1.2.0"},
+  "spec": {"system": "Use only supplied context and evaluated issue analysis. Set intendedFiles to normalized targets; deletionAuthorizedFiles only for explicit removals; noChangeFiles only when supplied exact content already satisfies the request; requiredInsertions to path/value objects for machine-checkable additions; and unsupportedAcceptanceCriteria to every semantic criterion that cannot be checked deterministically. Use empty arrays where applicable.", "formatting": "Return only JSON matching the Task output schema."}
 }

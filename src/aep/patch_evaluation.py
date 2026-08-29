@@ -43,7 +43,7 @@ def evaluate_patch(
     required_paths: Sequence[str] | None = None,
     no_change_paths: Sequence[str] = (),
     deletion_authorized_paths: Sequence[str] = (),
-    required_insertions: Sequence[str] = (),
+    required_insertions: Sequence[Mapping[str, str]] = (),
     unsupported_acceptance_criteria: Sequence[str] = (),
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
@@ -213,15 +213,19 @@ def evaluate_patch(
                 }
             )
 
-    added_text = _added_text(content)
+    added_by_path = _added_text_by_path(content)
     missing_insertions = sorted(
-        value for value in required_insertions if isinstance(value, str) and value
-        if not any(value in line for line in added_text)
+        (
+            {"path": item["path"], "value": item["value"]}
+            for item in required_insertions
+            if not any(item["value"] in line for line in added_by_path.get(item["path"], ()))
+        ),
+        key=lambda item: (item["path"].casefold(), item["path"], item["value"]),
     )
     for insertion in missing_insertions:
         errors.append({
             "code": "REQUIRED_INSERTION_MISSING",
-            "message": f"required insertion is absent from the patch: {insertion!r}",
+            "message": f"required insertion {insertion['value']!r} is absent from {insertion['path']!r}",
         })
     for criterion in sorted({value for value in unsupported_acceptance_criteria if isinstance(value, str) and value}):
         errors.append({"code": "UNSUPPORTED_ACCEPTANCE_CRITERION", "message": f"unsupported acceptance criterion: {criterion}"})
@@ -253,6 +257,16 @@ def evaluate_patch(
     )
     for path in unauthorized_deleted_paths:
         errors.append({"code": "UNAUTHORIZED_DELETION", "message": f"deleted content in {path!r} is not deletion-authorized"})
+    replacement_violations = sorted(
+        item["path"] for item in required_insertions
+        if item["path"] in _replaced_paths(content)
+        and _matching_rule(item["path"], normalized_deletion_authorized) is None
+    )
+    for path in replacement_violations:
+        errors.append({
+            "code": "REQUIRED_INSERTION_REPLACED_CONTENT",
+            "message": f"required insertion in {path!r} replaces existing content without deletion authorization",
+        })
     destructive_candidate = deleted_lines >= 20 and replacement_ratio > 0.8
     deletion_authorized = bool(deleted_paths) and not unauthorized_deleted_paths
     destructive = destructive_candidate and not deletion_authorized
@@ -313,6 +327,7 @@ def evaluate_patch(
             "unauthorizedDeletedPaths": unauthorized_deleted_paths,
             "requiredInsertions": list(required_insertions),
             "missingInsertions": missing_insertions,
+            "replacementViolations": replacement_violations,
             "unsupportedAcceptanceCriteria": list(unsupported_acceptance_criteria),
             "unpreservedHunks": unpreserved_hunks,
         },
@@ -436,6 +451,42 @@ def _added_text(content: bytes) -> tuple[str, ...]:
     except UnicodeDecodeError:
         return ()
     return tuple(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+
+
+def _added_text_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
+    current: str | None = None
+    values: dict[str, list[str]] = {}
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("diff --git a/"):
+            parts = line.split(" ")
+            current = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else None
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            values.setdefault(current, []).append(line[1:])
+    return {path: tuple(lines) for path, lines in values.items()}
+
+
+def _replaced_paths(content: bytes) -> set[str]:
+    current: str | None = None
+    deleted = added = 0
+    replaced: set[str] = set()
+    def finish() -> None:
+        if current is not None and deleted and added:
+            replaced.add(current)
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        if line.startswith("diff --git a/"):
+            finish()
+            parts = line.split(" ")
+            current = parts[2][2:] if len(parts) >= 3 else None
+            deleted = added = 0
+        elif line.startswith("@@ "):
+            finish()
+            deleted = added = 0
+        elif line.startswith("-") and not line.startswith("---"):
+            deleted += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+    finish()
+    return replaced
 
 
 def _normalize_rules(rules: Sequence[str]) -> tuple[str, ...]:

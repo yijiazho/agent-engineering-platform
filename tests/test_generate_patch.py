@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
@@ -16,7 +17,7 @@ from aep.filesystem_tool import (
     FILESYSTEM_OUTPUT_SCHEMA,
     FilesystemTool,
 )
-from aep.generate_patch import GeneratePatchTaskHandler
+from aep.generate_patch import GeneratePatchContractError, GeneratePatchTaskHandler
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.git_tool import (
     GIT_INPUT_SCHEMA,
@@ -130,9 +131,10 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
 
     execution = store.get(TASK_EXECUTION_ID)
-    assert len(execution["toolInvocationIds"]) == 5
+    assert len(execution["toolInvocationIds"]) == 6
     invocations = [store.get(item) for item in execution["toolInvocationIds"]]
     assert [item["toolRef"]["name"] for item in invocations] == [
+        "git",
         "filesystem",
         "filesystem",
         "filesystem",
@@ -140,6 +142,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
         "git",
     ]
     assert [item["input"]["operation"] for item in invocations] == [
+        "diff",
         "read",
         "read",
         "compare_write",
@@ -151,7 +154,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     evaluation = store.get(execution["evaluationResultIds"][0])
     artifact = artifact_store.get(execution["generatedArtifactIds"][0])
     assert evaluation["outcome"] == "PASS"
-    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[4]["id"]
+    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[5]["id"]
     assert evaluation["target"] == {"type": "GeneratedArtifact", "id": artifact["id"]}
     assert artifact["artifactType"] == "PATCH"
     assert artifact["changedFiles"] == ["src/app.py"]
@@ -195,7 +198,7 @@ def test_disallowed_model_path_is_rejected_before_any_workspace_mutation(
     assert "outside IMPLEMENTATION_PLAN.intendedFiles" in result.message
     assert not (workspace / "private/secret.txt").exists()
     execution = store.get(TASK_EXECUTION_ID)
-    assert [store.get(item)["input"]["operation"] for item in execution["toolInvocationIds"]] == ["read"]
+    assert [store.get(item)["input"]["operation"] for item in execution["toolInvocationIds"]] == ["diff", "read"]
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
@@ -214,7 +217,7 @@ def test_denied_filesystem_capability_records_denial_without_writing(
     assert result.failure_class is FailureClass.POLICY
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
     execution = store.get(TASK_EXECUTION_ID)
-    invocation = store.get(execution["toolInvocationIds"][0])
+    invocation = store.get(execution["toolInvocationIds"][1])
     assert invocation["resultStatus"] == "DENIED"
     assert invocation["failure"]["class"] == "POLICY"
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
@@ -273,7 +276,7 @@ def test_filesystem_tool_failure_is_classified_and_persisted(tmp_path: Path) -> 
     assert result.failure_class is FailureClass.CONFIGURATION
     assert "could not be materialized" in result.message
     assert not (workspace / "src/missing/app.py").exists()
-    invocation = store.get(store.get(TASK_EXECUTION_ID)["toolInvocationIds"][0])
+    invocation = store.get(store.get(TASK_EXECUTION_ID)["toolInvocationIds"][1])
     assert invocation["status"] == "FAILED"
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
@@ -348,6 +351,34 @@ def test_planned_new_file_creates_missing_parent_directories(tmp_path: Path) -> 
 
     assert result.succeeded is True
     assert (workspace / "src/generated/new_test.py").read_text(encoding="utf-8")
+
+
+def test_dirty_checkout_fails_before_editable_reads_or_model_invocation(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    (workspace / "src/app.py").write_text("dirty\n", encoding="utf-8")
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+def test_utf8_decodable_binary_target_is_rejected(tmp_path: Path) -> None:
+    store, handler, _task, _artifacts, workspace, _model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    (workspace / "src/app.py").write_bytes(b"text\x00binary")
+
+    with pytest.raises(GeneratePatchContractError, match="binary NUL"):
+        handler._read_editable_targets(
+            task_execution=store.get(TASK_EXECUTION_ID),
+            repository_revision=store.get(WORKFLOW_ID)["repositoryRevision"],
+            paths=("src/app.py",),
+            tool_ref=ref("Tool", "filesystem"),
+        )
 
 
 def setup_handler(
