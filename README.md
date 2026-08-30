@@ -654,7 +654,7 @@ Implemented foundations currently include:
 
 The repository now aligns `publication-evidence:1.1.0` with the canonical
 runtime evidence contract through `create-pull-request:1.2.0` and
-`issue-to-pr:1.8.0`. Credential-free local and source/published exact-image
+`issue-to-pr:1.9.0`. Credential-free local and source/published exact-image
 verification pass. The subsequent live run passed validation, acceptance, and
 Publication Policy but exposed AEP-049 at authenticated push. The corrected
 helper now uses the running service's verified absolute interpreter, private

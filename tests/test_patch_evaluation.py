@@ -211,11 +211,44 @@ def test_clean_patch_passes_without_mutating_repository(repository) -> None:
 
 
 def test_required_insertions_are_checked_before_patch_pass(repository) -> None:
-    _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "updated"},), deletion_authorized_paths=("tracked.txt",))
+    _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "updated"},))
     assert result["outcome"] == "PASS"
     _, missing = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "deploy/"},), deletion_authorized_paths=("tracked.txt",))
     assert missing["outcome"] == "FAIL"
     assert "REQUIRED_INSERTION_MISSING" in error_codes(missing)
+
+
+def test_trailing_whitespace_fails_explicit_diff_check(repository) -> None:
+    patch = """diff --git a/tracked.txt b/tracked.txt
+index 4b48dee..0000000 100644
+--- a/tracked.txt
++++ b/tracked.txt
+@@ -1 +1 @@
+-original
++updated""" + "   \n"
+    root, revision, adapter = repository
+    result = evaluate_patch(
+        store=InMemoryRuntimeObjectStore(),
+        git_adapter=adapter,
+        authorize_git=lambda _request: True,
+        result_id="evaluationresult-aabbccddeeff",
+        task_execution_id="taskexecution-123456789abc",
+        evaluation_ref={"kind": "Evaluation", "name": "patch-safety", "version": "1.1.0"},
+        patch_artifact=artifact(patch.encode(), revision),
+        patch_content=patch,
+        expected_revision=revision,
+        allowed_paths=("tracked.txt",),
+        required_paths=("tracked.txt",),
+        working_branch="agent/work",
+        correlation={"traceId": "trace-whitespace", "workflowExecutionId": "workflowexecution-123456789abc", "taskExecutionId": "taskexecution-123456789abc"},
+        timestamp="2026-08-04T00:00:00Z",
+        provenance={"actor": "patch-evaluator", "workflowExecutionId": "workflowexecution-123456789abc", "taskExecutionId": "taskexecution-123456789abc", "resourceRefs": []},
+    )
+
+    assert result["outcome"] == "FAIL"
+    assert "PATCH_NOT_APPLICABLE" in error_codes(result)
+    assert any("trailing whitespace" in value.lower() for value in result["evidence"]["diagnostics"])
+    assert not git(root, "diff", "--cached")
 
 
 def test_large_deletion_requires_and_honors_explicit_authorization(repository) -> None:

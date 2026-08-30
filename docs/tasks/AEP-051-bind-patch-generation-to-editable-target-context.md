@@ -197,6 +197,12 @@ missing source material or prove compliance before mutation.
 * Filesystem mutations and terminal ToolInvocation evidence are atomic: an
   evidence-persistence failure restores prior bytes and file mode before it
   escapes, and multi-file rollback preserves the original mode of deleted files.
+* A no-change disposition is accepted only when a path-bound required value is
+  present in freshly materialized exact content. Generated NUL content, checkout
+  HEAD drift, and ToolInvocation attachment failures fail before publication.
+* Planned paths are passed to Git with literal pathspec semantics. Nested parent
+  creation stays beneath pinned no-follow directory handles, and Patch Evaluation
+  stages the candidate only long enough to persist an explicit `git diff --check`.
 * A missing, stale, unreadable, unsupported, duplicate, or over-budget target
   fails closed before Model invocation and before Filesystem mutation with
   stable, non-sensitive evidence identifying the failed target and reason.

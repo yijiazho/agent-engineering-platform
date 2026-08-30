@@ -841,7 +841,10 @@ class _GitToolExecution(ToolExecution):
             status_arguments.append("--ignored=matching")
         if self._paths:
             status_arguments.extend(("--", *self._paths))
-        status = self._run(tuple(status_arguments), deadline).stdout
+        literal_environment = {"GIT_LITERAL_PATHSPECS": "1"} if self._paths else None
+        status = self._run(
+            tuple(status_arguments), deadline, environment=literal_environment
+        ).stdout
         changed_files = committed_changes or _parse_status(status)
         diff_value: dict[str, Any] | None = None
         applicable: bool | None = None
@@ -875,8 +878,27 @@ class _GitToolExecution(ToolExecution):
                 accepted_exit_codes=(0, 1, 128),
                 stdin=self._patch,
             )
-            applicable = check.exit_code == 0
-            diagnostics = _diagnostics(numstat.stderr, check.stderr)
+            whitespace = None
+            if check.exit_code == 0:
+                self._run(("apply", "--cached", "--"), deadline, stdin=self._patch)
+                try:
+                    whitespace = self._run(
+                        ("diff", "--cached", "--check", "--"),
+                        deadline,
+                        accepted_exit_codes=(0, 1, 2),
+                    )
+                finally:
+                    self._run(("reset", "--mixed", "HEAD", "--"), deadline)
+            applicable = (
+                check.exit_code == 0
+                and whitespace is not None
+                and whitespace.exit_code == 0
+            )
+            diagnostics = _diagnostics(
+                numstat.stderr,
+                check.stderr,
+                b"" if whitespace is None else whitespace.stdout + whitespace.stderr,
+            )
         if self._operation == "diff":
             patch_parts = [
                 self._run(
@@ -891,6 +913,7 @@ class _GitToolExecution(ToolExecution):
                         *self._paths,
                     ),
                     deadline,
+                    environment=literal_environment,
                 ).stdout
             ]
             for changed_file in changed_files:

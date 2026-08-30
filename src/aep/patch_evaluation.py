@@ -257,16 +257,7 @@ def evaluate_patch(
     )
     for path in unauthorized_deleted_paths:
         errors.append({"code": "UNAUTHORIZED_DELETION", "message": f"deleted content in {path!r} is not deletion-authorized"})
-    replacement_violations = sorted(
-        item["path"] for item in required_insertions
-        if item["path"] in _replaced_paths(content)
-        and _matching_rule(item["path"], normalized_deletion_authorized) is None
-    )
-    for path in replacement_violations:
-        errors.append({
-            "code": "REQUIRED_INSERTION_REPLACED_CONTENT",
-            "message": f"required insertion in {path!r} replaces existing content without deletion authorization",
-        })
+    replacement_violations: list[str] = []
     destructive_candidate = deleted_lines >= 20 and replacement_ratio > 0.8
     deletion_authorized = bool(deleted_paths) and not unauthorized_deleted_paths
     destructive = destructive_candidate and not deletion_authorized

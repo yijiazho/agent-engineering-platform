@@ -27,6 +27,7 @@ from aep.tool_runtime import (
     ToolRequest,
     ToolResult,
     ToolResultStatus,
+    ToolSchemaValidationError,
     invoke_tool,
 )
 
@@ -277,11 +278,6 @@ class FilesystemToolAdapter(ToolAdapter):
             else:
                 content = request.input["content"]
                 encoded = content.encode("utf-8")
-                if operation in {"write", "compare_write"} and relative.parent != Path("."):
-                    parent_path = (self._workspace / relative.parent).resolve()
-                    if not parent_path.is_relative_to(self._workspace):
-                        raise FilesystemBoundaryError("write parent escapes workspace")
-                    parent_path.mkdir(parents=True, exist_ok=True)
                 open_operation = "write"
                 if operation == "compare_write":
                     expected_exists = request.input["expectedExists"]
@@ -396,8 +392,6 @@ class FilesystemToolAdapter(ToolAdapter):
                 return
             (self._workspace / relative).unlink()
             return
-        if relative.parent != Path("."):
-            (self._workspace / relative.parent).mkdir(parents=True, exist_ok=True)
         operation = "compare_write_existing"
         try:
             stream = self._open_confined(relative, operation)
@@ -459,11 +453,21 @@ class FilesystemToolAdapter(ToolAdapter):
         directory_descriptor = root_descriptor
         try:
             for part in relative.parts[:-1]:
-                child = os.open(
-                    part,
-                    directory_flags,
-                    dir_fd=directory_descriptor,
-                )
+                try:
+                    child = os.open(
+                        part,
+                        directory_flags,
+                        dir_fd=directory_descriptor,
+                    )
+                except FileNotFoundError:
+                    if operation not in {"write", "compare_write_new"}:
+                        raise
+                    os.mkdir(part, 0o700, dir_fd=directory_descriptor)
+                    child = os.open(
+                        part,
+                        directory_flags,
+                        dir_fd=directory_descriptor,
+                    )
                 if directory_descriptor != root_descriptor:
                     os.close(directory_descriptor)
                 directory_descriptor = child
@@ -583,15 +587,43 @@ class FilesystemTool:
                 return _result_from_invocation(created), created
             prior = self._await_terminal_invocation(invocation_id)
             return _result_from_invocation(prior), prior
-        with self.adapter._mutation_lock:
-            preimage = self.adapter._capture_preimage(request)
+        try:
+            self._validator.validate_input(request.input)
+        except ToolSchemaValidationError:
+            authorized: bool | None = None
+            authorization_failure = None
+        else:
             try:
-                result = invoke_tool(
-                    request,
-                    validator=self._validator,
-                    authorize=authorize,
-                    adapter=self.adapter,
-                )
+                authorized = authorize(request)
+            except Exception as error:
+                authorized = None
+                authorization_failure = _unexpected_failure(started_at, error)
+            else:
+                authorization_failure = None
+        with self.adapter._mutation_lock:
+            preimage = None
+            capture_failure = None
+            if authorized:
+                try:
+                    preimage = self.adapter._capture_preimage(request)
+                except (FilesystemBoundaryError, OSError, UnicodeError) as error:
+                    capture_failure = _preimage_failure(started_at, error)
+            try:
+                if authorization_failure is not None:
+                    result = authorization_failure
+                elif capture_failure is not None:
+                    result = capture_failure
+                else:
+                    result = invoke_tool(
+                        request,
+                        validator=self._validator,
+                        authorize=(
+                            authorize
+                            if authorized is None
+                            else lambda _request: authorized
+                        ),
+                        adapter=self.adapter,
+                    )
             except Exception as error:
                 result = _unexpected_failure(started_at, error)
             status = (
@@ -743,6 +775,24 @@ def _unexpected_failure(started_at: str, error: Exception) -> ToolResult:
     )
 
 
+def _preimage_failure(started_at: str, error: Exception) -> ToolResult:
+    completed_at = _timestamp(datetime.now(UTC))
+    if isinstance(error, FilesystemBoundaryError):
+        failure_class = ToolFailureClass.BOUNDARY
+    else:
+        failure_class = ToolFailureClass.IO
+    return ToolResult(
+        status=ToolResultStatus.FAILED,
+        output=None,
+        logs_ref=None,
+        metrics=ToolMetrics(duration_ms=0),
+        started_at=started_at,
+        completed_at=completed_at,
+        failure_class=failure_class,
+        failure_message=str(error) or type(error).__name__,
+    )
+
+
 def _runtime_failure_class(value: ToolFailureClass) -> str:
     return {
         ToolFailureClass.VALIDATION: "CONFIGURATION",
@@ -810,11 +860,20 @@ def _windows_open_relative(
                 "configured workspace was replaced by a reparse point"
             )
         for component in relative.parts[:-1]:
-            child = _windows_nt_open_relative(
-                parent,
-                component,
-                operation="directory",
-            )
+            try:
+                child = _windows_nt_open_relative(
+                    parent,
+                    component,
+                    operation="directory",
+                )
+            except FileNotFoundError:
+                if operation not in {"write", "compare_write_new"}:
+                    raise
+                child = _windows_nt_open_relative(
+                    parent,
+                    component,
+                    operation="directory_create",
+                )
             if _windows_handle_attributes(child) & file_attribute_reparse_point:
                 close_handle(child)
                 raise FilesystemBoundaryError(
@@ -910,9 +969,9 @@ def _windows_nt_open_relative(
         SecurityQualityOfService=None,
     )
     io_status = IoStatusBlock()
-    if operation == "directory":
+    if operation in {"directory", "directory_create"}:
         access = file_read_attributes | synchronize
-        disposition = file_open
+        disposition = file_open if operation == "directory" else file_open_if
         options = (
             file_directory_file
             | file_open_reparse_point

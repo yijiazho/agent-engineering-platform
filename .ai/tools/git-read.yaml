@@ -1,6 +1,6 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
-  "metadata": {"name": "git", "version": "1.1.0", "description": "Read-only Git evidence, including path-scoped ignored-file preflight, for patch generation."},
+  "metadata": {"name": "git", "version": "1.2.0", "description": "Read-only Git evidence with literal path preflight and explicit staged diff checks for patch generation."},
   "spec": {
     "category": "execution", "capabilities": ["git.read"],
     "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "expectedRevision", "branch"], "properties": {"operation": {"type": "string", "enum": ["status", "diff"]}, "expectedRevision": {"type": "string", "minLength": 7}, "branch": {"type": "string", "minLength": 1}, "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}, "includeIgnored": {"type": "boolean"}}},

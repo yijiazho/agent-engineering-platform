@@ -36,7 +36,7 @@ from aep.repository_knowledge import (
     SourceProvenance,
 )
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import InMemoryRuntimeObjectStore, RuntimeStoreError
 from aep.task_execution import FailureClass
 
 
@@ -57,7 +57,6 @@ CHANGE_SCHEMA = {
     "properties": {
         "changes": {
             "type": "array",
-            "minItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -412,6 +411,91 @@ def test_utf8_decodable_binary_target_is_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_generated_binary_content_is_rejected_before_mutation(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "content": "text\x00binary"}]},
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "binary NUL" in result.message
+    assert (workspace / "src/app.py").read_bytes() == b"value = 1\n"
+
+
+def test_no_change_requires_exact_content_evidence(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, _workspace, model = setup_handler(
+        tmp_path,
+        {"changes": []},
+        no_change_files=["src/app.py"],
+        required_insertions=[],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "not deterministically satisfied" in result.message
+    assert model.requests == []
+
+
+def test_no_change_accepts_required_text_present_in_exact_content(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": []},
+        no_change_files=["src/app.py"],
+        required_insertions=[{"path": "src/app.py", "value": "value = 1"}],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.failure_class is FailureClass.EVALUATION
+    assert "empty patch" in result.message
+
+
+def test_committed_head_drift_fails_before_editable_read(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    (workspace / "src/app.py").write_text("descendant\n", encoding="utf-8")
+    git(workspace, "add", "src/app.py")
+    git(workspace, "commit", "-m", "drift")
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+def test_attachment_failure_rolls_back_successful_write(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    original_update = store.update_status
+    failed = False
+
+    def fail_write_attachment(object_id, status, **kwargs):
+        nonlocal failed
+        changes = kwargs.get("changes", {})
+        if object_id == TASK_EXECUTION_ID and "toolInvocationIds" in changes and not failed:
+            ids = changes["toolInvocationIds"]
+            if any(
+                (store.get(value) or {}).get("input", {}).get("operation")
+                == "compare_write"
+                for value in ids
+            ):
+                failed = True
+                raise RuntimeStoreError("attachment checkpoint failed")
+        return original_update(object_id, status, **kwargs)
+
+    store.update_status = fail_write_attachment  # type: ignore[method-assign]
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert (workspace / "src/app.py").read_bytes() == b"value = 1\n"
+
+
 def setup_handler(
     tmp_path: Path,
     output: object,
@@ -420,6 +504,8 @@ def setup_handler(
     authorize_git=lambda _request: True,
     intended_files: list[str] | None = None,
     publish_plan: bool = True,
+    no_change_files: list[str] | None = None,
+    required_insertions: list[dict[str, str]] | None = None,
 ):
     workspace, evaluation_workspace, revision = repositories(tmp_path)
     resources, task = resource_collection()
@@ -432,7 +518,11 @@ def setup_handler(
     if publish_plan:
         artifact_store.publish(
             plan_metadata(revision),
-            implementation_plan(intended_files or ["src/app.py"]),
+            implementation_plan(
+                intended_files or ["src/app.py"],
+                no_change_files=no_change_files,
+                required_insertions=required_insertions,
+            ),
         )
     if isinstance(output, dict) and isinstance(output.get("changes"), list):
         output = json.loads(json.dumps(output))
@@ -711,9 +801,16 @@ def plan_metadata(revision: str) -> dict:
     }
 
 
-def implementation_plan(intended_files: list[str]) -> dict:
+def implementation_plan(
+    intended_files: list[str],
+    *,
+    no_change_files: list[str] | None = None,
+    required_insertions: list[dict[str, str]] | None = None,
+) -> dict:
     return {
         "intendedFiles": intended_files,
+        "noChangeFiles": no_change_files or [],
+        "requiredInsertions": required_insertions or [],
         "tests": ["python -m pytest"],
         "assumptions": ["The checkout is revision-bound."],
         "risks": ["A change may exceed the plan scope."],

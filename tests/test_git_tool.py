@@ -209,6 +209,8 @@ def request(
     commit_message: str | None = None,
     expected_patch_sha256: str | None = None,
     timeout_ms: int = 5_000,
+    paths: tuple[str, ...] = (),
+    patch: str | None = None,
 ) -> ToolRequest:
     input_value = {
         "operation": operation,
@@ -219,6 +221,10 @@ def request(
         input_value["commitMessage"] = commit_message
     if expected_patch_sha256 is not None:
         input_value["expectedPatchSha256"] = expected_patch_sha256
+    if paths:
+        input_value["paths"] = list(paths)
+    if patch is not None:
+        input_value["patch"] = patch
     return ToolRequest(
         tool_ref={"kind": "Tool", "name": "git", "version": "1.0.0"},
         input=input_value,
@@ -519,6 +525,23 @@ def test_diff_returns_patch_and_content_metadata(
     assert result.output["diff"]["byteLength"] > 0
     assert len(result.output["diff"]["sha256"]) == 64
     assert result.output["changedFiles"][0]["path"] == "tracked.txt"
+
+
+def test_diff_treats_planned_paths_as_literal_pathspecs(
+    local_repository: tuple[Path, Path, str],
+) -> None:
+    repository, _remote, revision = local_repository
+    logs = InMemoryGitCommandLogStore()
+    tool_adapter = create_branch(repository, revision, logs)
+    (repository / "[x].txt").write_text("literal\n", encoding="utf-8")
+
+    result = invoke(
+        request(revision, "diff", paths=("[x].txt",)),
+        tool_adapter,
+    )
+
+    assert result.status is ToolResultStatus.SUCCEEDED
+    assert "[x].txt" in result.output["diff"]["text"]
 
 
 def test_push_branch_requires_policy_authorization_before_remote_mutation(

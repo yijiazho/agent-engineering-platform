@@ -28,7 +28,7 @@ from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
 from aep.resource_loader import Resource, ResourceRef
-from aep.runtime_store import RuntimeObject
+from aep.runtime_store import RuntimeObject, RuntimeStoreError
 from aep.task_execution import FailureClass
 from aep.tool_runtime import (
     AuthorizationHook,
@@ -133,7 +133,13 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [clean_evidence["id"]]})
             clean_output = clean_result.output_record() if clean_result.output is not None else {}
-            if clean_result.status is not ToolResultStatus.SUCCEEDED or clean_output.get("changedFiles"):
+            clean_diff = clean_output.get("diff")
+            if (
+                clean_result.status is not ToolResultStatus.SUCCEEDED
+                or clean_output.get("revision") != workflow["repositoryRevision"]
+                or clean_output.get("changedFiles")
+                or (isinstance(clean_diff, Mapping) and clean_diff.get("byteLength") != 0)
+            ):
                 raise GeneratePatchContractError(
                     "GeneratePatch requires a clean checkout at the recorded repository revision"
                 )
@@ -143,6 +149,9 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 paths=allowed_paths,
                 tool_ref=filesystem_read_ref,
                 max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+            )
+            _verify_no_change_targets(
+                no_change_paths, required_insertions, editable_targets
             )
             context_package = self._context_builder.build(
                 task=task,
@@ -273,7 +282,6 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     request=request,
                     authorize=self._authorize_filesystem,
                 )
-                self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
                 if result.status is not ToolResultStatus.SUCCEEDED:
                     self._rollback_applied_changes(
                         task_execution=task_execution,
@@ -284,6 +292,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     )
                     return _tool_failure(result, f"Filesystem write for {change['path']!r}")
                 applied.append(change)
+                self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
 
             diff_id = self._runtime_id(
                 "toolinvocation", f"{task_execution['id']}:git:diff"
@@ -354,7 +363,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 required_paths=tuple(path for path in allowed_paths if path not in no_change_paths),
                 no_change_paths=no_change_paths,
                 deletion_authorized_paths=deletion_authorized_paths,
-                required_insertions=required_insertions,
+                required_insertions=tuple(
+                    item for item in required_insertions
+                    if item["path"] not in no_change_paths
+                ),
                 unsupported_acceptance_criteria=unsupported_criteria,
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
@@ -412,6 +424,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             ContextBuilderError,
             GeneratedArtifactStoreError,
             PatchEvaluationContractError,
+            RuntimeStoreError,
             KeyError,
             TypeError,
             ValueError,
@@ -836,6 +849,10 @@ def _validated_changes(
             raise GeneratePatchContractError(f"Code Generator operation for {path!r} is invalid")
         if operation == "write" and not isinstance(content, str):
             raise GeneratePatchContractError(f"Code Generator content for {path!r} must be text")
+        if operation == "write" and "\x00" in content:
+            raise GeneratePatchContractError(
+                f"Code Generator content for {path!r} contains binary NUL bytes"
+            )
         if operation == "delete" and content not in {None, ""}:
             raise GeneratePatchContractError(f"Code Generator delete for {path!r} must not include content")
         if path in seen:
@@ -852,6 +869,25 @@ def _validated_changes(
         seen.add(path)
         changes.append({"path": path, "content": content or "", "operation": operation})
     return tuple(changes)
+
+
+def _verify_no_change_targets(
+    no_change_paths: Sequence[str],
+    required_insertions: Sequence[Mapping[str, str]],
+    editable_targets: Sequence[JsonMapping],
+) -> None:
+    for path in no_change_paths:
+        criteria = [item["value"] for item in required_insertions if item["path"] == path]
+        target = next((item for item in editable_targets if item.get("path") == path), None)
+        content = target.get("content") if isinstance(target, Mapping) else None
+        if (
+            not criteria
+            or not isinstance(content, str)
+            or any(value not in content for value in criteria)
+        ):
+            raise GeneratePatchContractError(
+                f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
+            )
 
 
 def _changed_paths(values: object) -> list[str]:

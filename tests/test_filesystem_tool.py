@@ -468,6 +468,66 @@ def test_invalid_input_is_schema_failure_and_is_persisted(tmp_path: Path) -> Non
     assert not (tmp_path / "missing-content.txt").exists()
 
 
+def test_invalid_mutation_path_is_terminal_boundary_evidence(tmp_path: Path) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    result, invocation = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "../outside.txt",
+            content="escape",
+            expectedExists=False,
+            expectedSha256=sha256(b"").hexdigest(),
+        ),
+        suffix="invalidcapture1234",
+    )
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert invocation["status"] == "FAILED"
+    assert invocation["failureClass"] == "BOUNDARY"
+
+
+def test_missing_parent_race_cannot_escape_confined_creation(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    outside = tmp_path_factory.mktemp("outside-missing-parent")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    def race_parent(_path: Path, _operation: str) -> None:
+        target = tmp_path / "new-parent"
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(target), str(outside)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert completed.returncode == 0, completed.stderr
+        else:
+            target.symlink_to(outside, target_is_directory=True)
+
+    tool.adapter._before_open = race_parent
+    result, _ = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "new-parent/file.txt",
+            content="escape",
+            expectedExists=False,
+            expectedSha256=sha256(b"").hexdigest(),
+        ),
+        suffix="parentrace123456",
+    )
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert not (outside / "file.txt").exists()
+
+
 def test_missing_file_and_io_failures_are_distinct(tmp_path: Path) -> None:
     invalid_utf8 = tmp_path / "binary.dat"
     invalid_utf8.write_bytes(b"\xff")
