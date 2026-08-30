@@ -192,14 +192,18 @@ missing source material or prove compliance before mutation.
   content/preimage digest, size, and sufficient source material for the chosen
   edit representation. Ranked metadata alone cannot satisfy this requirement.
 * Editable-target reads use a byte ceiling derived from the Task input-context
-  token budget, reject non-canonical POSIX path spellings, and run only after a
-  path-scoped Git preflight rejects tracked, untracked, or ignored target state.
+  token budget, reject non-canonical POSIX spellings and Git administrative
+  paths, and run only after a path-scoped Git preflight rejects tracked,
+  untracked, or ignored target state.
 * Filesystem mutations and terminal ToolInvocation evidence are atomic: an
   evidence-persistence failure restores prior bytes and file mode before it
-  escapes, and multi-file rollback preserves the original mode of deleted files.
+  escapes, compare mutations bind both digest and mode, deletion stays relative
+  to a pinned parent handle, and multi-file rollback preserves the original mode.
 * A no-change disposition is accepted only when a path-bound required value is
   present in freshly materialized exact content. Generated NUL content, checkout
-  HEAD drift, and ToolInvocation attachment failures fail before publication.
+  HEAD drift, and ToolInvocation attachment failures fail before publication. An
+  all-no-change plan persists an empty PATCH artifact and passing deterministic
+  `NO_CHANGE` dispositions without invoking Git patch applicability checks.
 * Planned paths are passed to Git with literal pathspec semantics. Nested parent
   creation stays beneath pinned no-follow directory handles, and Patch Evaluation
   stages the candidate only long enough to persist an explicit `git diff --check`.

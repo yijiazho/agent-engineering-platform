@@ -110,7 +110,7 @@ def test_context_and_agent_boundaries_are_explicit(
     assert "toolRefs" not in agents["issue-analyzer"]
     assert "toolRefs" not in agents["planner"]
     assert agents["code-generator"]["toolRefs"] == [
-        {"kind": "Tool", "name": "filesystem", "version": "1.4.0"},
+        {"kind": "Tool", "name": "filesystem", "version": "1.5.0"},
         {"kind": "Tool", "name": "git", "version": "1.2.0"},
     ]
     assert "toolRefs" not in agents["pr-writer"]

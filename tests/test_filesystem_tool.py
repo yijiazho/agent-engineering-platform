@@ -184,6 +184,7 @@ def test_terminal_persistence_failure_restores_mutated_file(tmp_path: Path) -> N
         content="new\n",
         expectedExists=True,
         expectedSha256=sha256(b"old\n").hexdigest(),
+        expectedMode=original_mode,
     )
 
     with pytest.raises(RuntimeError, match="terminal persistence"):
@@ -239,6 +240,7 @@ def test_compare_write_requires_preconditions_and_checks_the_opened_file(
             content="after",
             expectedExists=True,
             expectedSha256=expected,
+            expectedMode=stat.S_IMODE(target.stat().st_mode),
         ),
         suffix="compare-write-123456",
     )
@@ -481,6 +483,7 @@ def test_invalid_mutation_path_is_terminal_boundary_evidence(tmp_path: Path) -> 
             content="escape",
             expectedExists=False,
             expectedSha256=sha256(b"").hexdigest(),
+            expectedMode=None,
         ),
         suffix="invalidcapture1234",
     )
@@ -520,12 +523,62 @@ def test_missing_parent_race_cannot_escape_confined_creation(
             content="escape",
             expectedExists=False,
             expectedSha256=sha256(b"").hexdigest(),
+            expectedMode=None,
         ),
         suffix="parentrace123456",
     )
 
     assert result.failure_class is ToolFailureClass.BOUNDARY
     assert not (outside / "file.txt").exists()
+
+
+def test_compare_delete_reopens_parent_confined_and_checks_entry_identity(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    parent = tmp_path / "nested"
+    parent.mkdir()
+    target = parent / "target.txt"
+    target.write_bytes(b"inside")
+    outside = tmp_path_factory.mktemp("outside-delete")
+    outside_target = outside / "target.txt"
+    outside_target.write_bytes(b"outside")
+    if os.name != "nt" and not _can_create_symlink(tmp_path, outside):
+        pytest.skip("symlink creation is unavailable")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    original_delete = tool.adapter._delete_confined
+
+    def replace_parent(relative, descriptor, checked_stat):
+        target.unlink()
+        parent.rmdir()
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(parent), str(outside)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert completed.returncode == 0, completed.stderr
+        else:
+            parent.symlink_to(outside, target_is_directory=True)
+        return original_delete(relative, descriptor, checked_stat)
+
+    tool.adapter._delete_confined = replace_parent  # type: ignore[method-assign]
+    result, _ = invoke(
+        tool,
+        store,
+        request(
+            "compare_delete",
+            "nested/target.txt",
+            expectedExists=True,
+            expectedSha256=sha256(b"inside").hexdigest(),
+            expectedMode=stat.S_IMODE(target.stat().st_mode),
+        ),
+        suffix="deleterace123456",
+    )
+
+    assert result.failure_class in {ToolFailureClass.BOUNDARY, ToolFailureClass.IO}
+    assert outside_target.read_bytes() == b"outside"
 
 
 def test_missing_file_and_io_failures_are_distinct(tmp_path: Path) -> None:

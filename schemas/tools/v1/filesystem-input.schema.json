@@ -26,11 +26,12 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operation", "path", "content", "expectedExists", "expectedSha256"],
+      "required": ["operation", "path", "content", "expectedExists", "expectedSha256", "expectedMode"],
       "properties": {
         "operation": { "const": "compare_write" },
         "expectedExists": { "type": "boolean" },
         "expectedSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "expectedMode": { "type": ["integer", "null"], "minimum": 0, "maximum": 4095 },
         "mode": { "type": "integer", "minimum": 0, "maximum": 4095 },
         "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "content": { "type": "string" }
@@ -39,12 +40,13 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operation", "path", "expectedExists", "expectedSha256"],
+      "required": ["operation", "path", "expectedExists", "expectedSha256", "expectedMode"],
       "properties": {
         "operation": { "const": "compare_delete" },
         "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "expectedExists": { "const": true },
-        "expectedSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "expectedSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "expectedMode": { "type": "integer", "minimum": 0, "maximum": 4095 }
       }
     }
   ]

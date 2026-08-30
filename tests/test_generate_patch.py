@@ -5,6 +5,7 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import subprocess
+import stat
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -381,7 +382,9 @@ def test_ignored_planned_file_fails_before_editable_read(tmp_path: Path) -> None
     assert model.requests == []
 
 
-@pytest.mark.parametrize("path", ["src/./app.py", "src//app.py"])
+@pytest.mark.parametrize(
+    "path", ["src/./app.py", "src//app.py", ".git", ".git/config", ".GIT/config"]
+)
 def test_noncanonical_planned_path_fails_before_model(tmp_path: Path, path: str) -> None:
     store, handler, task, _artifacts, _workspace, model = setup_handler(
         tmp_path,
@@ -440,7 +443,7 @@ def test_no_change_requires_exact_content_evidence(tmp_path: Path) -> None:
 
 
 def test_no_change_accepts_required_text_present_in_exact_content(tmp_path: Path) -> None:
-    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+    store, handler, task, artifacts, _workspace, _model = setup_handler(
         tmp_path,
         {"changes": []},
         no_change_files=["src/app.py"],
@@ -449,8 +452,38 @@ def test_no_change_accepts_required_text_present_in_exact_content(tmp_path: Path
 
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
-    assert result.failure_class is FailureClass.EVALUATION
-    assert "empty patch" in result.message
+    assert result.succeeded is True
+    execution = store.get(TASK_EXECUTION_ID)
+    evaluation = store.get(execution["evaluationResultIds"][0])
+    artifact = artifacts.get(execution["generatedArtifactIds"][0])
+    assert evaluation["outcome"] == "PASS"
+    assert evaluation["evidence"]["noChangeFileDispositions"] == [
+        {"path": "src/app.py", "disposition": "NO_CHANGE"}
+    ]
+    assert evaluation["evidence"]["git"]["status"] == "NOT_RUN"
+    assert artifact["changedFiles"] == []
+    assert artifacts.get_content(artifact["id"]) == b""
+
+
+def test_mode_drift_is_rejected_by_compare_write(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("Windows does not expose POSIX executable mode changes")
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    target = workspace / "src/app.py"
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+
+    def change_mode(_path: Path, operation: str) -> None:
+        if operation == "compare_write_existing":
+            target.chmod(original_mode ^ stat.S_IXUSR)
+
+    handler._filesystem_tool.adapter._before_open = change_mode
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "Filesystem write" in result.message
+    assert target.read_bytes() == b"value = 1\n"
 
 
 def test_committed_head_drift_fails_before_editable_read(tmp_path: Path) -> None:

@@ -242,6 +242,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             if any(
                 current["exists"] != original["exists"]
                 or current["preimageSha256"] != original["preimageSha256"]
+                or current["mode"] != original["mode"]
                 for current, original in zip(verified_targets, editable_targets, strict=True)
             ):
                 raise GeneratePatchContractError(
@@ -262,6 +263,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 payload: dict[str, Any] = {
                     "operation": operation, "path": change["path"],
                     "expectedExists": target["exists"], "expectedSha256": target["preimageSha256"],
+                    "expectedMode": target["mode"],
                 }
                 if operation == "compare_write":
                     payload["content"] = change["content"]
@@ -310,12 +312,15 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             diff_output = diff_result.output_record()
             patch = diff_output.get("diff") if isinstance(diff_output, Mapping) else None
             patch_text = patch.get("text") if isinstance(patch, Mapping) else None
-            if not isinstance(patch_text, str) or not patch_text:
+            all_no_change = not changes and set(no_change_paths) == set(allowed_paths)
+            if not isinstance(patch_text, str) or (not patch_text and not all_no_change):
                 self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION, "GeneratePatch produced an empty patch"
                 )
-            changed_files = _changed_paths(diff_output.get("changedFiles"))
+            changed_files = (
+                [] if all_no_change else _changed_paths(diff_output.get("changedFiles"))
+            )
 
             artifact_id = self._runtime_id(
                 "generatedartifact", str(task_execution["id"])
@@ -463,6 +468,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     "operation": "compare_write", "path": change["path"],
                     "content": target["content"], "expectedExists": False,
                     "expectedSha256": sha256(b"").hexdigest(),
+                    "expectedMode": None,
                     "mode": target["mode"],
                 }
             elif target["exists"]:
@@ -472,6 +478,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     "content": target["content"],
                     "expectedExists": True,
                     "expectedSha256": sha256(change["content"].encode()).hexdigest(),
+                    "expectedMode": target["mode"],
                 }
             else:
                 payload = {
@@ -479,6 +486,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     "path": change["path"],
                     "expectedExists": True,
                     "expectedSha256": sha256(change["content"].encode()).hexdigest(),
+                    "expectedMode": 0o600,
                 }
             request = ToolRequest(
                 tool_ref=tool_ref,
@@ -913,6 +921,7 @@ def _safe_path(value: str) -> bool:
         value == path.as_posix()
         and not path.is_absolute()
         and all(part not in {"", ".", ".."} for part in path.parts)
+        and (not path.parts or path.parts[0].casefold() != ".git")
     )
 
 

@@ -59,7 +59,8 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
             "type": "object",
             "additionalProperties": False,
             "required": [
-                "operation", "path", "content", "expectedExists", "expectedSha256"
+                "operation", "path", "content", "expectedExists", "expectedSha256",
+                "expectedMode",
             ],
             "properties": {
                 "operation": {"const": "compare_write"},
@@ -67,18 +68,20 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
                 "content": {"type": "string"},
                 "expectedExists": {"type": "boolean"},
                 "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "expectedMode": {"type": ["integer", "null"], "minimum": 0, "maximum": 4095},
                 "mode": {"type": "integer", "minimum": 0, "maximum": 4095},
             },
         },
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["operation", "path", "expectedExists", "expectedSha256"],
+            "required": ["operation", "path", "expectedExists", "expectedSha256", "expectedMode"],
             "properties": {
                 "operation": {"const": "compare_delete"},
                 "path": {"type": "string", "minLength": 1, "maxLength": 4096},
                 "expectedExists": {"const": True},
                 "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "expectedMode": {"type": "integer", "minimum": 0, "maximum": 4095},
             },
         },
     ],
@@ -264,11 +267,16 @@ class FilesystemToolAdapter(ToolAdapter):
             elif operation == "compare_delete":
                 with self._open_confined(relative, "compare_write_existing") as stream:
                     current = stream.read()
+                    current_stat = os.fstat(stream.fileno())
                     if sha256(current).hexdigest() != request.input["expectedSha256"]:
                         raise FilesystemBoundaryError(
                             f"compare-delete preimage digest mismatch for {normalized_path}"
                         )
-                (self._workspace / relative).unlink()
+                    if stat.S_IMODE(current_stat.st_mode) != request.input["expectedMode"]:
+                        raise FilesystemBoundaryError(
+                            f"compare-delete preimage mode mismatch for {normalized_path}"
+                        )
+                    self._delete_confined(relative, stream.fileno(), current_stat)
                 output = {
                     "operation": operation,
                     "path": normalized_path,
@@ -282,9 +290,14 @@ class FilesystemToolAdapter(ToolAdapter):
                 if operation == "compare_write":
                     expected_exists = request.input["expectedExists"]
                     expected_digest = request.input["expectedSha256"]
+                    expected_mode = request.input["expectedMode"]
                     if not expected_exists and expected_digest != sha256(b"").hexdigest():
                         raise FilesystemBoundaryError(
                             f"compare-write absent preimage digest mismatch for {normalized_path}"
+                        )
+                    if (expected_mode is None) != (not expected_exists):
+                        raise FilesystemBoundaryError(
+                            f"compare-write expectedMode does not match existence for {normalized_path}"
                         )
                     open_operation = (
                         "compare_write_existing" if expected_exists else "compare_write_new"
@@ -297,6 +310,10 @@ class FilesystemToolAdapter(ToolAdapter):
                             if sha256(current).hexdigest() != expected_digest:
                                 raise FilesystemBoundaryError(
                                     f"compare-write preimage digest mismatch for {normalized_path}"
+                                )
+                            if stat.S_IMODE(os.fstat(stream.fileno()).st_mode) != expected_mode:
+                                raise FilesystemBoundaryError(
+                                    f"compare-write preimage mode mismatch for {normalized_path}"
                                 )
                         stream.seek(0)
                         stream.truncate(0)
@@ -411,6 +428,43 @@ class FilesystemToolAdapter(ToolAdapter):
             os.fchmod(descriptor, mode)
         else:
             os.chmod(self._handle_path_resolver(descriptor), mode)
+
+    def _delete_confined(
+        self, relative: Path, descriptor: int, checked_stat: os.stat_result
+    ) -> None:
+        """Delete the checked entry without resolving its parent by pathname again."""
+
+        if os.name == "nt":
+            _windows_delete_open_descriptor(descriptor)
+            return
+        if os.unlink not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+            raise FilesystemBoundaryError(
+                "platform does not provide confined relative deletion"
+            )
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        root_descriptor = os.open(self._workspace, directory_flags)
+        parent_descriptor = root_descriptor
+        try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, directory_flags, dir_fd=parent_descriptor)
+                if parent_descriptor != root_descriptor:
+                    os.close(parent_descriptor)
+                parent_descriptor = child
+            entry_stat = os.stat(
+                relative.name, dir_fd=parent_descriptor, follow_symlinks=False
+            )
+            if (entry_stat.st_dev, entry_stat.st_ino) != (
+                checked_stat.st_dev,
+                checked_stat.st_ino,
+            ):
+                raise FilesystemBoundaryError(
+                    f"compare-delete directory entry changed for {relative.as_posix()}"
+                )
+            os.unlink(relative.name, dir_fd=parent_descriptor)
+        finally:
+            if parent_descriptor != root_descriptor:
+                os.close(parent_descriptor)
+            os.close(root_descriptor)
 
     def _validate_path(self, raw_path: str) -> tuple[Path, str]:
         relative = Path(raw_path)
@@ -1054,6 +1108,34 @@ def _windows_handle_attributes(handle: Any) -> int:
     ):
         raise ctypes.WinError()
     return value.FileAttributes
+
+
+def _windows_delete_open_descriptor(descriptor: int) -> None:
+    """Mark the already verified Windows file handle for deletion."""
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class FileDispositionInfo(ctypes.Structure):
+        _fields_ = [("DeleteFile", wintypes.BOOLEAN)]
+
+    value = FileDispositionInfo(DeleteFile=True)
+    set_information = ctypes.windll.kernel32.SetFileInformationByHandle
+    set_information.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    set_information.restype = wintypes.BOOL
+    if not set_information(
+        msvcrt.get_osfhandle(descriptor),
+        4,
+        ctypes.byref(value),
+        ctypes.sizeof(value),
+    ):
+        raise ctypes.WinError()
 
 
 def _open_handle_path(descriptor: int) -> Path:

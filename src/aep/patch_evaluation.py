@@ -70,7 +70,7 @@ def evaluate_patch(
     )
     artifact = deepcopy(dict(patch_artifact))
     normalized_rules = _normalize_rules(allowed_paths)
-    normalized_required = _normalize_rules(required_paths) if required_paths is not None else ()
+    normalized_required = _normalize_rules(required_paths) if required_paths else ()
     normalized_no_change = _normalize_rules(no_change_paths) if no_change_paths else ()
     normalized_deletion_authorized = _normalize_rules(deletion_authorized_paths) if deletion_authorized_paths else ()
     errors: list[dict[str, str]] = []
@@ -117,10 +117,20 @@ def evaluate_patch(
             }
         )
 
-    if not content:
+    all_no_change = (
+        not content
+        and not normalized_required
+        and bool(normalized_no_change)
+        and set(normalized_no_change) == set(normalized_rules)
+    )
+    if not content and not all_no_change:
         errors.append({"code": "EMPTY_PATCH", "message": "patch content is empty"})
 
-    if not errors:
+    if all_no_change:
+        applicable = True
+        logs.append("No patch applicability check required for grounded no-change plan")
+
+    if not errors and not all_no_change:
         try:
             patch_text = content.decode("utf-8")
         except UnicodeDecodeError:
@@ -287,8 +297,9 @@ def evaluate_patch(
         ),
         "revision": not any(error["code"] == "REVISION_MISMATCH" for error in errors),
         "applicability": applicable,
-        "pathBoundary": bool(changed_files) and all(
-            check["allowed"] for check in boundary_checks
+        "pathBoundary": (
+            all_no_change
+            or (bool(changed_files) and all(check["allowed"] for check in boundary_checks))
         ),
         "requiredFileDisposition": all(
             item["disposition"] == "CHANGED" for item in dispositions

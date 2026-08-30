@@ -853,7 +853,7 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `generate-patch:1.7.0` uses `code-generator:1.7.0` and requires one exact
+* `generate-patch:1.8.0` uses `code-generator:1.8.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
   patch EvaluationResult for required-file dispositions and change statistics
