@@ -167,6 +167,19 @@ def test_read_stops_at_the_declared_byte_limit(tmp_path: Path) -> None:
     assert result.failure_class is ToolFailureClass.BOUNDARY
 
 
+def test_mutation_preimage_capture_is_bounded(tmp_path: Path) -> None:
+    target = tmp_path / "large.txt"
+    target.write_bytes(b"x" * 128_001)
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    mutation = request("write", "large.txt", content="replacement")
+
+    result, _ = invoke(tool, store, mutation, suffix="boundedmutation12")
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert target.stat().st_size == 128_001
+
+
 def test_terminal_persistence_failure_restores_mutated_file(tmp_path: Path) -> None:
     target = tmp_path / "script.sh"
     target.write_bytes(b"old\n")
@@ -223,6 +236,40 @@ def test_terminal_persistence_compensation_deletes_new_file_confined(
     with pytest.raises(RuntimeError, match="terminal persistence"):
         invoke(tool, tool._store, mutation, suffix="newpersistfail123")
 
+    assert deleted == ["nested/new.txt"]
+    assert not (tmp_path / "nested/new.txt").exists()
+
+
+def test_failed_new_compare_write_cleanup_is_handle_confined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    deleted: list[str] = []
+    original_delete = tool.adapter._delete_confined
+
+    def record_delete(relative, descriptor, checked_stat):
+        deleted.append(relative.as_posix())
+        return original_delete(relative, descriptor, checked_stat)
+
+    tool.adapter._delete_confined = record_delete  # type: ignore[method-assign]
+    monkeypatch.setattr(os, "fsync", lambda _descriptor: (_ for _ in ()).throw(OSError("disk")))
+
+    result, _invocation = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "nested/new.txt",
+            content="new\n",
+            expectedExists=False,
+            expectedSha256=sha256(b"").hexdigest(),
+            expectedMode=None,
+        ),
+        suffix="failednewwrite12",
+    )
+
+    assert result.status is ToolResultStatus.FAILED
     assert deleted == ["nested/new.txt"]
     assert not (tmp_path / "nested/new.txt").exists()
 

@@ -175,6 +175,23 @@ def test_plan_must_classify_every_analyzed_acceptance_criterion() -> None:
     assert "classify every analyzed acceptance criterion" in result.message
 
 
+def test_required_classification_must_bind_its_own_insertion() -> None:
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [{"path": "src/a.py", "value": "first"}]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertion": {"path": "src/b.py", "value": "second"},
+    }]
+    store, handler, task, _adapter = setup_handler(output)
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "bind its own insertion evidence" in result.message
+
+
 def test_invalid_non_object_output_is_rejected_without_artifact() -> None:
     store, handler, task, adapter = setup_handler(["not", "a", "plan"])
 

@@ -327,7 +327,7 @@ def test_near_total_balanced_rewrite_with_one_context_line_is_unpreserved() -> N
 
 
 def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
-    from aep.patch_evaluation import _added_text_by_path
+    from aep.patch_evaluation import _added_blocks_by_path
 
     patch = b"""--- a/tracked.txt
 +++ b/tracked.txt
@@ -337,8 +337,22 @@ def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
 +second line
 """
 
-    added = _added_text_by_path(patch)
-    assert "first line\nsecond line" in "\n".join(added["tracked.txt"])
+    added = _added_blocks_by_path(patch)
+    assert added["tracked.txt"] == ("first line\nsecond line",)
+
+
+def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:
+    from aep.patch_evaluation import _added_blocks_by_path
+
+    patch = b"""+++ b/tracked.txt
+@@ -1 +1 @@
+-old
++foo
+@@ -10 +10 @@
+-other
++bar
+"""
+    assert _added_blocks_by_path(patch)["tracked.txt"] == ("foo", "bar")
 
 
 def test_diff_helpers_preserve_paths_with_spaces() -> None:

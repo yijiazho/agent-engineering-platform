@@ -195,11 +195,16 @@ missing source material or prove compliance before mutation.
   token budget, reject non-canonical POSIX spellings and Git administrative
   paths, and run only after a path-scoped Git preflight rejects tracked,
   untracked, or ignored target state.
+* Every freshly read editable target is also verified against the immutable Git
+  blob at the recorded repository revision before Model invocation; worktree
+  content, existence, digest, or executable-mode drift fails closed.
 * Filesystem mutations and terminal ToolInvocation evidence are atomic: an
   evidence-persistence failure restores prior bytes and file mode before it
   escapes, compare mutations bind both digest and mode, deletion stays relative
   to a pinned parent handle (including compensation), Windows delete handles
   request DELETE access, and multi-file rollback preserves the original mode.
+  Mutation preimage capture is bounded, and failed creation cleanup reopens and
+  deletes only through a verified confined handle.
 * A no-change disposition is accepted only when a path-bound required value is
   present in freshly materialized exact content. Generated NUL content, checkout
   HEAD drift, and ToolInvocation attachment failures fail before publication. An
@@ -229,8 +234,9 @@ missing source material or prove compliance before mutation.
   allowed paths, required insertions, forbidden unrelated changes, preservation
   of surrounding content, and `git diff --check` through an isolated temporary
   index. Multiline insertions are matched as ordered blocks, near-total rewrites
-  fail even with token context, and every analyzed criterion is classified
-  exactly once. Unsupported semantic criteria remain visible and cannot be
+  fail even with token context, and matches cannot span diff hunk boundaries.
+  Every analyzed criterion is classified exactly once, and every deterministic
+  classification binds its own path/value insertion. Unsupported semantic criteria remain visible and cannot be
   silently counted as passed.
 * EvaluateAcceptance distinguishes evidence completeness from change
   correctness. A complete set of revision-consistent artifacts with a failed or

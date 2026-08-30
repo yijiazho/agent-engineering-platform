@@ -59,6 +59,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 "implementation plan must classify every analyzed acceptance criterion exactly once"
             )
         unsupported = set(plan.get("unsupportedAcceptanceCriteria", ()))
+        insertions = {
+            (item.get("path"), item.get("value"))
+            for item in plan.get("requiredInsertions", ())
+            if isinstance(item, Mapping)
+        }
         for item in classifications:
             disposition = item.get("classification")
             criterion = item.get("criterion")
@@ -66,9 +71,15 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"
                 )
-            if disposition == "REQUIRED_INSERTION" and not plan.get("requiredInsertions"):
+            if disposition == "REQUIRED_INSERTION" and (
+                not isinstance(item.get("requiredInsertion"), Mapping)
+                or (
+                    item["requiredInsertion"].get("path"),
+                    item["requiredInsertion"].get("value"),
+                ) not in insertions
+            ):
                 raise BuildImplementationPlanContractError(
-                    "required-insertion classification requires deterministic insertion evidence"
+                    "each required-insertion classification must bind its own insertion evidence"
                 )
 
     def _context_arguments(

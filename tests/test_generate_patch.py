@@ -131,11 +131,12 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
 
     execution = store.get(TASK_EXECUTION_ID)
-    assert len(execution["toolInvocationIds"]) == 6
+    assert len(execution["toolInvocationIds"]) == 7
     invocations = [store.get(item) for item in execution["toolInvocationIds"]]
     assert [item["toolRef"]["name"] for item in invocations] == [
         "git",
         "filesystem",
+        "git",
         "filesystem",
         "filesystem",
         "git",
@@ -144,6 +145,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     assert [item["input"]["operation"] for item in invocations] == [
         "diff",
         "read",
+        "read_blob",
         "read",
         "compare_write",
         "diff",
@@ -154,7 +156,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     evaluation = store.get(execution["evaluationResultIds"][0])
     artifact = artifact_store.get(execution["generatedArtifactIds"][0])
     assert evaluation["outcome"] == "PASS"
-    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[5]["id"]
+    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[6]["id"]
     assert evaluation["target"] == {"type": "GeneratedArtifact", "id": artifact["id"]}
     assert artifact["artifactType"] == "PATCH"
     assert artifact["changedFiles"] == ["src/app.py"]
@@ -198,7 +200,7 @@ def test_disallowed_model_path_is_rejected_before_any_workspace_mutation(
     assert "outside IMPLEMENTATION_PLAN.intendedFiles" in result.message
     assert not (workspace / "private/secret.txt").exists()
     execution = store.get(TASK_EXECUTION_ID)
-    assert [store.get(item)["input"]["operation"] for item in execution["toolInvocationIds"]] == ["diff", "read"]
+    assert [store.get(item)["input"]["operation"] for item in execution["toolInvocationIds"]] == ["diff", "read", "read_blob"]
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
@@ -363,6 +365,23 @@ def test_dirty_checkout_fails_before_editable_reads_or_model_invocation(tmp_path
 
     assert result.succeeded is False
     assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+def test_initial_editable_read_must_match_recorded_git_blob(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+
+    def race_read(_path: Path, operation: str) -> None:
+        if operation == "read":
+            (workspace / "src/app.py").write_text("raced secret\n", encoding="utf-8")
+
+    handler._filesystem_tool.adapter._before_open = race_read
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "does not match the recorded Git revision" in result.message
     assert model.requests == []
 
 

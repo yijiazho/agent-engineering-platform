@@ -223,12 +223,15 @@ def evaluate_patch(
                 }
             )
 
-    added_by_path = _added_text_by_path(content)
+    added_blocks_by_path = _added_blocks_by_path(content)
     missing_insertions = sorted(
         (
             {"path": item["path"], "value": item["value"]}
             for item in required_insertions
-            if item["value"] not in "\n".join(added_by_path.get(item["path"], ()))
+            if not any(
+                item["value"] in block
+                for block in added_blocks_by_path.get(item["path"], ())
+            )
         ),
         key=lambda item: (item["path"].casefold(), item["path"], item["value"]),
     )
@@ -485,6 +488,31 @@ def _added_text_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
         elif current is not None and line.startswith("+") and not line.startswith("+++"):
             values.setdefault(current, []).append(line[1:])
     return {path: tuple(lines) for path, lines in values.items()}
+
+
+def _added_blocks_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
+    current: str | None = None
+    active: list[str] = []
+    values: dict[str, list[str]] = {}
+
+    def finish() -> None:
+        if current is not None and active:
+            values.setdefault(current, []).append("\n".join(active))
+            active.clear()
+
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "+++ ")
+        if marker is not None:
+            finish()
+            current = None if marker == "/dev/null" else marker
+        elif line.startswith("@@ "):
+            finish()
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            active.append(line[1:])
+        else:
+            finish()
+    finish()
+    return {path: tuple(blocks) for path, blocks in values.items()}
 
 
 def _replaced_paths(content: bytes) -> set[str]:

@@ -1,9 +1,9 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Tool",
-  "metadata": {"name": "git", "version": "1.2.0", "description": "Read-only Git evidence with literal path preflight and explicit staged diff checks for patch generation."},
+  "metadata": {"name": "git", "version": "1.3.0", "description": "Read-only Git evidence with immutable revision-bound blobs, literal path preflight, and explicit staged diff checks for patch generation."},
   "spec": {
     "category": "execution", "capabilities": ["git.read"],
-    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "expectedRevision", "branch"], "properties": {"operation": {"type": "string", "enum": ["status", "diff"]}, "expectedRevision": {"type": "string", "minLength": 7}, "branch": {"type": "string", "minLength": 1}, "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}, "includeIgnored": {"type": "boolean"}}},
+    "inputSchema": {"type": "object", "additionalProperties": false, "required": ["operation", "expectedRevision", "branch"], "properties": {"operation": {"type": "string", "enum": ["status", "diff", "read_blob"]}, "expectedRevision": {"type": "string", "minLength": 7}, "branch": {"type": "string", "minLength": 1}, "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}, "includeIgnored": {"type": "boolean"}, "maxBytes": {"type": "integer", "minimum": 1}}},
     "outputSchema": {"type": "object"},
     "permissions": ["repository:read"], "timeoutMs": 10000,
     "retryPolicy": {"maxAttempts": 1}

@@ -310,6 +310,7 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
                         "acceptanceCriteriaClassifications": [{
                             "criterion": "The value is updated and tests pass.",
                             "classification": "REQUIRED_INSERTION",
+                            "requiredInsertion": {"path": "src/app.py", "value": "value = 2"},
                         }],
                         "requiredInsertions": [
                             {"path": "src/app.py", "value": "value = 2"}

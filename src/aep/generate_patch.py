@@ -150,6 +150,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 tool_ref=filesystem_read_ref,
                 max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
             )
+            self._verify_targets_at_revision(
+                task_execution=task_execution,
+                repository_revision=str(workflow["repositoryRevision"]),
+                paths=allowed_paths,
+                targets=editable_targets,
+                tool_ref=git_read_ref,
+                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+            )
             _verify_no_change_targets(
                 no_change_paths, required_insertions, editable_targets
             )
@@ -571,6 +579,49 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 },
             })
         return tuple(targets)
+
+    def _verify_targets_at_revision(
+        self, *, task_execution: JsonMapping, repository_revision: str,
+        paths: Sequence[str], targets: Sequence[JsonMapping], tool_ref: JsonMapping,
+        max_bytes: int,
+    ) -> None:
+        for index, (path, target) in enumerate(zip(paths, targets, strict=True)):
+            request = ToolRequest(
+                tool_ref=tool_ref,
+                input={"operation": "read_blob", "expectedRevision": repository_revision,
+                       "branch": self._working_branch, "paths": [path], "maxBytes": max_bytes},
+                caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
+                capabilities=("git.read",), timeout_ms=self._tool_timeout_ms,
+                correlation=_correlation(task_execution),
+            )
+            result, evidence = self._workspace_git_tool.invoke(
+                invocation_id=self._runtime_id(
+                    "toolinvocation", f"{task_execution['id']}:git:editable-blob:{index}"
+                ),
+                task_execution_id=str(task_execution["id"]), request=request,
+                authorize=self._authorize_git,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+            output = result.output_record() if result.output is not None else {}
+            blob = output.get("blob")
+            if result.status is not ToolResultStatus.SUCCEEDED or not isinstance(blob, Mapping):
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} could not be bound to the recorded Git revision"
+                )
+            blob_mode = blob.get("mode")
+            target_mode = target.get("mode")
+            if (
+                blob.get("exists") != target.get("exists")
+                or blob.get("sha256") != target.get("preimageSha256")
+                or (
+                    blob.get("exists")
+                    and (not isinstance(blob_mode, int) or not isinstance(target_mode, int)
+                         or (blob_mode & 0o111) != (target_mode & 0o111))
+                )
+            ):
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} does not match the recorded Git revision"
+                )
 
     def _context_filesystem_ref(self, task_spec: JsonMapping) -> dict[str, str]:
         agent_ref = _required_ref(task_spec.get("agentRef"), "Agent", "Task.spec.agentRef")

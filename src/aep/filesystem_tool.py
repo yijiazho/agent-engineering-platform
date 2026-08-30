@@ -121,6 +121,7 @@ TRUSTED_REPOSITORY_READ_CALLERS = frozenset(
     {"ContextBuilder", "TaskExecution", "WorkflowRuntime"}
 )
 INVOCATION_REPLAY_WAIT_SECONDS = 10.0
+MUTATION_PREIMAGE_MAX_BYTES = 128_000
 
 
 class FilesystemBoundaryError(ValueError):
@@ -302,8 +303,11 @@ class FilesystemToolAdapter(ToolAdapter):
                         "compare_write_existing" if expected_exists else "compare_write_new"
                     )
                 current = b""
+                created_stat: os.stat_result | None = None
                 try:
                     with self._open_confined(relative, open_operation) as stream:
+                        if operation == "compare_write" and not expected_exists:
+                            created_stat = os.fstat(stream.fileno())
                         if operation == "compare_write" and expected_exists:
                             current = stream.read()
                             if sha256(current).hexdigest() != expected_digest:
@@ -330,7 +334,18 @@ class FilesystemToolAdapter(ToolAdapter):
                             restore.flush()
                             os.fsync(restore.fileno())
                     elif operation == "compare_write":
-                        (self._workspace / relative).unlink(missing_ok=True)
+                        try:
+                            with self._open_confined(relative, "compare_delete") as cleanup:
+                                cleanup_stat = os.fstat(cleanup.fileno())
+                                if created_stat is None or (
+                                    cleanup_stat.st_dev, cleanup_stat.st_ino
+                                ) != (created_stat.st_dev, created_stat.st_ino):
+                                    raise FilesystemBoundaryError(
+                                        f"failed-write cleanup entry changed for {normalized_path}"
+                                    )
+                                self._delete_confined(relative, cleanup.fileno(), cleanup_stat)
+                        except FileNotFoundError:
+                            pass
                     raise
                 output = {
                     "operation": operation,
@@ -392,7 +407,11 @@ class FilesystemToolAdapter(ToolAdapter):
         relative, normalized = self._validate_path(request.input["path"])
         try:
             with self._open_confined(relative, "read") as stream:
-                content = stream.read()
+                content = stream.read(MUTATION_PREIMAGE_MAX_BYTES + 1)
+                if len(content) > MUTATION_PREIMAGE_MAX_BYTES:
+                    raise FilesystemBoundaryError(
+                        f"mutation preimage exceeds {MUTATION_PREIMAGE_MAX_BYTES} bytes for {normalized}"
+                    )
                 mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
         except FileNotFoundError:
             return _FilesystemPreimage(path=normalized, exists=False, content=b"", mode=None)
