@@ -475,7 +475,7 @@ def test_mode_drift_is_rejected_by_compare_write(tmp_path: Path) -> None:
     original_mode = stat.S_IMODE(target.stat().st_mode)
 
     def change_mode(_path: Path, operation: str) -> None:
-        if operation == "compare_write_existing":
+        if operation == "compare_write":
             target.chmod(original_mode ^ stat.S_IXUSR)
 
     handler._filesystem_tool.adapter._before_open = change_mode
