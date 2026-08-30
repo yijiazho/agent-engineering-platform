@@ -228,7 +228,7 @@ def evaluate_patch(
         (
             {"path": item["path"], "value": item["value"]}
             for item in required_insertions
-            if not any(item["value"] in line for line in added_by_path.get(item["path"], ()))
+            if item["value"] not in "\n".join(added_by_path.get(item["path"], ()))
         ),
         key=lambda item: (item["path"].casefold(), item["path"], item["value"]),
     )
@@ -403,7 +403,7 @@ def _line_change_counts(content: bytes) -> tuple[int, int]:
 
 
 def _unpreserved_hunks(content: bytes) -> list[dict[str, int | str]]:
-    """Identify multi-line replacements with no unchanged source context."""
+    """Identify replacements that remove all or nearly all source hunk lines."""
 
     hunks: list[dict[str, int | str]] = []
     current: dict[str, int | str] | None = None
@@ -413,9 +413,11 @@ def _unpreserved_hunks(content: bytes) -> list[dict[str, int | str]]:
         if marker is not None and marker != "/dev/null":
             path = marker
         elif line.startswith("@@ "):
-            if current is not None and int(current["deletedLines"]) >= 2 and not current["contextLines"]:
+            if current is not None and _hunk_is_unpreserved(current):
                 hunks.append(current)
-            current = {"path": path or "", "deletedLines": 0, "addedLines": 0, "contextLines": 0}
+            match = re.match(r"^@@ -\d+(?:,(\d+))? ", line)
+            source_lines = int(match.group(1) or "1") if match else 0
+            current = {"path": path or "", "deletedLines": 0, "addedLines": 0, "contextLines": 0, "sourceLines": source_lines}
         elif current is not None:
             if line.startswith("-") and not line.startswith("---"):
                 current["deletedLines"] += 1
@@ -423,9 +425,18 @@ def _unpreserved_hunks(content: bytes) -> list[dict[str, int | str]]:
                 current["addedLines"] += 1
             elif line.startswith(" "):
                 current["contextLines"] += 1
-    if current is not None and int(current["deletedLines"]) >= 2 and not current["contextLines"]:
+    if current is not None and _hunk_is_unpreserved(current):
         hunks.append(current)
     return hunks
+
+
+def _hunk_is_unpreserved(hunk: Mapping[str, int | str]) -> bool:
+    deleted = int(hunk["deletedLines"])
+    context = int(hunk["contextLines"])
+    source = int(hunk["sourceLines"])
+    return deleted >= 2 and (
+        context == 0 or (deleted >= 5 and source > 0 and deleted / source >= 0.8)
+    )
 
 
 def _deleted_paths(content: bytes) -> list[str]:

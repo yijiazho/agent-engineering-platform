@@ -307,6 +307,14 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
                         "assumptions": ["The checkout is revision-bound."],
                         "risks": ["Validation may fail."],
                         "implementationSteps": ["Update src/app.py.", "Run tests."],
+                        "acceptanceCriteriaClassifications": [{
+                            "criterion": "The value is updated and tests pass.",
+                            "classification": "REQUIRED_INSERTION",
+                        }],
+                        "requiredInsertions": [
+                            {"path": "src/app.py", "value": "value = 2"}
+                        ],
+                        "unsupportedAcceptanceCriteria": [],
                     },
                     usage=ModelUsage(10, 10),
                     latency_ms=1,

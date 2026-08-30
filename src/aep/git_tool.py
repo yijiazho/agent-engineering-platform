@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 from time import monotonic, sleep
 from typing import Any, Protocol
 from uuid import uuid4
@@ -880,15 +881,27 @@ class _GitToolExecution(ToolExecution):
             )
             whitespace = None
             if check.exit_code == 0:
-                self._run(("apply", "--cached", "--"), deadline, stdin=self._patch)
-                try:
+                with tempfile.TemporaryDirectory(prefix="aep-git-index-") as directory:
+                    index_environment = {
+                        "GIT_INDEX_FILE": str(Path(directory) / "index")
+                    }
+                    self._run(
+                        ("read-tree", "HEAD"),
+                        deadline,
+                        environment=index_environment,
+                    )
+                    self._run(
+                        ("apply", "--cached", "--"),
+                        deadline,
+                        environment=index_environment,
+                        stdin=self._patch,
+                    )
                     whitespace = self._run(
                         ("diff", "--cached", "--check", "--"),
                         deadline,
+                        environment=index_environment,
                         accepted_exit_codes=(0, 1, 2),
                     )
-                finally:
-                    self._run(("reset", "--mixed", "HEAD", "--"), deadline)
             applicable = (
                 check.exit_code == 0
                 and whitespace is not None

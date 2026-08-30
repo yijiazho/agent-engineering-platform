@@ -144,8 +144,9 @@ def test_allowed_read_records_output_log_and_toolinvocation(tmp_path: Path) -> N
         "path": "src/message.txt",
         "content": "hello\n",
         "sizeBytes": 6,
-        "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
-    }
+            "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+            "mode": stat.S_IMODE(source.stat().st_mode),
+        }
     assert invocation["output"] == result.output
     assert invocation["logsAddress"] == result.logs_ref
     assert invocation["metrics"]["durationMs"] >= 0
@@ -192,6 +193,38 @@ def test_terminal_persistence_failure_restores_mutated_file(tmp_path: Path) -> N
 
     assert target.read_bytes() == b"old\n"
     assert stat.S_IMODE(target.stat().st_mode) == original_mode
+
+
+def test_terminal_persistence_compensation_deletes_new_file_confined(
+    tmp_path: Path,
+) -> None:
+    class FailingTerminalStore(InMemoryRuntimeObjectStore):
+        def update_status(self, *args, **kwargs):
+            raise RuntimeError("terminal persistence failed")
+
+    tool = FilesystemTool(tmp_path, FailingTerminalStore())
+    deleted: list[str] = []
+    original_delete = tool.adapter._delete_confined
+
+    def record_delete(relative, descriptor, checked_stat):
+        deleted.append(relative.as_posix())
+        return original_delete(relative, descriptor, checked_stat)
+
+    tool.adapter._delete_confined = record_delete  # type: ignore[method-assign]
+    mutation = request(
+        "compare_write",
+        "nested/new.txt",
+        content="new\n",
+        expectedExists=False,
+        expectedSha256=sha256(b"").hexdigest(),
+        expectedMode=None,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal persistence"):
+        invoke(tool, tool._store, mutation, suffix="newpersistfail123")
+
+    assert deleted == ["nested/new.txt"]
+    assert not (tmp_path / "nested/new.txt").exists()
 
 
 def test_allowed_write_is_authorized_before_mutation_and_records_evidence(

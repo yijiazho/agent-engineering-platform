@@ -93,7 +93,7 @@ FILESYSTEM_OUTPUT_SCHEMA: dict[str, Any] = {
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["operation", "path", "content", "sizeBytes", "sha256"],
+            "required": ["operation", "path", "content", "sizeBytes", "sha256", "mode"],
             "properties": {
                 "operation": {"const": "read"},
                 "path": {"type": "string"},
@@ -262,10 +262,9 @@ class FilesystemToolAdapter(ToolAdapter):
                     "sizeBytes": len(encoded),
                     "sha256": sha256(encoded).hexdigest(),
                 }
-                if "maxBytes" in request.input:
-                    output["mode"] = mode
+                output["mode"] = mode
             elif operation == "compare_delete":
-                with self._open_confined(relative, "compare_write_existing") as stream:
+                with self._open_confined(relative, "compare_delete") as stream:
                     current = stream.read()
                     current_stat = os.fstat(stream.fileno())
                     if sha256(current).hexdigest() != request.input["expectedSha256"]:
@@ -403,11 +402,11 @@ class FilesystemToolAdapter(ToolAdapter):
         relative, _ = self._validate_path(preimage.path)
         if not preimage.exists:
             try:
-                with self._open_confined(relative, "compare_write_existing"):
-                    pass
+                with self._open_confined(relative, "compare_delete") as stream:
+                    checked_stat = os.fstat(stream.fileno())
+                    self._delete_confined(relative, stream.fileno(), checked_stat)
             except FileNotFoundError:
                 return
-            (self._workspace / relative).unlink()
             return
         operation = "compare_write_existing"
         try:
@@ -528,7 +527,7 @@ class FilesystemToolAdapter(ToolAdapter):
             flags = os.O_NOFOLLOW
             if operation == "read":
                 flags |= os.O_RDONLY
-            elif operation == "compare_write_existing":
+            elif operation in {"compare_write_existing", "compare_delete"}:
                 flags |= os.O_RDWR
             elif operation == "compare_write_new":
                 flags |= os.O_RDWR | os.O_CREAT | os.O_EXCL
@@ -1005,6 +1004,7 @@ def _windows_nt_open_relative(
     file_synchronous_io_nonalert = 0x00000020
     generic_read = 0x80000000
     generic_write = 0x40000000
+    delete_access = 0x00010000
     obj_case_insensitive = 0x00000040
     synchronize = 0x00100000
 
@@ -1035,9 +1035,11 @@ def _windows_nt_open_relative(
         access = generic_read | synchronize
         if operation != "read":
             access |= generic_write
+        if operation == "compare_delete":
+            access |= delete_access
         disposition = (
             file_open
-            if operation in {"read", "compare_write_existing"}
+            if operation in {"read", "compare_write_existing", "compare_delete"}
             else file_create if operation == "compare_write_new" else file_open_if
         )
         options = (

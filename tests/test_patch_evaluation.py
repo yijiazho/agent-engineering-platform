@@ -307,6 +307,40 @@ def test_balanced_whole_file_rewrite_requires_preserved_context(repository) -> N
     assert result["evidence"]["checks"]["surroundingContentPreservation"] is False
 
 
+def test_near_total_balanced_rewrite_with_one_context_line_is_unpreserved() -> None:
+    from aep.patch_evaluation import _unpreserved_hunks
+
+    deleted = "".join(f"-old {value}\n" for value in range(9))
+    added = "".join(f"+new {value}\n" for value in range(9))
+    patch = (
+        "--- a/tracked.txt\n+++ b/tracked.txt\n@@ -1,10 +1,10 @@\n"
+        + deleted + added + " retained\n"
+    ).encode()
+
+    assert _unpreserved_hunks(patch) == [{
+        "path": "tracked.txt",
+        "deletedLines": 9,
+        "addedLines": 9,
+        "contextLines": 1,
+        "sourceLines": 10,
+    }]
+
+
+def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
+    from aep.patch_evaluation import _added_text_by_path
+
+    patch = b"""--- a/tracked.txt
++++ b/tracked.txt
+@@ -1 +1,2 @@
+-original
++first line
++second line
+"""
+
+    added = _added_text_by_path(patch)
+    assert "first line\nsecond line" in "\n".join(added["tracked.txt"])
+
+
 def test_diff_helpers_preserve_paths_with_spaces() -> None:
     from aep.patch_evaluation import _added_text_by_path, _deleted_paths, _replaced_paths
 

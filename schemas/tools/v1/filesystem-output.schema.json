@@ -6,7 +6,7 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operation", "path", "content", "sizeBytes", "sha256"],
+      "required": ["operation", "path", "content", "sizeBytes", "sha256", "mode"],
       "properties": {
         "operation": { "const": "read" },
         "path": { "type": "string" },

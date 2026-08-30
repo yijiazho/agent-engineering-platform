@@ -33,6 +33,7 @@ PLAN_SCHEMA = {
         "assumptions",
         "risks",
         "implementationSteps",
+        "acceptanceCriteriaClassifications",
     ],
     "properties": {
         "intendedFiles": {
@@ -58,6 +59,18 @@ PLAN_SCHEMA = {
             "items": {"type": "string", "minLength": 1},
             "minItems": 1,
         },
+        "acceptanceCriteriaClassifications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["criterion", "classification"],
+            },
+            "minItems": 1,
+        },
+        "unsupportedAcceptanceCriteria": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+        },
     },
 }
 
@@ -70,6 +83,11 @@ VALID_PLAN = {
         "Read the issue analysis and repository context.",
         "Implement the handler and its tests.",
     ],
+    "acceptanceCriteriaClassifications": [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "UNSUPPORTED",
+    }],
+    "unsupportedAcceptanceCriteria": ["Persist an evaluated plan."],
 }
 
 
@@ -143,6 +161,18 @@ def test_missing_required_plan_section_is_an_evaluation_failure() -> None:
     evaluation = store.get(execution["evaluationResultIds"][0])
     assert evaluation["outcome"] == "FAIL"
     assert any(error["path"] == "$.risks" for error in evaluation["evidence"]["errors"])
+
+
+def test_plan_must_classify_every_analyzed_acceptance_criterion() -> None:
+    output = dict(VALID_PLAN)
+    output["acceptanceCriteriaClassifications"] = []
+    store, handler, task, _adapter = setup_handler(output)
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.CONFIGURATION
+    assert "classify every analyzed acceptance criterion" in result.message
 
 
 def test_invalid_non_object_output_is_rejected_without_artifact() -> None:

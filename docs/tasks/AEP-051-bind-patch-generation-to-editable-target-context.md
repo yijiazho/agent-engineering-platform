@@ -198,7 +198,8 @@ missing source material or prove compliance before mutation.
 * Filesystem mutations and terminal ToolInvocation evidence are atomic: an
   evidence-persistence failure restores prior bytes and file mode before it
   escapes, compare mutations bind both digest and mode, deletion stays relative
-  to a pinned parent handle, and multi-file rollback preserves the original mode.
+  to a pinned parent handle (including compensation), Windows delete handles
+  request DELETE access, and multi-file rollback preserves the original mode.
 * A no-change disposition is accepted only when a path-bound required value is
   present in freshly materialized exact content. Generated NUL content, checkout
   HEAD drift, and ToolInvocation attachment failures fail before publication. An
@@ -226,8 +227,11 @@ missing source material or prove compliance before mutation.
   deletion remain representable and testable.
 * Final change-compliance evidence evaluates deterministic criteria such as
   allowed paths, required insertions, forbidden unrelated changes, preservation
-  of surrounding content, and `git diff --check`. Unsupported semantic criteria
-  remain visible and cannot be silently counted as passed.
+  of surrounding content, and `git diff --check` through an isolated temporary
+  index. Multiline insertions are matched as ordered blocks, near-total rewrites
+  fail even with token context, and every analyzed criterion is classified
+  exactly once. Unsupported semantic criteria remain visible and cannot be
+  silently counted as passed.
 * EvaluateAcceptance distinguishes evidence completeness from change
   correctness. A complete set of revision-consistent artifacts with a failed or
   missing change-compliance result produces `FAIL`.
