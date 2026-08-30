@@ -457,6 +457,8 @@ def test_committed_head_drift_fails_before_editable_read(tmp_path: Path) -> None
     store, handler, task, _artifacts, workspace, model = setup_handler(
         tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
     )
+    git(workspace, "config", "user.name", "AEP Test")
+    git(workspace, "config", "user.email", "aep@example.test")
     (workspace / "src/app.py").write_text("descendant\n", encoding="utf-8")
     git(workspace, "add", "src/app.py")
     git(workspace, "commit", "-m", "drift")
