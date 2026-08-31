@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import json
 from typing import Any
 
 from aep.analyze_issue import AnalyzeIssueContractError, AnalyzeIssueTaskHandler
@@ -21,6 +22,65 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
     artifact_type = "IMPLEMENTATION_PLAN"
     artifact_actor = "build-implementation-plan-task-handler"
     runtime_id_namespace = "build-implementation-plan"
+
+    def _run_schema_evaluation(self, *, content: Any, **kwargs: Any):
+        self._validate_acceptance_criteria_accounting(
+            kwargs["task_execution"], content
+        )
+        return super()._run_schema_evaluation(content=content, **kwargs)
+
+    def _validate_acceptance_criteria_accounting(
+        self, task_execution: Mapping[str, Any], plan: Any
+    ) -> None:
+        if not isinstance(plan, Mapping):
+            return
+        dependencies = task_execution.get("dependencyTaskExecutionIds", ())
+        if not isinstance(dependencies, Sequence) or not dependencies:
+            return
+        artifacts = self._artifact_store.list_by_task_execution(str(dependencies[0]))
+        analyses = [item for item in artifacts if item.get("artifactType") == "ISSUE_ANALYSIS"]
+        if len(analyses) != 1:
+            return
+        analysis = json.loads(
+            self._artifact_store.get_content(str(analyses[0]["id"])).decode("utf-8")
+        )
+        criteria = analysis.get("acceptanceCriteria", ())
+        classifications = plan.get("acceptanceCriteriaClassifications", ())
+        classified = [
+            item.get("criterion") for item in classifications if isinstance(item, Mapping)
+        ] if isinstance(classifications, Sequence) and not isinstance(classifications, (str, bytes)) else []
+        if (
+            not isinstance(criteria, Sequence)
+            or isinstance(criteria, (str, bytes))
+            or sorted(classified) != sorted(criteria)
+            or len(classified) != len(set(classified))
+        ):
+            raise BuildImplementationPlanContractError(
+                "implementation plan must classify every analyzed acceptance criterion exactly once"
+            )
+        unsupported = set(plan.get("unsupportedAcceptanceCriteria", ()))
+        insertions = {
+            (item.get("path"), item.get("value"))
+            for item in plan.get("requiredInsertions", ())
+            if isinstance(item, Mapping)
+        }
+        for item in classifications:
+            disposition = item.get("classification")
+            criterion = item.get("criterion")
+            if disposition == "UNSUPPORTED" and criterion not in unsupported:
+                raise BuildImplementationPlanContractError(
+                    "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"
+                )
+            if disposition == "REQUIRED_INSERTION" and (
+                not isinstance(item.get("requiredInsertion"), Mapping)
+                or (
+                    item["requiredInsertion"].get("path"),
+                    item["requiredInsertion"].get("value"),
+                ) not in insertions
+            ):
+                raise BuildImplementationPlanContractError(
+                    "each required-insertion classification must bind its own insertion evidence"
+                )
 
     def _context_arguments(
         self, task_execution: Mapping[str, Any], workflow: Mapping[str, Any]

@@ -559,7 +559,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 50 implementation tasks are complete.
+contracts are established, and 43 of the 51 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -632,6 +632,11 @@ Implemented foundations currently include:
   limits, bounded relevance retrieval, cross-category source-slice
   deduplication, safe category accounting, and provenance for repository
   knowledge, Resources, events, policies, and prior artifacts.
+* Revision-bound GeneratePatch editable-target context with exact UTF-8
+  preimages, digest-bound model replacements, mandatory planned-file
+  dispositions, explicit absent preimages for planned creations, and
+  plan-authorized destructive-change evidence. Candidate-file
+  discovery remains bounded metadata for analysis and planning.
 * Authenticated, repository-bound GitHub issue webhook ingress with shared-store
   deduplication, an atomic durable reconciliation outbox, restart-safe replay,
   and redacted lifecycle evidence.
@@ -649,7 +654,7 @@ Implemented foundations currently include:
 
 The repository now aligns `publication-evidence:1.1.0` with the canonical
 runtime evidence contract through `create-pull-request:1.2.0` and
-`issue-to-pr:1.3.0`. Credential-free local and source/published exact-image
+`issue-to-pr:1.12.0`. Credential-free local and source/published exact-image
 verification pass. The subsequent live run passed validation, acceptance, and
 Publication Policy but exposed AEP-049 at authenticated push. The corrected
 helper now uses the running service's verified absolute interpreter, private

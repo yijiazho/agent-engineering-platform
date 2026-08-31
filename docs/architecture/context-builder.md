@@ -203,6 +203,19 @@ ContextPackage
 
 The ContextPackage is immutable.
 
+For `GeneratePatch`, `editable-targets` is a required context category distinct
+from relevance-ranked `candidate-files`. After the implementation plan passes
+evaluation, the trusted Context Builder reads every normalized `intendedFiles`
+path from the revision-bound execution checkout. Each target appears exactly
+once, in path order, with its complete UTF-8 preimage, SHA-256 content address,
+byte count, token estimate, repository revision, and source provenance.
+Editable targets are mandatory budget inputs. An intended path absent at the
+bound revision is represented explicitly as an `ABSENT` preimage with empty
+content and the SHA-256 digest of empty bytes so a planned file creation remains
+possible and is still race-checked before mutation. Unreadable, non-text,
+duplicate, stale, or over-budget targets fail before model invocation. No
+planned target is silently pruned.
+
 It contains:
 
 * selected information

@@ -110,8 +110,8 @@ def test_context_and_agent_boundaries_are_explicit(
     assert "toolRefs" not in agents["issue-analyzer"]
     assert "toolRefs" not in agents["planner"]
     assert agents["code-generator"]["toolRefs"] == [
-        {"kind": "Tool", "name": "filesystem", "version": "1.0.0"},
-        {"kind": "Tool", "name": "git", "version": "1.0.0"},
+        {"kind": "Tool", "name": "filesystem", "version": "1.7.0"},
+        {"kind": "Tool", "name": "git", "version": "1.3.0"},
     ]
     assert "toolRefs" not in agents["pr-writer"]
     for agent in agents.values():
@@ -144,7 +144,7 @@ def test_capabilities_fail_closed_and_publication_is_exclusive(
 ) -> None:
     tasks = {item.name: item.data["spec"] for item in resources.by_kind("Task")}
     assert tasks["generate-patch"]["policies"] == [
-        {"kind": "Policy", "name": "workspace-write", "version": "1.0.0"}
+        {"kind": "Policy", "name": "workspace-write", "version": "1.1.0"}
     ]
     assert tasks["run-validation"]["policies"] == [
         {
@@ -167,6 +167,7 @@ def test_capabilities_fail_closed_and_publication_is_exclusive(
         for capability in rule.get("capabilities", [])
     }
     assert allowed == {
+        "filesystem.read",
         "filesystem.write",
         "git.read",
         "docker.run",

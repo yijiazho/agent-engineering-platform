@@ -1,7 +1,7 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Policy",
-  "metadata": {"name": "workspace-write", "version": "1.0.0"},
+  "metadata": {"name": "workspace-write", "version": "1.1.0"},
   "spec": {"type": "pre-execution-capability", "rules": [
-    {"effect": "allow", "capabilities": ["filesystem.write", "git.read"], "reason": "GeneratePatch may write only plan-selected paths and inspect the resulting diff."}
+    {"effect": "allow", "capabilities": ["filesystem.read", "filesystem.write", "git.read"], "reason": "Context Builder may read revision-bound edit targets; GeneratePatch may compare-write only plan-selected paths and inspect the resulting diff."}
   ]}
 }

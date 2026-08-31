@@ -264,6 +264,20 @@ evaluator performs neither LLM reasoning nor a Publication Policy decision.
 
 ## 9.2 Patch Evaluation
 
+Patch Evaluation distinguishes path authorization from required-change
+completion. Its immutable evidence includes one disposition per planned file,
+line-addition and deletion counts, replacement ratio, path-bound required insertions, and
+deterministic surrounding-content preservation checks. A multi-line hunk that
+removes or replaces content without unchanged context, an absent planned file,
+or an unexplained deletion-heavy rewrite is a failure even when the patch
+applies and every path is allowed. The evaluated
+implementation plan may list a subset of `intendedFiles` in
+`deletionAuthorizedFiles` only when deletion or substantial removal is an
+explicit issue requirement; that immutable signal permits the corresponding
+deletion-heavy diff while remaining visible in EvaluationResult evidence.
+Unsupported semantic acceptance criteria are recorded explicitly and prevent
+the change-compliance result from passing.
+
 For patch artifacts, deterministic evaluation first verifies the
 GeneratedArtifact content address and immutable repository revision. It then
 uses the repository-bound Git adapter's non-mutating applicability check and
@@ -484,7 +498,7 @@ and explanation. The evaluator does not push Git state or invoke a publication
 provider.
 
 The self-hosting immutable graph is `publication-evidence:1.1.0` referenced by
-`create-pull-request:1.2.0`, which is referenced by `issue-to-pr:1.3.0`.
+`create-pull-request:1.2.0`, which is referenced by `issue-to-pr:1.12.0`.
 Publication Policy is evaluated before the handler creates a local commit. An
 allow is followed by distinct `git.push` and `github.create_pr` capability
 decisions immediately before their corresponding external mutations.

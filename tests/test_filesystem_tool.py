@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 from threading import Event, Lock
 
@@ -58,7 +60,11 @@ def request(
                 else "agentinvocation-123456789abc"
             ),
         ),
-        capabilities=(f"filesystem.{operation}",),
+        capabilities=(
+            "filesystem.write"
+            if operation in {"compare_write", "compare_delete"}
+            else f"filesystem.{operation}",
+        ),
         timeout_ms=1000,
         correlation={
             "traceId": "trace-filesystem-123",
@@ -138,13 +144,134 @@ def test_allowed_read_records_output_log_and_toolinvocation(tmp_path: Path) -> N
         "path": "src/message.txt",
         "content": "hello\n",
         "sizeBytes": 6,
-        "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
-    }
+            "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+            "mode": stat.S_IMODE(source.stat().st_mode),
+        }
     assert invocation["output"] == result.output
     assert invocation["logsAddress"] == result.logs_ref
     assert invocation["metrics"]["durationMs"] >= 0
     assert tool.adapter.get_log(result.logs_ref)["status"] == "SUCCEEDED"
     assert store.get(invocation["id"]) == invocation
+
+
+def test_read_stops_at_the_declared_byte_limit(tmp_path: Path) -> None:
+    (tmp_path / "large.txt").write_bytes(b"abcdef")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    result, _ = invoke(
+        tool, store, request("read", "large.txt", maxBytes=5), suffix="boundedread123456"
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+
+
+def test_mutation_preimage_capture_is_bounded(tmp_path: Path) -> None:
+    target = tmp_path / "large.txt"
+    target.write_bytes(b"x" * 128_001)
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    mutation = request("write", "large.txt", content="replacement")
+
+    result, _ = invoke(tool, store, mutation, suffix="boundedmutation12")
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert target.stat().st_size == 128_001
+
+
+def test_terminal_persistence_failure_restores_mutated_file(tmp_path: Path) -> None:
+    target = tmp_path / "script.sh"
+    target.write_bytes(b"old\n")
+    target.chmod(0o755)
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+
+    class FailingTerminalStore(InMemoryRuntimeObjectStore):
+        def update_status(self, *args, **kwargs):
+            raise RuntimeError("terminal persistence failed")
+
+    store = FailingTerminalStore()
+    tool = FilesystemTool(tmp_path, store)
+    mutation = request(
+        "compare_write",
+        "script.sh",
+        content="new\n",
+        expectedExists=True,
+        expectedSha256=sha256(b"old\n").hexdigest(),
+        expectedMode=original_mode,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal persistence"):
+        invoke(tool, store, mutation, suffix="persistfail123456")
+
+    assert target.read_bytes() == b"old\n"
+    assert stat.S_IMODE(target.stat().st_mode) == original_mode
+
+
+def test_terminal_persistence_compensation_deletes_new_file_confined(
+    tmp_path: Path,
+) -> None:
+    class FailingTerminalStore(InMemoryRuntimeObjectStore):
+        def update_status(self, *args, **kwargs):
+            raise RuntimeError("terminal persistence failed")
+
+    tool = FilesystemTool(tmp_path, FailingTerminalStore())
+    deleted: list[str] = []
+    original_delete = tool.adapter._delete_confined
+
+    def record_delete(relative, descriptor, checked_stat):
+        deleted.append(relative.as_posix())
+        return original_delete(relative, descriptor, checked_stat)
+
+    tool.adapter._delete_confined = record_delete  # type: ignore[method-assign]
+    mutation = request(
+        "compare_write",
+        "nested/new.txt",
+        content="new\n",
+        expectedExists=False,
+        expectedSha256=sha256(b"").hexdigest(),
+        expectedMode=None,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal persistence"):
+        invoke(tool, tool._store, mutation, suffix="newpersistfail123")
+
+    assert deleted == ["nested/new.txt"]
+    assert not (tmp_path / "nested/new.txt").exists()
+
+
+def test_failed_new_compare_write_cleanup_is_handle_confined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    deleted: list[str] = []
+    original_delete = tool.adapter._delete_confined
+
+    def record_delete(relative, descriptor, checked_stat):
+        deleted.append(relative.as_posix())
+        return original_delete(relative, descriptor, checked_stat)
+
+    tool.adapter._delete_confined = record_delete  # type: ignore[method-assign]
+    monkeypatch.setattr(os, "fsync", lambda _descriptor: (_ for _ in ()).throw(OSError("disk")))
+
+    result, _invocation = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "nested/new.txt",
+            content="new\n",
+            expectedExists=False,
+            expectedSha256=sha256(b"").hexdigest(),
+            expectedMode=None,
+        ),
+        suffix="failednewwrite12",
+    )
+
+    assert result.status is ToolResultStatus.FAILED
+    assert deleted == ["nested/new.txt"]
+    assert not (tmp_path / "nested/new.txt").exists()
 
 
 def test_allowed_write_is_authorized_before_mutation_and_records_evidence(
@@ -170,6 +297,35 @@ def test_allowed_write_is_authorized_before_mutation_and_records_evidence(
     assert evidence[1]["decision"] == "ALLOW"
     assert invocation["capabilities"] == ["filesystem.write"]
     assert invocation["requestFingerprint"].startswith("sha256:")
+
+
+def test_compare_write_requires_preconditions_and_checks_the_opened_file(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    target = tmp_path / "target.txt"
+    target.write_text("before", encoding="utf-8")
+    missing = request("compare_write", "target.txt", content="after")
+    result, _ = invoke(tool, store, missing)
+    assert result.failure_class is ToolFailureClass.VALIDATION
+
+    expected = sha256(b"before").hexdigest()
+    changed, _ = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "target.txt",
+            content="after",
+            expectedExists=True,
+            expectedSha256=expected,
+            expectedMode=stat.S_IMODE(target.stat().st_mode),
+        ),
+        suffix="compare-write-123456",
+    )
+    assert changed.status is ToolResultStatus.SUCCEEDED
+    assert target.read_text(encoding="utf-8") == "after"
 
 
 def test_denied_write_does_not_mutate_workspace(tmp_path: Path) -> None:
@@ -392,6 +548,117 @@ def test_invalid_input_is_schema_failure_and_is_persisted(tmp_path: Path) -> Non
     assert invocation["failureClass"] == "VALIDATION"
     assert invocation["failure"]["class"] == "CONFIGURATION"
     assert not (tmp_path / "missing-content.txt").exists()
+
+
+def test_invalid_mutation_path_is_terminal_boundary_evidence(tmp_path: Path) -> None:
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    result, invocation = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "../outside.txt",
+            content="escape",
+            expectedExists=False,
+            expectedSha256=sha256(b"").hexdigest(),
+            expectedMode=None,
+        ),
+        suffix="invalidcapture1234",
+    )
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert invocation["status"] == "FAILED"
+    assert invocation["failureClass"] == "BOUNDARY"
+
+
+def test_missing_parent_race_cannot_escape_confined_creation(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    outside = tmp_path_factory.mktemp("outside-missing-parent")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+
+    def race_parent(_path: Path, _operation: str) -> None:
+        target = tmp_path / "new-parent"
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(target), str(outside)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert completed.returncode == 0, completed.stderr
+        else:
+            target.symlink_to(outside, target_is_directory=True)
+
+    tool.adapter._before_open = race_parent
+    result, _ = invoke(
+        tool,
+        store,
+        request(
+            "compare_write",
+            "new-parent/file.txt",
+            content="escape",
+            expectedExists=False,
+            expectedSha256=sha256(b"").hexdigest(),
+            expectedMode=None,
+        ),
+        suffix="parentrace123456",
+    )
+
+    assert result.failure_class is ToolFailureClass.BOUNDARY
+    assert not (outside / "file.txt").exists()
+
+
+def test_compare_delete_reopens_parent_confined_and_checks_entry_identity(
+    tmp_path: Path, tmp_path_factory
+) -> None:
+    parent = tmp_path / "nested"
+    parent.mkdir()
+    target = parent / "target.txt"
+    target.write_bytes(b"inside")
+    outside = tmp_path_factory.mktemp("outside-delete")
+    outside_target = outside / "target.txt"
+    outside_target.write_bytes(b"outside")
+    if os.name != "nt" and not _can_create_symlink(tmp_path, outside):
+        pytest.skip("symlink creation is unavailable")
+    store = InMemoryRuntimeObjectStore()
+    tool = FilesystemTool(tmp_path, store)
+    original_delete = tool.adapter._delete_confined
+
+    def replace_parent(relative, descriptor, checked_stat):
+        target.unlink()
+        parent.rmdir()
+        if os.name == "nt":
+            completed = subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(parent), str(outside)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert completed.returncode == 0, completed.stderr
+        else:
+            parent.symlink_to(outside, target_is_directory=True)
+        return original_delete(relative, descriptor, checked_stat)
+
+    tool.adapter._delete_confined = replace_parent  # type: ignore[method-assign]
+    result, _ = invoke(
+        tool,
+        store,
+        request(
+            "compare_delete",
+            "nested/target.txt",
+            expectedExists=True,
+            expectedSha256=sha256(b"inside").hexdigest(),
+            expectedMode=stat.S_IMODE(target.stat().st_mode),
+        ),
+        suffix="deleterace123456",
+    )
+
+    assert result.failure_class in {ToolFailureClass.BOUNDARY, ToolFailureClass.IO}
+    assert outside_target.read_bytes() == b"outside"
 
 
 def test_missing_file_and_io_failures_are_distinct(tmp_path: Path) -> None:

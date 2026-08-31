@@ -6,13 +6,14 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["operation", "path", "content", "sizeBytes", "sha256"],
+      "required": ["operation", "path", "content", "sizeBytes", "sha256", "mode"],
       "properties": {
         "operation": { "const": "read" },
         "path": { "type": "string" },
         "content": { "type": "string" },
         "sizeBytes": { "type": "integer", "minimum": 0 },
-        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 4095 }
       }
     },
     {
@@ -20,7 +21,7 @@
       "additionalProperties": false,
       "required": ["operation", "path", "bytesWritten", "sha256"],
       "properties": {
-        "operation": { "const": "write" },
+        "operation": { "enum": ["write", "compare_write", "compare_delete"] },
         "path": { "type": "string" },
         "bytesWritten": { "type": "integer", "minimum": 0 },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import os
 from pathlib import Path
 import subprocess
+import stat
 
+import pytest
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
@@ -15,7 +18,7 @@ from aep.filesystem_tool import (
     FILESYSTEM_OUTPUT_SCHEMA,
     FilesystemTool,
 )
-from aep.generate_patch import GeneratePatchTaskHandler
+from aep.generate_patch import GeneratePatchContractError, GeneratePatchTaskHandler
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.git_tool import (
     GIT_INPUT_SCHEMA,
@@ -34,7 +37,7 @@ from aep.repository_knowledge import (
     SourceProvenance,
 )
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import InMemoryRuntimeObjectStore, RuntimeStoreError
 from aep.task_execution import FailureClass
 
 
@@ -55,14 +58,14 @@ CHANGE_SCHEMA = {
     "properties": {
         "changes": {
             "type": "array",
-            "minItems": 1,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["path", "content"],
+                "required": ["path", "content", "preimageSha256"],
                 "properties": {
                     "path": {"type": "string", "minLength": 1},
                     "content": {"type": "string"},
+                    "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                 },
             },
         }
@@ -128,15 +131,23 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
 
     execution = store.get(TASK_EXECUTION_ID)
-    assert len(execution["toolInvocationIds"]) == 3
+    assert len(execution["toolInvocationIds"]) == 7
     invocations = [store.get(item) for item in execution["toolInvocationIds"]]
     assert [item["toolRef"]["name"] for item in invocations] == [
+        "git",
+        "filesystem",
+        "git",
+        "filesystem",
         "filesystem",
         "git",
         "git",
     ]
     assert [item["input"]["operation"] for item in invocations] == [
-        "write",
+        "diff",
+        "read",
+        "read_blob",
+        "read",
+        "compare_write",
         "diff",
         "check_patch",
     ]
@@ -145,7 +156,7 @@ def test_success_persists_patch_changed_files_tool_evidence_and_evaluation(
     evaluation = store.get(execution["evaluationResultIds"][0])
     artifact = artifact_store.get(execution["generatedArtifactIds"][0])
     assert evaluation["outcome"] == "PASS"
-    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[2]["id"]
+    assert evaluation["evidence"]["git"]["toolInvocationId"] == invocations[6]["id"]
     assert evaluation["target"] == {"type": "GeneratedArtifact", "id": artifact["id"]}
     assert artifact["artifactType"] == "PATCH"
     assert artifact["changedFiles"] == ["src/app.py"]
@@ -189,7 +200,7 @@ def test_disallowed_model_path_is_rejected_before_any_workspace_mutation(
     assert "outside IMPLEMENTATION_PLAN.intendedFiles" in result.message
     assert not (workspace / "private/secret.txt").exists()
     execution = store.get(TASK_EXECUTION_ID)
-    assert "toolInvocationIds" not in execution
+    assert [store.get(item)["input"]["operation"] for item in execution["toolInvocationIds"]] == ["diff", "read", "read_blob"]
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
@@ -208,7 +219,7 @@ def test_denied_filesystem_capability_records_denial_without_writing(
     assert result.failure_class is FailureClass.POLICY
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
     execution = store.get(TASK_EXECUTION_ID)
-    invocation = store.get(execution["toolInvocationIds"][0])
+    invocation = store.get(execution["toolInvocationIds"][1])
     assert invocation["resultStatus"] == "DENIED"
     assert invocation["failure"]["class"] == "POLICY"
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
@@ -264,10 +275,10 @@ def test_filesystem_tool_failure_is_classified_and_persisted(tmp_path: Path) -> 
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
-    assert result.failure_class is FailureClass.PERMANENT
-    assert "Filesystem write" in result.message
+    assert result.failure_class is FailureClass.CONFIGURATION
+    assert "could not be materialized" in result.message
     assert not (workspace / "src/missing/app.py").exists()
-    invocation = store.get(store.get(TASK_EXECUTION_ID)["toolInvocationIds"][0])
+    invocation = store.get(store.get(TASK_EXECUTION_ID)["toolInvocationIds"][1])
     assert invocation["status"] == "FAILED"
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
@@ -287,6 +298,258 @@ def test_missing_prior_plan_fails_before_model_or_tools(tmp_path: Path) -> None:
     assert adapter.requests == []
 
 
+def test_planned_new_file_uses_absent_preimage_and_is_created(tmp_path: Path) -> None:
+    empty_digest = sha256(b"").hexdigest()
+    store, handler, task, artifact_store, workspace, adapter = setup_handler(
+        tmp_path,
+        {"changes": [{
+            "path": "src/new_test.py",
+            "content": "def test_new():\n    assert True\n",
+            "preimageSha256": empty_digest,
+        }]},
+        intended_files=["src/new_test.py"],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    editable = next(
+        item
+        for item in adapter.requests[0].input["contextPackage"]["elements"]
+        if item["type"] == "editable-target"
+    )
+    assert editable["content"]["preimageState"] == "ABSENT"
+    assert editable["content"]["exists"] is False
+    assert editable["content"]["content"] == ""
+    assert editable["content"]["preimageSha256"] == empty_digest
+    assert (workspace / "src/new_test.py").read_text(encoding="utf-8") == (
+        "def test_new():\n    assert True\n"
+    )
+    execution = store.get(TASK_EXECUTION_ID)
+    reads = [
+        store.get(item)
+        for item in execution["toolInvocationIds"]
+        if store.get(item)["input"]["operation"] == "read"
+    ]
+    assert len(reads) == 2
+    assert all(item["toolRef"]["version"] == "1.0.0" for item in reads)
+    assert [item["failure"]["class"] for item in reads] == ["PERMANENT", "PERMANENT"]
+    assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID)
+
+
+def test_planned_new_file_creates_missing_parent_directories(tmp_path: Path) -> None:
+    empty_digest = sha256(b"").hexdigest()
+    store, handler, task, _artifacts, workspace, _adapter = setup_handler(
+        tmp_path,
+        {"changes": [{
+            "path": "src/generated/new_test.py",
+            "content": "def test_new():\n    assert True\n",
+            "preimageSha256": empty_digest,
+        }]},
+        intended_files=["src/generated/new_test.py"],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    assert (workspace / "src/generated/new_test.py").read_text(encoding="utf-8")
+
+
+def test_dirty_checkout_fails_before_editable_reads_or_model_invocation(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    (workspace / "src/app.py").write_text("dirty\n", encoding="utf-8")
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+def test_initial_editable_read_must_match_recorded_git_blob(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+
+    def race_read(_path: Path, operation: str) -> None:
+        if operation == "read":
+            (workspace / "src/app.py").write_text("raced secret\n", encoding="utf-8")
+
+    handler._filesystem_tool.adapter._before_open = race_read
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "does not match the recorded Git revision" in result.message
+    assert model.requests == []
+
+
+def test_ignored_planned_file_fails_before_editable_read(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "ignored.env", "content": "safe\n"}]},
+        intended_files=["ignored.env"],
+    )
+    (workspace / ".git/info/exclude").write_text("ignored.env\n", encoding="utf-8")
+    (workspace / "ignored.env").write_text("SECRET=value\n", encoding="utf-8")
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+@pytest.mark.parametrize(
+    "path", ["src/./app.py", "src//app.py", ".git", ".git/config", ".GIT/config"]
+)
+def test_noncanonical_planned_path_fails_before_model(tmp_path: Path, path: str) -> None:
+    store, handler, task, _artifacts, _workspace, model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": path, "content": "value = 2\n"}]},
+        intended_files=[path],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "normalized repository-relative" in result.message
+    assert model.requests == []
+
+
+def test_utf8_decodable_binary_target_is_rejected(tmp_path: Path) -> None:
+    store, handler, _task, _artifacts, workspace, _model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    (workspace / "src/app.py").write_bytes(b"text\x00binary")
+
+    with pytest.raises(GeneratePatchContractError, match="binary NUL"):
+        handler._read_editable_targets(
+            task_execution=store.get(TASK_EXECUTION_ID),
+            repository_revision=store.get(WORKFLOW_ID)["repositoryRevision"],
+            paths=("src/app.py",),
+            tool_ref=ref("Tool", "filesystem"),
+        )
+
+
+def test_generated_binary_content_is_rejected_before_mutation(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "content": "text\x00binary"}]},
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "binary NUL" in result.message
+    assert (workspace / "src/app.py").read_bytes() == b"value = 1\n"
+
+
+def test_no_change_requires_exact_content_evidence(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, _workspace, model = setup_handler(
+        tmp_path,
+        {"changes": []},
+        no_change_files=["src/app.py"],
+        required_insertions=[],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "not deterministically satisfied" in result.message
+    assert model.requests == []
+
+
+def test_no_change_accepts_required_text_present_in_exact_content(tmp_path: Path) -> None:
+    store, handler, task, artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": []},
+        no_change_files=["src/app.py"],
+        required_insertions=[{"path": "src/app.py", "value": "value = 1"}],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    execution = store.get(TASK_EXECUTION_ID)
+    evaluation = store.get(execution["evaluationResultIds"][0])
+    artifact = artifacts.get(execution["generatedArtifactIds"][0])
+    assert evaluation["outcome"] == "PASS"
+    assert evaluation["evidence"]["noChangeFileDispositions"] == [
+        {"path": "src/app.py", "disposition": "NO_CHANGE"}
+    ]
+    assert evaluation["evidence"]["git"]["status"] == "NOT_RUN"
+    assert artifact["changedFiles"] == []
+    assert artifacts.get_content(artifact["id"]) == b""
+
+
+def test_mode_drift_is_rejected_by_compare_write(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("Windows does not expose POSIX executable mode changes")
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    target = workspace / "src/app.py"
+    original_mode = stat.S_IMODE(target.stat().st_mode)
+
+    def change_mode(_path: Path, operation: str) -> None:
+        if operation == "compare_write":
+            target.chmod(original_mode ^ stat.S_IXUSR)
+
+    handler._filesystem_tool.adapter._before_open = change_mode
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "Filesystem write" in result.message
+    assert target.read_bytes() == b"value = 1\n"
+
+
+def test_committed_head_drift_fails_before_editable_read(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    git(workspace, "config", "user.name", "AEP Test")
+    git(workspace, "config", "user.email", "aep@example.test")
+    (workspace / "src/app.py").write_text("descendant\n", encoding="utf-8")
+    git(workspace, "add", "src/app.py")
+    git(workspace, "commit", "-m", "drift")
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "clean checkout" in result.message
+    assert model.requests == []
+
+
+def test_attachment_failure_rolls_back_successful_write(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path, {"changes": [{"path": "src/app.py", "content": "value = 2\n"}]}
+    )
+    original_update = store.update_status
+    failed = False
+
+    def fail_write_attachment(object_id, status, **kwargs):
+        nonlocal failed
+        changes = kwargs.get("changes", {})
+        if object_id == TASK_EXECUTION_ID and "toolInvocationIds" in changes and not failed:
+            ids = changes["toolInvocationIds"]
+            if any(
+                (store.get(value) or {}).get("input", {}).get("operation")
+                == "compare_write"
+                for value in ids
+            ):
+                failed = True
+                raise RuntimeStoreError("attachment checkpoint failed")
+        return original_update(object_id, status, **kwargs)
+
+    store.update_status = fail_write_attachment  # type: ignore[method-assign]
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert (workspace / "src/app.py").read_bytes() == b"value = 1\n"
+
+
 def setup_handler(
     tmp_path: Path,
     output: object,
@@ -295,6 +558,8 @@ def setup_handler(
     authorize_git=lambda _request: True,
     intended_files: list[str] | None = None,
     publish_plan: bool = True,
+    no_change_files: list[str] | None = None,
+    required_insertions: list[dict[str, str]] | None = None,
 ):
     workspace, evaluation_workspace, revision = repositories(tmp_path)
     resources, task = resource_collection()
@@ -307,8 +572,18 @@ def setup_handler(
     if publish_plan:
         artifact_store.publish(
             plan_metadata(revision),
-            implementation_plan(intended_files or ["src/app.py"]),
+            implementation_plan(
+                intended_files or ["src/app.py"],
+                no_change_files=no_change_files,
+                required_insertions=required_insertions,
+            ),
         )
+    if isinstance(output, dict) and isinstance(output.get("changes"), list):
+        output = json.loads(json.dumps(output))
+        for change in output["changes"]:
+            change.setdefault("preimageSha256", "0" * 64)
+            if change.get("path") == "src/app.py":
+                change["preimageSha256"] = sha256(b"value = 1\n").hexdigest()
     model = FakeModelAdapter(
         [ModelResponse(output=output, usage=ModelUsage(30, 20), latency_ms=5)]
     )
@@ -393,7 +668,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             "objective": "Generate scoped code and test changes.",
             "agentRef": ref("Agent", "code-generator"),
             "outputs": CHANGE_SCHEMA,
-            "requiredContext": ["prior-artifacts", "repository-inventory", "policies"],
+            "requiredContext": ["editable-targets", "prior-artifacts", "repository-inventory", "policies"],
             "inputContextTokenBudget": 32_000,
             "evaluations": [ref("Evaluation", "patch-safety")],
             "policies": [ref("Policy", "workspace-write")],
@@ -580,9 +855,16 @@ def plan_metadata(revision: str) -> dict:
     }
 
 
-def implementation_plan(intended_files: list[str]) -> dict:
+def implementation_plan(
+    intended_files: list[str],
+    *,
+    no_change_files: list[str] | None = None,
+    required_insertions: list[dict[str, str]] | None = None,
+) -> dict:
     return {
         "intendedFiles": intended_files,
+        "noChangeFiles": no_change_files or [],
+        "requiredInsertions": required_insertions or [],
         "tests": ["python -m pytest"],
         "assumptions": ["The checkout is revision-bound."],
         "risks": ["A change may exceed the plan scope."],

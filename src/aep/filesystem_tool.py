@@ -9,7 +9,9 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import stat
 from time import monotonic, sleep
+from threading import RLock
 from typing import Any, BinaryIO, Callable
 from uuid import uuid4
 
@@ -25,6 +27,7 @@ from aep.tool_runtime import (
     ToolRequest,
     ToolResult,
     ToolResultStatus,
+    ToolSchemaValidationError,
     invoke_tool,
 )
 
@@ -39,6 +42,7 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
             "properties": {
                 "operation": {"const": "read"},
                 "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "maxBytes": {"type": "integer", "minimum": 1},
             },
         },
         {
@@ -51,6 +55,35 @@ FILESYSTEM_INPUT_SCHEMA: dict[str, Any] = {
                 "content": {"type": "string"},
             },
         },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "operation", "path", "content", "expectedExists", "expectedSha256",
+                "expectedMode",
+            ],
+            "properties": {
+                "operation": {"const": "compare_write"},
+                "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "content": {"type": "string"},
+                "expectedExists": {"type": "boolean"},
+                "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "expectedMode": {"type": ["integer", "null"], "minimum": 0, "maximum": 4095},
+                "mode": {"type": "integer", "minimum": 0, "maximum": 4095},
+            },
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["operation", "path", "expectedExists", "expectedSha256", "expectedMode"],
+            "properties": {
+                "operation": {"const": "compare_delete"},
+                "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "expectedExists": {"const": True},
+                "expectedSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "expectedMode": {"type": "integer", "minimum": 0, "maximum": 4095},
+            },
+        },
     ],
 }
 
@@ -60,13 +93,14 @@ FILESYSTEM_OUTPUT_SCHEMA: dict[str, Any] = {
         {
             "type": "object",
             "additionalProperties": False,
-            "required": ["operation", "path", "content", "sizeBytes", "sha256"],
+            "required": ["operation", "path", "content", "sizeBytes", "sha256", "mode"],
             "properties": {
                 "operation": {"const": "read"},
                 "path": {"type": "string"},
                 "content": {"type": "string"},
                 "sizeBytes": {"type": "integer", "minimum": 0},
                 "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "mode": {"type": "integer", "minimum": 0, "maximum": 4095},
             },
         },
         {
@@ -74,7 +108,7 @@ FILESYSTEM_OUTPUT_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "required": ["operation", "path", "bytesWritten", "sha256"],
             "properties": {
-                "operation": {"const": "write"},
+                "operation": {"enum": ["write", "compare_write", "compare_delete"]},
                 "path": {"type": "string"},
                 "bytesWritten": {"type": "integer", "minimum": 0},
                 "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -87,6 +121,7 @@ TRUSTED_REPOSITORY_READ_CALLERS = frozenset(
     {"ContextBuilder", "TaskExecution", "WorkflowRuntime"}
 )
 INVOCATION_REPLAY_WAIT_SECONDS = 10.0
+MUTATION_PREIMAGE_MAX_BYTES = 128_000
 
 
 class FilesystemBoundaryError(ValueError):
@@ -99,6 +134,14 @@ class FilesystemInvocationIdentityConflictError(ValueError):
 
 class FilesystemInvocationInProgressError(RuntimeError):
     """Raised when an identical invocation does not reach terminal state in time."""
+
+
+class _FilesystemPreimage:
+    def __init__(self, *, path: str, exists: bool, content: bytes, mode: int | None) -> None:
+        self.path = path
+        self.exists = exists
+        self.content = content
+        self.mode = mode
 
 
 class _CompletedExecution(ToolExecution):
@@ -139,6 +182,7 @@ class FilesystemToolAdapter(ToolAdapter):
         self._logs: dict[str, Mapping[str, Any]] = {}
         self._handle_path_resolver = handle_path_resolver or _open_handle_path
         self._before_open = before_open
+        self._mutation_lock = RLock()
 
     @property
     def workspace(self) -> Path:
@@ -149,12 +193,18 @@ class FilesystemToolAdapter(ToolAdapter):
         return dict(value) if value is not None else None
 
     def start(self, request: ToolRequest) -> ToolExecution:
+        if request.input.get("operation") in {"write", "compare_write", "compare_delete"}:
+            with self._mutation_lock:
+                return self._start(request)
+        return self._start(request)
+
+    def _start(self, request: ToolRequest) -> ToolExecution:
         started_at = datetime.now(UTC)
         started_clock = monotonic()
         operation = request.input["operation"]
         relative_path = request.input["path"]
 
-        if operation == "write" and "filesystem.write" not in request.capabilities:
+        if operation in {"write", "compare_write", "compare_delete"} and "filesystem.write" not in request.capabilities:
             return _CompletedExecution(
                 self._failure(
                     started_at,
@@ -198,8 +248,14 @@ class FilesystemToolAdapter(ToolAdapter):
                 self._before_open(self._workspace / relative, operation)
             if operation == "read":
                 with self._open_confined(relative, operation) as stream:
-                    content = stream.read().decode("utf-8")
-                encoded = content.encode("utf-8")
+                    max_bytes = request.input.get("maxBytes", 4 * 1024 * 1024)
+                    encoded = stream.read(max_bytes + 1)
+                    mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
+                if len(encoded) > max_bytes:
+                    raise FilesystemBoundaryError(
+                        f"read exceeds maxBytes for {normalized_path}"
+                    )
+                content = encoded.decode("utf-8")
                 output = {
                     "operation": "read",
                     "path": normalized_path,
@@ -207,17 +263,92 @@ class FilesystemToolAdapter(ToolAdapter):
                     "sizeBytes": len(encoded),
                     "sha256": sha256(encoded).hexdigest(),
                 }
+                output["mode"] = mode
+            elif operation == "compare_delete":
+                with self._open_confined(relative, "compare_delete") as stream:
+                    current = stream.read()
+                    current_stat = os.fstat(stream.fileno())
+                    if sha256(current).hexdigest() != request.input["expectedSha256"]:
+                        raise FilesystemBoundaryError(
+                            f"compare-delete preimage digest mismatch for {normalized_path}"
+                        )
+                    if stat.S_IMODE(current_stat.st_mode) != request.input["expectedMode"]:
+                        raise FilesystemBoundaryError(
+                            f"compare-delete preimage mode mismatch for {normalized_path}"
+                        )
+                    self._delete_confined(relative, stream.fileno(), current_stat)
+                output = {
+                    "operation": operation,
+                    "path": normalized_path,
+                    "bytesWritten": 0,
+                    "sha256": sha256(b"").hexdigest(),
+                }
             else:
                 content = request.input["content"]
                 encoded = content.encode("utf-8")
-                with self._open_confined(relative, operation) as stream:
-                    stream.seek(0)
-                    stream.truncate(0)
-                    stream.write(encoded)
-                    stream.flush()
-                    os.fsync(stream.fileno())
+                open_operation = "write"
+                if operation == "compare_write":
+                    expected_exists = request.input["expectedExists"]
+                    expected_digest = request.input["expectedSha256"]
+                    expected_mode = request.input["expectedMode"]
+                    if not expected_exists and expected_digest != sha256(b"").hexdigest():
+                        raise FilesystemBoundaryError(
+                            f"compare-write absent preimage digest mismatch for {normalized_path}"
+                        )
+                    if (expected_mode is None) != (not expected_exists):
+                        raise FilesystemBoundaryError(
+                            f"compare-write expectedMode does not match existence for {normalized_path}"
+                        )
+                    open_operation = (
+                        "compare_write_existing" if expected_exists else "compare_write_new"
+                    )
+                current = b""
+                created_stat: os.stat_result | None = None
+                try:
+                    with self._open_confined(relative, open_operation) as stream:
+                        if operation == "compare_write" and not expected_exists:
+                            created_stat = os.fstat(stream.fileno())
+                        if operation == "compare_write" and expected_exists:
+                            current = stream.read()
+                            if sha256(current).hexdigest() != expected_digest:
+                                raise FilesystemBoundaryError(
+                                    f"compare-write preimage digest mismatch for {normalized_path}"
+                                )
+                            if stat.S_IMODE(os.fstat(stream.fileno()).st_mode) != expected_mode:
+                                raise FilesystemBoundaryError(
+                                    f"compare-write preimage mode mismatch for {normalized_path}"
+                                )
+                        stream.seek(0)
+                        stream.truncate(0)
+                        stream.write(encoded)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                        if "mode" in request.input:
+                            self._set_handle_mode(stream.fileno(), request.input["mode"])
+                except OSError:
+                    if operation == "compare_write" and expected_exists:
+                        with self._open_confined(relative, "compare_write_existing") as restore:
+                            restore.seek(0)
+                            restore.truncate(0)
+                            restore.write(current)
+                            restore.flush()
+                            os.fsync(restore.fileno())
+                    elif operation == "compare_write":
+                        try:
+                            with self._open_confined(relative, "compare_delete") as cleanup:
+                                cleanup_stat = os.fstat(cleanup.fileno())
+                                if created_stat is None or (
+                                    cleanup_stat.st_dev, cleanup_stat.st_ino
+                                ) != (created_stat.st_dev, created_stat.st_ino):
+                                    raise FilesystemBoundaryError(
+                                        f"failed-write cleanup entry changed for {normalized_path}"
+                                    )
+                                self._delete_confined(relative, cleanup.fileno(), cleanup_stat)
+                        except FileNotFoundError:
+                            pass
+                    raise
                 output = {
-                    "operation": "write",
+                    "operation": operation,
                     "path": normalized_path,
                     "bytesWritten": len(encoded),
                     "sha256": sha256(encoded).hexdigest(),
@@ -270,6 +401,89 @@ class FilesystemToolAdapter(ToolAdapter):
             )
         return _CompletedExecution(result)
 
+    def _capture_preimage(self, request: ToolRequest) -> _FilesystemPreimage | None:
+        if request.input.get("operation") not in {"write", "compare_write", "compare_delete"}:
+            return None
+        relative, normalized = self._validate_path(request.input["path"])
+        try:
+            with self._open_confined(relative, "read") as stream:
+                content = stream.read(MUTATION_PREIMAGE_MAX_BYTES + 1)
+                if len(content) > MUTATION_PREIMAGE_MAX_BYTES:
+                    raise FilesystemBoundaryError(
+                        f"mutation preimage exceeds {MUTATION_PREIMAGE_MAX_BYTES} bytes for {normalized}"
+                    )
+                mode = stat.S_IMODE(os.fstat(stream.fileno()).st_mode)
+        except FileNotFoundError:
+            return _FilesystemPreimage(path=normalized, exists=False, content=b"", mode=None)
+        return _FilesystemPreimage(path=normalized, exists=True, content=content, mode=mode)
+
+    def _restore_preimage(self, preimage: _FilesystemPreimage) -> None:
+        relative, _ = self._validate_path(preimage.path)
+        if not preimage.exists:
+            try:
+                with self._open_confined(relative, "compare_delete") as stream:
+                    checked_stat = os.fstat(stream.fileno())
+                    self._delete_confined(relative, stream.fileno(), checked_stat)
+            except FileNotFoundError:
+                return
+            return
+        operation = "compare_write_existing"
+        try:
+            stream = self._open_confined(relative, operation)
+        except FileNotFoundError:
+            stream = self._open_confined(relative, "compare_write_new")
+        with stream:
+            stream.seek(0)
+            stream.truncate(0)
+            stream.write(preimage.content)
+            stream.flush()
+            os.fsync(stream.fileno())
+            if preimage.mode is not None:
+                self._set_handle_mode(stream.fileno(), preimage.mode)
+
+    def _set_handle_mode(self, descriptor: int, mode: int) -> None:
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            os.chmod(self._handle_path_resolver(descriptor), mode)
+
+    def _delete_confined(
+        self, relative: Path, descriptor: int, checked_stat: os.stat_result
+    ) -> None:
+        """Delete the checked entry without resolving its parent by pathname again."""
+
+        if os.name == "nt":
+            _windows_delete_open_descriptor(descriptor)
+            return
+        if os.unlink not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW"):
+            raise FilesystemBoundaryError(
+                "platform does not provide confined relative deletion"
+            )
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        root_descriptor = os.open(self._workspace, directory_flags)
+        parent_descriptor = root_descriptor
+        try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, directory_flags, dir_fd=parent_descriptor)
+                if parent_descriptor != root_descriptor:
+                    os.close(parent_descriptor)
+                parent_descriptor = child
+            entry_stat = os.stat(
+                relative.name, dir_fd=parent_descriptor, follow_symlinks=False
+            )
+            if (entry_stat.st_dev, entry_stat.st_ino) != (
+                checked_stat.st_dev,
+                checked_stat.st_ino,
+            ):
+                raise FilesystemBoundaryError(
+                    f"compare-delete directory entry changed for {relative.as_posix()}"
+                )
+            os.unlink(relative.name, dir_fd=parent_descriptor)
+        finally:
+            if parent_descriptor != root_descriptor:
+                os.close(parent_descriptor)
+            os.close(root_descriptor)
+
     def _validate_path(self, raw_path: str) -> tuple[Path, str]:
         relative = Path(raw_path)
         if (
@@ -303,7 +517,7 @@ class FilesystemToolAdapter(ToolAdapter):
                     f"path contains a symlink or non-directory component: {relative}"
                 ) from None
             raise
-        return os.fdopen(descriptor, "r+b" if operation == "write" else "rb")
+        return os.fdopen(descriptor, "rb" if operation == "read" else "r+b")
 
     def _open_from_pinned_workspace(self, relative: Path, operation: str) -> int:
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -311,17 +525,31 @@ class FilesystemToolAdapter(ToolAdapter):
         directory_descriptor = root_descriptor
         try:
             for part in relative.parts[:-1]:
-                child = os.open(
-                    part,
-                    directory_flags,
-                    dir_fd=directory_descriptor,
-                )
+                try:
+                    child = os.open(
+                        part,
+                        directory_flags,
+                        dir_fd=directory_descriptor,
+                    )
+                except FileNotFoundError:
+                    if operation not in {"write", "compare_write_new"}:
+                        raise
+                    os.mkdir(part, 0o700, dir_fd=directory_descriptor)
+                    child = os.open(
+                        part,
+                        directory_flags,
+                        dir_fd=directory_descriptor,
+                    )
                 if directory_descriptor != root_descriptor:
                     os.close(directory_descriptor)
                 directory_descriptor = child
             flags = os.O_NOFOLLOW
             if operation == "read":
                 flags |= os.O_RDONLY
+            elif operation in {"compare_write_existing", "compare_delete"}:
+                flags |= os.O_RDWR
+            elif operation == "compare_write_new":
+                flags |= os.O_RDWR | os.O_CREAT | os.O_EXCL
             else:
                 flags |= os.O_RDWR | os.O_CREAT
             descriptor = os.open(
@@ -432,26 +660,61 @@ class FilesystemTool:
             prior = self._await_terminal_invocation(invocation_id)
             return _result_from_invocation(prior), prior
         try:
-            result = invoke_tool(
-                request,
-                validator=self._validator,
-                authorize=authorize,
-                adapter=self.adapter,
+            self._validator.validate_input(request.input)
+        except ToolSchemaValidationError:
+            authorized: bool | None = None
+            authorization_failure = None
+        else:
+            try:
+                authorized = authorize(request)
+            except Exception as error:
+                authorized = None
+                authorization_failure = _unexpected_failure(started_at, error)
+            else:
+                authorization_failure = None
+        with self.adapter._mutation_lock:
+            preimage = None
+            capture_failure = None
+            if authorized:
+                try:
+                    preimage = self.adapter._capture_preimage(request)
+                except (FilesystemBoundaryError, OSError, UnicodeError) as error:
+                    capture_failure = _preimage_failure(started_at, error)
+            try:
+                if authorization_failure is not None:
+                    result = authorization_failure
+                elif capture_failure is not None:
+                    result = capture_failure
+                else:
+                    result = invoke_tool(
+                        request,
+                        validator=self._validator,
+                        authorize=(
+                            authorize
+                            if authorized is None
+                            else lambda _request: authorized
+                        ),
+                        adapter=self.adapter,
+                    )
+            except Exception as error:
+                result = _unexpected_failure(started_at, error)
+            status = (
+                "SUCCEEDED"
+                if result.status is ToolResultStatus.SUCCEEDED
+                else "FAILED"
             )
-        except Exception as error:
-            result = _unexpected_failure(started_at, error)
-        status = (
-            "SUCCEEDED"
-            if result.status is ToolResultStatus.SUCCEEDED
-            else "FAILED"
-        )
-        persisted = self._store.update_status(
-            invocation_id,
-            status,
-            expected_status="PENDING",
-            updated_at=result.completed_at,
-            changes=_terminal_invocation_changes(result),
-        )
+            try:
+                persisted = self._store.update_status(
+                    invocation_id,
+                    status,
+                    expected_status="PENDING",
+                    updated_at=result.completed_at,
+                    changes=_terminal_invocation_changes(result),
+                )
+            except Exception:
+                if result.status is ToolResultStatus.SUCCEEDED and preimage is not None:
+                    self.adapter._restore_preimage(preimage)
+                raise
         return result, persisted
 
     def _await_terminal_invocation(self, invocation_id: str) -> RuntimeObject:
@@ -584,6 +847,24 @@ def _unexpected_failure(started_at: str, error: Exception) -> ToolResult:
     )
 
 
+def _preimage_failure(started_at: str, error: Exception) -> ToolResult:
+    completed_at = _timestamp(datetime.now(UTC))
+    if isinstance(error, FilesystemBoundaryError):
+        failure_class = ToolFailureClass.BOUNDARY
+    else:
+        failure_class = ToolFailureClass.IO
+    return ToolResult(
+        status=ToolResultStatus.FAILED,
+        output=None,
+        logs_ref=None,
+        metrics=ToolMetrics(duration_ms=0),
+        started_at=started_at,
+        completed_at=completed_at,
+        failure_class=failure_class,
+        failure_message=str(error) or type(error).__name__,
+    )
+
+
 def _runtime_failure_class(value: ToolFailureClass) -> str:
     return {
         ToolFailureClass.VALIDATION: "CONFIGURATION",
@@ -651,11 +932,20 @@ def _windows_open_relative(
                 "configured workspace was replaced by a reparse point"
             )
         for component in relative.parts[:-1]:
-            child = _windows_nt_open_relative(
-                parent,
-                component,
-                operation="directory",
-            )
+            try:
+                child = _windows_nt_open_relative(
+                    parent,
+                    component,
+                    operation="directory",
+                )
+            except FileNotFoundError:
+                if operation not in {"write", "compare_write_new"}:
+                    raise
+                child = _windows_nt_open_relative(
+                    parent,
+                    component,
+                    operation="directory_create",
+                )
             if _windows_handle_attributes(child) & file_attribute_reparse_point:
                 close_handle(child)
                 raise FilesystemBoundaryError(
@@ -725,6 +1015,7 @@ def _windows_nt_open_relative(
     file_directory_file = 0x00000001
     file_non_directory_file = 0x00000040
     file_open = 0x00000001
+    file_create = 0x00000002
     file_open_if = 0x00000003
     file_open_reparse_point = 0x00200000
     file_read_attributes = 0x00000080
@@ -732,6 +1023,7 @@ def _windows_nt_open_relative(
     file_synchronous_io_nonalert = 0x00000020
     generic_read = 0x80000000
     generic_write = 0x40000000
+    delete_access = 0x00010000
     obj_case_insensitive = 0x00000040
     synchronize = 0x00100000
 
@@ -750,9 +1042,9 @@ def _windows_nt_open_relative(
         SecurityQualityOfService=None,
     )
     io_status = IoStatusBlock()
-    if operation == "directory":
+    if operation in {"directory", "directory_create"}:
         access = file_read_attributes | synchronize
-        disposition = file_open
+        disposition = file_open if operation == "directory" else file_open_if
         options = (
             file_directory_file
             | file_open_reparse_point
@@ -760,9 +1052,15 @@ def _windows_nt_open_relative(
         )
     else:
         access = generic_read | synchronize
-        if operation == "write":
+        if operation != "read":
             access |= generic_write
-        disposition = file_open if operation == "read" else file_open_if
+        if operation == "compare_delete":
+            access |= delete_access
+        disposition = (
+            file_open
+            if operation in {"read", "compare_write_existing", "compare_delete"}
+            else file_create if operation == "compare_write_new" else file_open_if
+        )
         options = (
             file_non_directory_file
             | file_open_reparse_point
@@ -831,6 +1129,34 @@ def _windows_handle_attributes(handle: Any) -> int:
     ):
         raise ctypes.WinError()
     return value.FileAttributes
+
+
+def _windows_delete_open_descriptor(descriptor: int) -> None:
+    """Mark the already verified Windows file handle for deletion."""
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class FileDispositionInfo(ctypes.Structure):
+        _fields_ = [("DeleteFile", wintypes.BOOLEAN)]
+
+    value = FileDispositionInfo(DeleteFile=True)
+    set_information = ctypes.windll.kernel32.SetFileInformationByHandle
+    set_information.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    set_information.restype = wintypes.BOOL
+    if not set_information(
+        msvcrt.get_osfhandle(descriptor),
+        4,
+        ctypes.byref(value),
+        ctypes.sizeof(value),
+    ):
+        raise ctypes.WinError()
 
 
 def _open_handle_path(descriptor: int) -> Path:

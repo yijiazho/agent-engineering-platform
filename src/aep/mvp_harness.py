@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import os
 import shutil
 import subprocess
@@ -306,12 +307,27 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
                         "assumptions": ["The checkout is revision-bound."],
                         "risks": ["Validation may fail."],
                         "implementationSteps": ["Update src/app.py.", "Run tests."],
+                        "acceptanceCriteriaClassifications": [{
+                            "criterion": "The value is updated and tests pass.",
+                            "classification": "REQUIRED_INSERTION",
+                            "requiredInsertion": {"path": "src/app.py", "value": "value = 2"},
+                        }],
+                        "requiredInsertions": [
+                            {"path": "src/app.py", "value": "value = 2"}
+                        ],
+                        "unsupportedAcceptanceCriteria": [],
                     },
                     usage=ModelUsage(10, 10),
                     latency_ms=1,
                 ),
                 ModelResponse(
-                    output={"changes": [{"path": "src/app.py", "content": "value = 2\n"}]},
+                    output={"changes": [{
+                        "path": "src/app.py",
+                        "content": "value = 2\n",
+                        "preimageSha256": sha256(
+                            (workspace / "src" / "app.py").read_bytes()
+                        ).hexdigest(),
+                    }]},
                     usage=ModelUsage(10, 10),
                     latency_ms=1,
                 ),

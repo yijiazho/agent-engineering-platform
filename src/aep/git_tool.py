@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 from time import monotonic, sleep
 from typing import Any, Protocol
 from uuid import uuid4
@@ -42,6 +43,7 @@ GIT_INPUT_SCHEMA: Mapping[str, Any] = {
                 "create_branch",
                 "status",
                 "diff",
+                "read_blob",
                 "check_patch",
                 "commit_changes",
                 "push_branch",
@@ -55,6 +57,13 @@ GIT_INPUT_SCHEMA: Mapping[str, Any] = {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
         },
+        "paths": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": True,
+        },
+        "includeIgnored": {"type": "boolean"},
+        "maxBytes": {"type": "integer", "minimum": 1},
     },
     "allOf": [
         {
@@ -158,6 +167,19 @@ GIT_OUTPUT_SCHEMA: Mapping[str, Any] = {
         },
         "applicable": {"type": ["boolean", "null"]},
         "diagnostics": {"type": "array", "items": {"type": "string"}},
+        "blob": {
+            "oneOf": [
+                {"type": "null"},
+                {"type": "object", "additionalProperties": False,
+                 "required": ["path", "exists", "content", "sha256", "mode"],
+                 "properties": {
+                     "path": {"type": "string"}, "exists": {"type": "boolean"},
+                     "content": {"type": "string"},
+                     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                     "mode": {"type": ["integer", "null"], "minimum": 0, "maximum": 4095}
+                 }}
+            ]
+        },
     },
     "additionalProperties": False,
 }
@@ -511,6 +533,9 @@ class GitToolAdapter(ToolAdapter):
                 if operation == "commit_changes"
                 else None
             ),
+            paths=tuple(str(path) for path in value.get("paths", ())),
+            include_ignored=bool(value.get("includeIgnored", False)),
+            max_bytes=int(value.get("maxBytes", 4 * 1024 * 1024)),
             trace_id=request.trace_id,
             log_store=self._log_store,
             sandbox=self._sandbox,
@@ -531,6 +556,9 @@ class _GitToolExecution(ToolExecution):
         patch: bytes | None,
         commit_message: str | None,
         expected_patch_sha256: str | None,
+        paths: tuple[str, ...],
+        include_ignored: bool,
+        max_bytes: int,
         trace_id: str,
         log_store: GitCommandLogStore,
         sandbox: GitSandbox,
@@ -545,6 +573,9 @@ class _GitToolExecution(ToolExecution):
         self._patch = patch
         self._commit_message = commit_message
         self._expected_patch_sha256 = expected_patch_sha256
+        self._paths = paths
+        self._include_ignored = include_ignored
+        self._max_bytes = max_bytes
         self._trace_id = trace_id
         self._log_store = log_store
         self._sandbox = sandbox
@@ -815,7 +846,7 @@ class _GitToolExecution(ToolExecution):
                         ),
                         deadline,
                     )
-            elif self._operation not in {"status", "diff", "check_patch"}:
+            elif self._operation not in {"status", "diff", "check_patch", "read_blob"}:
                 raise GitToolContractError(
                     f"unsupported Git operation {self._operation!r}"
                 )
@@ -824,13 +855,42 @@ class _GitToolExecution(ToolExecution):
         revision = self._run(("rev-parse", "HEAD"), deadline).stdout.decode(
             "ascii"
         ).strip().lower()
+        status_arguments = ["status", "--porcelain=v1", "-z", "--untracked-files=all"]
+        if self._include_ignored:
+            status_arguments.append("--ignored=matching")
+        if self._paths:
+            status_arguments.extend(("--", *self._paths))
+        literal_environment = {"GIT_LITERAL_PATHSPECS": "1"} if self._paths else None
         status = self._run(
-            ("status", "--porcelain=v1", "-z", "--untracked-files=all"), deadline
+            tuple(status_arguments), deadline, environment=literal_environment
         ).stdout
         changed_files = committed_changes or _parse_status(status)
         diff_value: dict[str, Any] | None = None
         applicable: bool | None = None
         diagnostics: list[str] = []
+        blob_value: dict[str, Any] | None = None
+        if self._operation == "read_blob":
+            if len(self._paths) != 1:
+                raise GitToolContractError("read_blob requires exactly one literal path")
+            path = self._paths[0]
+            tree = self._run(
+                ("ls-tree", "-z", self._expected_revision, "--", path),
+                deadline,
+                environment={"GIT_LITERAL_PATHSPECS": "1"},
+            ).stdout
+            if not tree:
+                blob_value = {"path": path, "exists": False, "content": "", "sha256": sha256(b"").hexdigest(), "mode": None}
+            else:
+                record = tree.rstrip(b"\0").split(b"\t", 1)
+                if len(record) != 2 or record[1].decode("utf-8") != path:
+                    raise GitToolContractError("read_blob returned malformed tree evidence")
+                mode_text, object_type, _object_id = record[0].split(b" ", 2)
+                if object_type != b"blob":
+                    raise GitToolContractError("read_blob target is not a regular blob")
+                content = self._run(("show", f"{self._expected_revision}:{path}"), deadline).stdout
+                if len(content) > self._max_bytes:
+                    raise GitToolContractError("read_blob exceeds maxBytes")
+                blob_value = {"path": path, "exists": True, "content": content.decode("utf-8"), "sha256": sha256(content).hexdigest(), "mode": 0o755 if mode_text == b"100755" else 0o644}
         if self._operation == "check_patch":
             head = self._run(("rev-parse", "HEAD"), deadline).stdout.decode(
                 "ascii"
@@ -860,8 +920,39 @@ class _GitToolExecution(ToolExecution):
                 accepted_exit_codes=(0, 1, 128),
                 stdin=self._patch,
             )
-            applicable = check.exit_code == 0
-            diagnostics = _diagnostics(numstat.stderr, check.stderr)
+            whitespace = None
+            if check.exit_code == 0:
+                with tempfile.TemporaryDirectory(prefix="aep-git-index-") as directory:
+                    index_environment = {
+                        "GIT_INDEX_FILE": str(Path(directory) / "index")
+                    }
+                    self._run(
+                        ("read-tree", "HEAD"),
+                        deadline,
+                        environment=index_environment,
+                    )
+                    self._run(
+                        ("apply", "--cached", "--"),
+                        deadline,
+                        environment=index_environment,
+                        stdin=self._patch,
+                    )
+                    whitespace = self._run(
+                        ("diff", "--cached", "--check", "--"),
+                        deadline,
+                        environment=index_environment,
+                        accepted_exit_codes=(0, 1, 2),
+                    )
+            applicable = (
+                check.exit_code == 0
+                and whitespace is not None
+                and whitespace.exit_code == 0
+            )
+            diagnostics = _diagnostics(
+                numstat.stderr,
+                check.stderr,
+                b"" if whitespace is None else whitespace.stdout + whitespace.stderr,
+            )
         if self._operation == "diff":
             patch_parts = [
                 self._run(
@@ -873,8 +964,10 @@ class _GitToolExecution(ToolExecution):
                         "--no-renames",
                         self._expected_revision,
                         "--",
+                        *self._paths,
                     ),
                     deadline,
+                    environment=literal_environment,
                 ).stdout
             ]
             for changed_file in changed_files:
@@ -914,6 +1007,7 @@ class _GitToolExecution(ToolExecution):
             "commandResults": [command.metadata() for command in self._commands],
             "applicable": applicable,
             "diagnostics": diagnostics,
+            "blob": blob_value,
         }
 
     def _committed_patch(self, deadline: float) -> bytes:

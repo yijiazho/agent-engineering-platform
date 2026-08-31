@@ -87,8 +87,11 @@ def repository(tmp_path: Path) -> tuple[Path, str, GitToolAdapter]:
     git(root, "config", "user.email", "aep@example.test")
     git(root, "config", "core.autocrlf", "false")
     (root / "tracked.txt").write_bytes(b"original\n")
+    (root / "obsolete.txt").write_bytes(
+        "".join(f"obsolete {index}\n" for index in range(25)).encode("utf-8")
+    )
     (root / "caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt").write_bytes(b"unicode\n")
-    git(root, "add", "tracked.txt", "caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt")
+    git(root, "add", "tracked.txt", "obsolete.txt", "caf\N{LATIN SMALL LETTER E WITH ACUTE}.txt")
     git(root, "commit", "-m", "fixture")
     revision = git(root, "rev-parse", "HEAD")
     adapter = GitToolAdapter(
@@ -141,6 +144,8 @@ def evaluate(
     allowed_paths: tuple[str, ...] = ("tracked.txt",),
     artifact_revision: str | None = None,
     store: InMemoryRuntimeObjectStore | None = None,
+    required_insertions: tuple[dict[str, str], ...] = (),
+    deletion_authorized_paths: tuple[str, ...] = (),
 ):
     _root, revision, adapter = repository
     content = b"" if fixture is None else (FIXTURES / fixture).read_bytes()
@@ -161,6 +166,8 @@ def evaluate(
         patch_content=content,
         expected_revision=revision,
         allowed_paths=allowed_paths,
+        required_insertions=required_insertions,
+        deletion_authorized_paths=deletion_authorized_paths,
         working_branch="agent/work",
         correlation={
             "traceId": "trace-patch-evaluation",
@@ -201,6 +208,169 @@ def test_clean_patch_passes_without_mutating_repository(repository) -> None:
     assert (root / "tracked.txt").read_text(encoding="utf-8") == "original\n"
     with pytest.raises(TypeError):
         result["outcome"] = "FAIL"
+
+
+def test_required_insertions_are_checked_before_patch_pass(repository) -> None:
+    _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "updated"},))
+    assert result["outcome"] == "PASS"
+    _, missing = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": "deploy/"},), deletion_authorized_paths=("tracked.txt",))
+    assert missing["outcome"] == "FAIL"
+    assert "REQUIRED_INSERTION_MISSING" in error_codes(missing)
+
+
+def test_trailing_whitespace_fails_explicit_diff_check(repository) -> None:
+    patch = """diff --git a/tracked.txt b/tracked.txt
+index 4b48dee..0000000 100644
+--- a/tracked.txt
++++ b/tracked.txt
+@@ -1 +1 @@
+-original
++updated""" + "   \n"
+    root, revision, adapter = repository
+    result = evaluate_patch(
+        store=InMemoryRuntimeObjectStore(),
+        git_adapter=adapter,
+        authorize_git=lambda _request: True,
+        result_id="evaluationresult-aabbccddeeff",
+        task_execution_id="taskexecution-123456789abc",
+        evaluation_ref={"kind": "Evaluation", "name": "patch-safety", "version": "1.1.0"},
+        patch_artifact=artifact(patch.encode(), revision),
+        patch_content=patch,
+        expected_revision=revision,
+        allowed_paths=("tracked.txt",),
+        required_paths=("tracked.txt",),
+        working_branch="agent/work",
+        correlation={"traceId": "trace-whitespace", "workflowExecutionId": "workflowexecution-123456789abc", "taskExecutionId": "taskexecution-123456789abc"},
+        timestamp="2026-08-04T00:00:00Z",
+        provenance={"actor": "patch-evaluator", "workflowExecutionId": "workflowexecution-123456789abc", "taskExecutionId": "taskexecution-123456789abc", "resourceRefs": []},
+    )
+
+    assert result["outcome"] == "FAIL"
+    assert "PATCH_NOT_APPLICABLE" in error_codes(result)
+    assert any("trailing whitespace" in value.lower() for value in result["evidence"]["diagnostics"])
+    assert not git(root, "diff", "--cached")
+
+
+def test_large_deletion_requires_and_honors_explicit_authorization(repository) -> None:
+    root, revision, adapter = repository
+    content = (FIXTURES / "large-deletion.patch").read_bytes()
+
+    def run(result_id: str, authorized: tuple[str, ...]):
+        return evaluate_patch(
+            store=InMemoryRuntimeObjectStore(),
+            git_adapter=adapter,
+            authorize_git=lambda _request: True,
+            result_id=result_id,
+            task_execution_id="taskexecution-123456789abc",
+            evaluation_ref={"kind": "Evaluation", "name": "patch-safety", "version": "1.1.0"},
+            patch_artifact=artifact(content, revision),
+            patch_content=content,
+            expected_revision=revision,
+            allowed_paths=("obsolete.txt",),
+            required_paths=("obsolete.txt",),
+            deletion_authorized_paths=authorized,
+            working_branch="agent/work",
+            correlation={
+                "traceId": "trace-patch-evaluation",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-123456789abc",
+            },
+            timestamp="2026-08-04T00:00:00Z",
+            provenance={
+                "actor": "patch-evaluator",
+                "workflowExecutionId": "workflowexecution-123456789abc",
+                "taskExecutionId": "taskexecution-123456789abc",
+                "resourceRefs": [],
+            },
+        )
+
+    allowed = run("evaluationresult-deadbeef0002", ("obsolete.txt",))
+    denied = run("evaluationresult-deadbeef0001", ())
+
+    assert denied["outcome"] == "FAIL"
+    assert "DESTRUCTIVE_REWRITE" in error_codes(denied)
+    assert allowed["evidence"]["errors"] == []
+    assert allowed["outcome"] == "PASS"
+    assert allowed["evidence"]["changeStatistics"]["deletionAuthorized"] is True
+    assert (root / "obsolete.txt").exists()
+
+
+def test_balanced_whole_file_rewrite_requires_preserved_context(repository) -> None:
+    _, result = evaluate(
+        repository,
+        "balanced-rewrite.patch",
+        allowed_paths=("obsolete.txt",),
+    )
+
+    assert result["outcome"] == "FAIL"
+    assert "SURROUNDING_CONTENT_NOT_PRESERVED" in error_codes(result)
+    assert result["evidence"]["checks"]["surroundingContentPreservation"] is False
+
+
+def test_near_total_balanced_rewrite_with_one_context_line_is_unpreserved() -> None:
+    from aep.patch_evaluation import _unpreserved_hunks
+
+    deleted = "".join(f"-old {value}\n" for value in range(9))
+    added = "".join(f"+new {value}\n" for value in range(9))
+    patch = (
+        "--- a/tracked.txt\n+++ b/tracked.txt\n@@ -1,10 +1,10 @@\n"
+        + deleted + added + " retained\n"
+    ).encode()
+
+    assert _unpreserved_hunks(patch) == [{
+        "path": "tracked.txt",
+        "deletedLines": 9,
+        "addedLines": 9,
+        "contextLines": 1,
+        "sourceLines": 10,
+    }]
+
+
+def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
+    from aep.patch_evaluation import _added_blocks_by_path
+
+    patch = b"""--- a/tracked.txt
++++ b/tracked.txt
+@@ -1 +1,2 @@
+-original
++first line
++second line
+"""
+
+    added = _added_blocks_by_path(patch)
+    assert added["tracked.txt"] == ("first line\nsecond line",)
+
+
+def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:
+    from aep.patch_evaluation import _added_blocks_by_path
+
+    patch = b"""+++ b/tracked.txt
+@@ -1 +1 @@
+-old
++foo
+@@ -10 +10 @@
+-other
++bar
+"""
+    assert _added_blocks_by_path(patch)["tracked.txt"] == ("foo", "bar")
+
+
+def test_diff_helpers_preserve_paths_with_spaces() -> None:
+    from aep.patch_evaluation import _added_text_by_path, _deleted_paths, _replaced_paths
+
+    patch = b"""diff --git a/src/file name.txt b/src/file name.txt
+--- a/src/file name.txt
++++ b/src/file name.txt
+@@ -1,2 +1,2 @@
+-old one
+-old two
++new one
++new two
+"""
+
+    assert _added_text_by_path(patch) == {"src/file name.txt": ("new one", "new two")}
+    assert _replaced_paths(patch) == {"src/file name.txt"}
+    assert _deleted_paths(patch) == []
 
 
 def test_conflicting_patch_fails_with_git_diagnostics(repository) -> None:

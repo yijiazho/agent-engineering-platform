@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
-from aep.git_tool import GitTool, GitToolAdapter, git_tool_validator
+from aep.git_tool import GitTool, GitToolAdapter, _decode_patch_path, git_tool_validator
 from aep.observability import CorrelationContext, bind_correlation
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import ToolCaller, ToolRequest, ToolResultStatus, invoke_tool
@@ -40,6 +40,11 @@ def evaluate_patch(
     patch_content: str | bytes,
     expected_revision: str,
     allowed_paths: Sequence[str],
+    required_paths: Sequence[str] | None = None,
+    no_change_paths: Sequence[str] = (),
+    deletion_authorized_paths: Sequence[str] = (),
+    required_insertions: Sequence[Mapping[str, str]] = (),
+    unsupported_acceptance_criteria: Sequence[str] = (),
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
@@ -65,6 +70,9 @@ def evaluate_patch(
     )
     artifact = deepcopy(dict(patch_artifact))
     normalized_rules = _normalize_rules(allowed_paths)
+    normalized_required = _normalize_rules(required_paths) if required_paths else ()
+    normalized_no_change = _normalize_rules(no_change_paths) if no_change_paths else ()
+    normalized_deletion_authorized = _normalize_rules(deletion_authorized_paths) if deletion_authorized_paths else ()
     errors: list[dict[str, str]] = []
     logs: list[str] = []
     changed_files: list[str] = []
@@ -109,10 +117,20 @@ def evaluate_patch(
             }
         )
 
-    if not content:
+    all_no_change = (
+        not content
+        and not normalized_required
+        and bool(normalized_no_change)
+        and set(normalized_no_change) == set(normalized_rules)
+    )
+    if not content and not all_no_change:
         errors.append({"code": "EMPTY_PATCH", "message": "patch content is empty"})
 
-    if not errors:
+    if all_no_change:
+        applicable = True
+        logs.append("No patch applicability check required for grounded no-change plan")
+
+    if not errors and not all_no_change:
         try:
             patch_text = content.decode("utf-8")
         except UnicodeDecodeError:
@@ -205,6 +223,74 @@ def evaluate_patch(
                 }
             )
 
+    added_blocks_by_path = _added_blocks_by_path(content)
+    missing_insertions = sorted(
+        (
+            {"path": item["path"], "value": item["value"]}
+            for item in required_insertions
+            if not any(
+                item["value"] in block
+                for block in added_blocks_by_path.get(item["path"], ())
+            )
+        ),
+        key=lambda item: (item["path"].casefold(), item["path"], item["value"]),
+    )
+    for insertion in missing_insertions:
+        errors.append({
+            "code": "REQUIRED_INSERTION_MISSING",
+            "message": f"required insertion {insertion['value']!r} is absent from {insertion['path']!r}",
+        })
+    for criterion in sorted({value for value in unsupported_acceptance_criteria if isinstance(value, str) and value}):
+        errors.append({"code": "UNSUPPORTED_ACCEPTANCE_CRITERION", "message": f"unsupported acceptance criterion: {criterion}"})
+
+    dispositions = [
+        {"path": path, "disposition": "CHANGED" if path in changed_files else "MISSING"}
+        for path in normalized_required
+    ]
+    for disposition in dispositions:
+        if disposition["disposition"] == "MISSING":
+            errors.append({
+                "code": "REQUIRED_CHANGE_MISSING",
+                "message": f"planned target {disposition['path']!r} is absent from the final diff",
+            })
+    no_change_dispositions = [
+        {"path": path, "disposition": "NO_CHANGE" if path not in changed_files else "CHANGED"}
+        for path in normalized_no_change
+    ]
+    for disposition in no_change_dispositions:
+        if disposition["disposition"] != "NO_CHANGE":
+            errors.append({"code": "NO_CHANGE_TARGET_MODIFIED", "message": f"no-change target {disposition['path']!r} appears in the final diff"})
+    added_lines, deleted_lines = _line_change_counts(content)
+    total_changes = added_lines + deleted_lines
+    replacement_ratio = deleted_lines / total_changes if total_changes else 0.0
+    deleted_paths = _deleted_paths(content)
+    unauthorized_deleted_paths = sorted(
+        path for path in deleted_paths
+        if _matching_rule(path, normalized_deletion_authorized) is None
+    )
+    for path in unauthorized_deleted_paths:
+        errors.append({"code": "UNAUTHORIZED_DELETION", "message": f"deleted content in {path!r} is not deletion-authorized"})
+    replacement_violations: list[str] = []
+    destructive_candidate = deleted_lines >= 20 and replacement_ratio > 0.8
+    deletion_authorized = bool(deleted_paths) and not unauthorized_deleted_paths
+    destructive = destructive_candidate and not deletion_authorized
+    if destructive:
+        errors.append({
+            "code": "DESTRUCTIVE_REWRITE",
+            "message": "patch deletes at least 20 lines and more than 80% of changed lines",
+        })
+    unpreserved_hunks = _unpreserved_hunks(content)
+    unauthorized_unpreserved_hunks = [
+        hunk for hunk in unpreserved_hunks
+        if _matching_rule(str(hunk["path"]), normalized_deletion_authorized) is None
+    ]
+    surrounding_content_preserved = not unauthorized_unpreserved_hunks
+    if not surrounding_content_preserved:
+        errors.append({
+            "code": "SURROUNDING_CONTENT_NOT_PRESERVED",
+            "message": "patch replaces or removes a multi-line hunk without preserved surrounding context",
+        })
+
     errors = sorted(errors, key=lambda item: (item["code"], item["message"]))
     logs.extend(diagnostics)
     logs.append("Patch evaluation passed" if not errors else "Patch evaluation failed")
@@ -214,9 +300,17 @@ def evaluate_patch(
         ),
         "revision": not any(error["code"] == "REVISION_MISMATCH" for error in errors),
         "applicability": applicable,
-        "pathBoundary": bool(changed_files) and all(
-            check["allowed"] for check in boundary_checks
+        "pathBoundary": (
+            all_no_change
+            or (bool(changed_files) and all(check["allowed"] for check in boundary_checks))
         ),
+        "requiredFileDisposition": all(
+            item["disposition"] == "CHANGED" for item in dispositions
+        ),
+        "noChangeDisposition": all(item["disposition"] == "NO_CHANGE" for item in no_change_dispositions),
+        "acceptanceCriteria": not unsupported_acceptance_criteria,
+        "destructiveChange": not destructive,
+        "surroundingContentPreservation": surrounding_content_preserved,
     }
     evidence = {
         "type": "patch-evaluation",
@@ -229,6 +323,24 @@ def evaluate_patch(
         "applicable": applicable,
         "diagnostics": diagnostics,
         "boundaryChecks": boundary_checks,
+        "requiredFileDispositions": dispositions,
+        "noChangeFileDispositions": no_change_dispositions,
+        "changeStatistics": {
+            "addedLines": added_lines,
+            "deletedLines": deleted_lines,
+            "replacementRatio": replacement_ratio,
+            "destructiveRewrite": destructive,
+            "deletionAuthorized": deletion_authorized,
+            "deletionAuthorizedPaths": list(normalized_deletion_authorized),
+            "deletedPaths": deleted_paths,
+            "unauthorizedDeletedPaths": unauthorized_deleted_paths,
+            "requiredInsertions": list(required_insertions),
+            "missingInsertions": missing_insertions,
+            "replacementViolations": replacement_violations,
+            "unsupportedAcceptanceCriteria": list(unsupported_acceptance_criteria),
+            "unpreservedHunks": unpreserved_hunks,
+            "unauthorizedUnpreservedHunks": unauthorized_unpreserved_hunks,
+        },
         "git": {
             "status": git_status,
             "logsRef": git_logs_ref,
@@ -281,6 +393,162 @@ def _patch_bytes(
         {"code": "INVALID_CONTENT", "message": "patch content must be text or bytes"}
     )
     return b""
+
+
+def _line_change_counts(content: bytes) -> tuple[int, int]:
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return 0, 0
+    added = sum(line.startswith("+") and not line.startswith("+++") for line in lines)
+    deleted = sum(line.startswith("-") and not line.startswith("---") for line in lines)
+    return added, deleted
+
+
+def _unpreserved_hunks(content: bytes) -> list[dict[str, int | str]]:
+    """Identify replacements that remove all or nearly all source hunk lines."""
+
+    hunks: list[dict[str, int | str]] = []
+    current: dict[str, int | str] | None = None
+    path: str | None = None
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "--- ")
+        if marker is not None and marker != "/dev/null":
+            path = marker
+        elif line.startswith("@@ "):
+            if current is not None and _hunk_is_unpreserved(current):
+                hunks.append(current)
+            match = re.match(r"^@@ -\d+(?:,(\d+))? ", line)
+            source_lines = int(match.group(1) or "1") if match else 0
+            current = {"path": path or "", "deletedLines": 0, "addedLines": 0, "contextLines": 0, "sourceLines": source_lines}
+        elif current is not None:
+            if line.startswith("-") and not line.startswith("---"):
+                current["deletedLines"] += 1
+            elif line.startswith("+") and not line.startswith("+++"):
+                current["addedLines"] += 1
+            elif line.startswith(" "):
+                current["contextLines"] += 1
+    if current is not None and _hunk_is_unpreserved(current):
+        hunks.append(current)
+    return hunks
+
+
+def _hunk_is_unpreserved(hunk: Mapping[str, int | str]) -> bool:
+    deleted = int(hunk["deletedLines"])
+    context = int(hunk["contextLines"])
+    source = int(hunk["sourceLines"])
+    return deleted >= 2 and (
+        context == 0 or (deleted >= 5 and source > 0 and deleted / source >= 0.8)
+    )
+
+
+def _deleted_paths(content: bytes) -> list[str]:
+    """Return files whose hunks remove more lines than they add."""
+
+    current: str | None = None
+    deleted = added = 0
+    paths: set[str] = set()
+
+    def complete_hunk() -> None:
+        if current is not None and deleted > added:
+            paths.add(current)
+
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "--- ")
+        if marker is not None:
+            complete_hunk()
+            current = None if marker == "/dev/null" else marker
+            deleted = added = 0
+        elif line.startswith("@@ "):
+            complete_hunk()
+            deleted = added = 0
+        elif current is not None and line.startswith("-") and not line.startswith("---"):
+            deleted += 1
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            added += 1
+    complete_hunk()
+    return sorted(paths, key=lambda value: (value.casefold(), value))
+
+
+def _added_text(content: bytes) -> tuple[str, ...]:
+    try:
+        lines = content.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return ()
+    return tuple(line[1:] for line in lines if line.startswith("+") and not line.startswith("+++"))
+
+
+def _added_text_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
+    current: str | None = None
+    values: dict[str, list[str]] = {}
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "+++ ")
+        if marker is not None:
+            current = None if marker == "/dev/null" else marker
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            values.setdefault(current, []).append(line[1:])
+    return {path: tuple(lines) for path, lines in values.items()}
+
+
+def _added_blocks_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
+    current: str | None = None
+    active: list[str] = []
+    values: dict[str, list[str]] = {}
+
+    def finish() -> None:
+        if current is not None and active:
+            values.setdefault(current, []).append("\n".join(active))
+            active.clear()
+
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "+++ ")
+        if marker is not None:
+            finish()
+            current = None if marker == "/dev/null" else marker
+        elif line.startswith("@@ "):
+            finish()
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            active.append(line[1:])
+        else:
+            finish()
+    finish()
+    return {path: tuple(blocks) for path, blocks in values.items()}
+
+
+def _replaced_paths(content: bytes) -> set[str]:
+    current: str | None = None
+    deleted = added = 0
+    replaced: set[str] = set()
+    def finish() -> None:
+        if current is not None and deleted and added:
+            replaced.add(current)
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "--- ")
+        if marker is not None:
+            finish()
+            current = None if marker == "/dev/null" else marker
+            deleted = added = 0
+        elif line.startswith("@@ "):
+            finish()
+            deleted = added = 0
+        elif line.startswith("-") and not line.startswith("---"):
+            deleted += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            added += 1
+    finish()
+    return replaced
+
+
+def _patch_marker_path(line: str, marker: str) -> str | None:
+    if not line.startswith(marker):
+        return None
+    raw = line[len(marker):].encode("utf-8")
+    path = _decode_patch_path(raw)
+    if path == "/dev/null":
+        return path
+    if path.startswith(("a/", "b/")):
+        return path[2:]
+    return None
 
 
 def _normalize_rules(rules: Sequence[str]) -> tuple[str, ...]:

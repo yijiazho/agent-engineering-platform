@@ -28,7 +28,7 @@ from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
 from aep.resource_loader import Resource, ResourceRef
-from aep.runtime_store import RuntimeObject
+from aep.runtime_store import RuntimeObject, RuntimeStoreError
 from aep.task_execution import FailureClass
 from aep.tool_runtime import (
     AuthorizationHook,
@@ -104,16 +104,63 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
     ) -> TaskExecutionResult:
         """Run one already-running GeneratePatch attempt."""
 
+        applied: list[dict[str, str]] = []
+        targets_by_path: dict[str, JsonMapping] = {}
+        filesystem_write_ref: JsonMapping | None = None
+        active_invocation_id: str | None = None
         try:
             workflow, event = self._validate_inputs(task, task_execution)
             plan, producer_id = self._implementation_plan(task_execution, workflow)
             allowed_paths = _allowed_paths(plan)
+            deletion_authorized_paths = _deletion_authorized_paths(plan, allowed_paths)
+            no_change_paths = _no_change_paths(plan, allowed_paths)
+            required_insertions = _required_insertions(plan, allowed_paths)
+            unsupported_criteria = _unsupported_acceptance_criteria(plan)
             task_spec = _spec(task)
             patch_evaluation = self._patch_evaluation(task_spec)
             output_schema = task_spec.get("outputs")
             if not isinstance(output_schema, Mapping) or not output_schema:
                 raise GeneratePatchContractError("GeneratePatch Task requires spec.outputs")
 
+            filesystem_read_ref = self._context_filesystem_ref(task_spec)
+            git_read_ref = self._context_git_ref(task_spec)
+            clean_result, clean_evidence = self._invoke_git_diff(
+                invocation_id=self._runtime_id("toolinvocation", f"{task_execution['id']}:git:preflight"),
+                task_execution=task_execution,
+                tool_ref=git_read_ref,
+                paths=allowed_paths,
+                include_ignored=True,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [clean_evidence["id"]]})
+            clean_output = clean_result.output_record() if clean_result.output is not None else {}
+            clean_diff = clean_output.get("diff")
+            if (
+                clean_result.status is not ToolResultStatus.SUCCEEDED
+                or clean_output.get("revision") != workflow["repositoryRevision"]
+                or clean_output.get("changedFiles")
+                or (isinstance(clean_diff, Mapping) and clean_diff.get("byteLength") != 0)
+            ):
+                raise GeneratePatchContractError(
+                    "GeneratePatch requires a clean checkout at the recorded repository revision"
+                )
+            editable_targets = self._read_editable_targets(
+                task_execution=task_execution,
+                repository_revision=str(workflow["repositoryRevision"]),
+                paths=allowed_paths,
+                tool_ref=filesystem_read_ref,
+                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+            )
+            self._verify_targets_at_revision(
+                task_execution=task_execution,
+                repository_revision=str(workflow["repositoryRevision"]),
+                paths=allowed_paths,
+                targets=editable_targets,
+                tool_ref=git_read_ref,
+                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+            )
+            _verify_no_change_targets(
+                no_change_paths, required_insertions, editable_targets
+            )
             context_package = self._context_builder.build(
                 task=task,
                 task_execution=task_execution,
@@ -124,6 +171,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 ),
                 policies=self._resolve_declared(task_spec.get("policies", ()), "Policy"),
                 prior_task_execution_ids=(producer_id,),
+                editable_targets=editable_targets,
                 created_at=self._timestamp(),
             )
             self._attach(task_execution["id"], {"contextPackageId": context_package["id"]})
@@ -162,6 +210,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             invocation_id = self._runtime_id(
                 "agentinvocation", str(task_execution["id"])
             )
+            active_invocation_id = invocation_id
             invocation = invoke_agent(
                 store=self._runtime_store,
                 invocation_id=invocation_id,
@@ -184,15 +233,51 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     str(failure.get("message") or "Code Generator invocation failed"),
                 )
 
-            changes = _validated_changes(invocation.get("output"), allowed_paths)
+            changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
+            missing = sorted(set(allowed_paths) - set(no_change_paths) - {item["path"] for item in changes})
+            if missing:
+                raise GeneratePatchContractError(
+                    f"Code Generator omitted required planned files: {missing!r}"
+                )
+            verified_targets = self._read_editable_targets(
+                task_execution=task_execution,
+                repository_revision=str(workflow["repositoryRevision"]),
+                paths=allowed_paths,
+                tool_ref=filesystem_read_ref,
+                purpose="preimage-verification",
+                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+            )
+            if any(
+                current["exists"] != original["exists"]
+                or current["preimageSha256"] != original["preimageSha256"]
+                or current["mode"] != original["mode"]
+                for current, original in zip(verified_targets, editable_targets, strict=True)
+            ):
+                raise GeneratePatchContractError(
+                    "editable target preimage changed after ContextPackage construction"
+                )
+            targets_by_path = {item["path"]: item for item in editable_targets}
+            filesystem_write_ref = tools["filesystem"]["ref"]
             for index, change in enumerate(changes):
+                target = targets_by_path[change["path"]]
+                if change["operation"] == "delete" and (
+                    not target["exists"]
+                    or change["path"] not in deletion_authorized_paths
+                ):
+                    raise GeneratePatchContractError(
+                        f"Code Generator delete for {change['path']!r} is not deletion-authorized"
+                    )
+                operation = "compare_delete" if change["operation"] == "delete" else "compare_write"
+                payload: dict[str, Any] = {
+                    "operation": operation, "path": change["path"],
+                    "expectedExists": target["exists"], "expectedSha256": target["preimageSha256"],
+                    "expectedMode": target["mode"],
+                }
+                if operation == "compare_write":
+                    payload["content"] = change["content"]
                 request = ToolRequest(
                     tool_ref=tools["filesystem"]["ref"],
-                    input={
-                        "operation": "write",
-                        "path": change["path"],
-                        "content": change["content"],
-                    },
+                    input=payload,
                     caller=ToolCaller(kind="AgentInvocation", id=invocation_id),
                     capabilities=("filesystem.write",),
                     timeout_ms=self._tool_timeout_ms,
@@ -207,9 +292,17 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     request=request,
                     authorize=self._authorize_filesystem,
                 )
-                self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
                 if result.status is not ToolResultStatus.SUCCEEDED:
+                    self._rollback_applied_changes(
+                        task_execution=task_execution,
+                        invocation_id=invocation_id,
+                        tool_ref=tools["filesystem"]["ref"],
+                        targets=targets_by_path,
+                        applied=applied,
+                    )
                     return _tool_failure(result, f"Filesystem write for {change['path']!r}")
+                applied.append(change)
+                self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
 
             diff_id = self._runtime_id(
                 "toolinvocation", f"{task_execution['id']}:git:diff"
@@ -218,18 +311,24 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 invocation_id=diff_id,
                 task_execution=task_execution,
                 tool_ref=tools["git"]["ref"],
+                paths=allowed_paths,
             )
             self._attach(task_execution["id"], {"toolInvocationIds": [diff_evidence["id"]]})
             if diff_result.status is not ToolResultStatus.SUCCEEDED:
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return _tool_failure(diff_result, "Git diff")
             diff_output = diff_result.output_record()
             patch = diff_output.get("diff") if isinstance(diff_output, Mapping) else None
             patch_text = patch.get("text") if isinstance(patch, Mapping) else None
-            if not isinstance(patch_text, str) or not patch_text:
+            all_no_change = not changes and set(no_change_paths) == set(allowed_paths)
+            if not isinstance(patch_text, str) or (not patch_text and not all_no_change):
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION, "GeneratePatch produced an empty patch"
                 )
-            changed_files = _changed_paths(diff_output.get("changedFiles"))
+            changed_files = (
+                [] if all_no_change else _changed_paths(diff_output.get("changedFiles"))
+            )
 
             artifact_id = self._runtime_id(
                 "generatedartifact", str(task_execution["id"])
@@ -274,6 +373,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 patch_content=patch_text,
                 expected_revision=str(workflow["repositoryRevision"]),
                 allowed_paths=allowed_paths,
+                required_paths=tuple(path for path in allowed_paths if path not in no_change_paths),
+                no_change_paths=no_change_paths,
+                deletion_authorized_paths=deletion_authorized_paths,
+                required_insertions=tuple(
+                    item for item in required_insertions
+                    if item["path"] not in no_change_paths
+                ),
+                unsupported_acceptance_criteria=unsupported_criteria,
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -302,11 +409,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             self._attach(task_execution["id"], {"evaluationResultIds": [evaluation_id]})
             if evaluation_result["outcome"] != "PASS":
                 details = "; ".join(evaluation_result.get("logs", ()))
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION,
                     f"GeneratePatch failed Patch Evaluation: {details}",
                 )
             if changed_files != evaluation_result["evidence"]["changedFiles"]:
+                self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
+                applied.clear()
                 raise GeneratePatchContractError(
                     "Git diff and Patch Evaluation changed-file evidence disagree"
                 )
@@ -315,8 +425,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             self._attach(task_execution["id"], {"generatedArtifactIds": [artifact["id"]]})
             return TaskExecutionResult.success()
         except AgentToolDeniedError as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
         except DisallowedPatchPathError as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
         except (
             AgentResolutionError,
@@ -325,11 +437,223 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             ContextBuilderError,
             GeneratedArtifactStoreError,
             PatchEvaluationContractError,
+            RuntimeStoreError,
             KeyError,
             TypeError,
             ValueError,
         ) as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.CONFIGURATION, str(error))
+
+    def _rollback_if_needed(
+        self, task_execution: JsonMapping, invocation_id: str | None,
+        tool_ref: JsonMapping | None, targets: Mapping[str, JsonMapping],
+        applied: Sequence[Mapping[str, str]],
+    ) -> None:
+        if applied and invocation_id is not None and tool_ref is not None:
+            self._rollback_applied_changes(
+                task_execution=task_execution, invocation_id=invocation_id,
+                tool_ref=tool_ref, targets=targets, applied=applied,
+            )
+            if isinstance(applied, list):
+                applied.clear()
+
+    def _rollback_applied_changes(
+        self,
+        *,
+        task_execution: JsonMapping,
+        invocation_id: str,
+        tool_ref: JsonMapping,
+        targets: Mapping[str, JsonMapping],
+        applied: Sequence[Mapping[str, str]],
+    ) -> None:
+        """Restore already-mutated files when a later compare-write fails."""
+
+        for index, change in enumerate(reversed(applied)):
+            target = targets[change["path"]]
+            if change["operation"] == "delete":
+                payload = {
+                    "operation": "compare_write", "path": change["path"],
+                    "content": target["content"], "expectedExists": False,
+                    "expectedSha256": sha256(b"").hexdigest(),
+                    "expectedMode": None,
+                    "mode": target["mode"],
+                }
+            elif target["exists"]:
+                payload = {
+                    "operation": "compare_write",
+                    "path": change["path"],
+                    "content": target["content"],
+                    "expectedExists": True,
+                    "expectedSha256": sha256(change["content"].encode()).hexdigest(),
+                    "expectedMode": target["mode"],
+                }
+            else:
+                payload = {
+                    "operation": "compare_delete",
+                    "path": change["path"],
+                    "expectedExists": True,
+                    "expectedSha256": sha256(change["content"].encode()).hexdigest(),
+                    "expectedMode": 0o600,
+                }
+            request = ToolRequest(
+                tool_ref=tool_ref,
+                input=payload,
+                caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
+                capabilities=("filesystem.write",),
+                timeout_ms=self._tool_timeout_ms,
+                correlation=_correlation(task_execution),
+            )
+            result, evidence = self._filesystem_tool.invoke(
+                invocation_id=self._runtime_id(
+                    "toolinvocation", f"{task_execution['id']}:filesystem:rollback:{index}"
+                ),
+                task_execution_id=str(task_execution["id"]),
+                request=request,
+                authorize=self._authorize_filesystem,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+            if result.status is not ToolResultStatus.SUCCEEDED:
+                raise GeneratePatchContractError(
+                    f"failed to roll back {change['path']!r} after a write failure"
+                )
+
+    def _read_editable_targets(
+        self, *, task_execution: JsonMapping, repository_revision: str, paths: Sequence[str],
+        tool_ref: JsonMapping,
+        max_bytes: int = 4 * 1024 * 1024,
+        purpose: str = "editable-target",
+    ) -> tuple[dict[str, Any], ...]:
+        targets: list[dict[str, Any]] = []
+        for index, path in enumerate(paths):
+            request = ToolRequest(
+                tool_ref=tool_ref,
+                input={"operation": "read", "path": path, "maxBytes": max_bytes},
+                caller=ToolCaller(kind="ContextBuilder", id=str(task_execution["id"])),
+                capabilities=("filesystem.read",),
+                timeout_ms=self._tool_timeout_ms,
+                correlation=_correlation(task_execution),
+            )
+            invocation_id = self._runtime_id(
+                "toolinvocation", f"{task_execution['id']}:{purpose}:{index}"
+            )
+            result, evidence = self._filesystem_tool.invoke(
+                invocation_id=invocation_id,
+                task_execution_id=str(task_execution["id"]),
+                request=request,
+                authorize=self._authorize_filesystem,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+            if (
+                result.status is not ToolResultStatus.SUCCEEDED
+                and result.failure_class is not ToolFailureClass.NOT_FOUND
+            ):
+                if result.failure_class is ToolFailureClass.POLICY:
+                    raise AgentToolDeniedError(
+                        f"editable target read for {path!r} was denied by policy"
+                    )
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} could not be materialized: "
+                    f"{result.failure_class.value if result.failure_class else result.status.value}"
+                )
+            exists = result.status is ToolResultStatus.SUCCEEDED
+            output = result.output_record() if exists else {}
+            content = output.get("content", "")
+            if "\x00" in content:
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} contains binary NUL bytes"
+                )
+            digest = output.get("sha256", sha256(b"").hexdigest())
+            targets.append({
+                "path": path,
+                "exists": exists,
+                "content": content,
+                "preimageSha256": digest,
+                "mode": output.get("mode"),
+                "repositoryRevision": repository_revision,
+                "provenance": {
+                    "actor": "context-builder",
+                    "taskExecutionId": task_execution["id"],
+                    "repositoryRevision": repository_revision,
+                    "resourceRefs": [],
+                },
+            })
+        return tuple(targets)
+
+    def _verify_targets_at_revision(
+        self, *, task_execution: JsonMapping, repository_revision: str,
+        paths: Sequence[str], targets: Sequence[JsonMapping], tool_ref: JsonMapping,
+        max_bytes: int,
+    ) -> None:
+        for index, (path, target) in enumerate(zip(paths, targets, strict=True)):
+            request = ToolRequest(
+                tool_ref=tool_ref,
+                input={"operation": "read_blob", "expectedRevision": repository_revision,
+                       "branch": self._working_branch, "paths": [path], "maxBytes": max_bytes},
+                caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
+                capabilities=("git.read",), timeout_ms=self._tool_timeout_ms,
+                correlation=_correlation(task_execution),
+            )
+            result, evidence = self._workspace_git_tool.invoke(
+                invocation_id=self._runtime_id(
+                    "toolinvocation", f"{task_execution['id']}:git:editable-blob:{index}"
+                ),
+                task_execution_id=str(task_execution["id"]), request=request,
+                authorize=self._authorize_git,
+            )
+            self._attach(task_execution["id"], {"toolInvocationIds": [evidence["id"]]})
+            output = result.output_record() if result.output is not None else {}
+            blob = output.get("blob")
+            if result.status is not ToolResultStatus.SUCCEEDED or not isinstance(blob, Mapping):
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} could not be bound to the recorded Git revision"
+                )
+            blob_mode = blob.get("mode")
+            target_mode = target.get("mode")
+            if (
+                blob.get("exists") != target.get("exists")
+                or blob.get("sha256") != target.get("preimageSha256")
+                or (
+                    blob.get("exists")
+                    and (not isinstance(blob_mode, int) or not isinstance(target_mode, int)
+                         or (blob_mode & 0o111) != (target_mode & 0o111))
+                )
+            ):
+                raise GeneratePatchContractError(
+                    f"editable target {path!r} does not match the recorded Git revision"
+                )
+
+    def _context_filesystem_ref(self, task_spec: JsonMapping) -> dict[str, str]:
+        agent_ref = _required_ref(task_spec.get("agentRef"), "Agent", "Task.spec.agentRef")
+        agent = self._require_resource(agent_ref, "Agent")
+        matches = []
+        for value in _spec(agent).get("toolRefs", ()):
+            if isinstance(value, Mapping):
+                ref = ResourceRef.from_mapping(dict(value))
+                if ref.name == "filesystem":
+                    matches.append(ref)
+        if len(matches) != 1:
+            raise GeneratePatchContractError(
+                "GeneratePatch Agent must reference exactly one versioned filesystem Tool"
+            )
+        self._require_resource(matches[0], "Tool")
+        return _ref_record(matches[0])
+
+    def _context_git_ref(self, task_spec: JsonMapping) -> dict[str, str]:
+        agent_ref = _required_ref(task_spec.get("agentRef"), "Agent", "Task.spec.agentRef")
+        agent = self._require_resource(agent_ref, "Agent")
+        matches = []
+        for value in _spec(agent).get("toolRefs", ()):
+            if isinstance(value, Mapping):
+                ref = ResourceRef.from_mapping(dict(value))
+                if ref.name == "git":
+                    matches.append(ref)
+        if len(matches) != 1:
+            raise GeneratePatchContractError(
+                "GeneratePatch Agent must reference exactly one versioned git Tool"
+            )
+        self._require_resource(matches[0], "Tool")
+        return _ref_record(matches[0])
 
     def _implementation_plan(
         self, task_execution: JsonMapping, workflow: JsonMapping
@@ -459,6 +783,8 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
         invocation_id: str,
         task_execution: JsonMapping,
         tool_ref: JsonMapping,
+        paths: Sequence[str] = (),
+        include_ignored: bool = False,
     ) -> tuple[ToolResult, RuntimeObject]:
         request = ToolRequest(
             tool_ref=tool_ref,
@@ -466,6 +792,8 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 "operation": "diff",
                 "expectedRevision": task_execution["provenance"]["repositoryRevision"],
                 "branch": self._working_branch,
+                "paths": list(paths),
+                "includeIgnored": include_ignored,
             },
             caller=ToolCaller(kind="TaskExecution", id=str(task_execution["id"])),
             capabilities=("git.read",),
@@ -494,11 +822,78 @@ def _allowed_paths(plan: JsonMapping) -> tuple[str, ...]:
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
 
 
-def _validated_changes(output: object, allowed_paths: Sequence[str]) -> tuple[dict[str, str], ...]:
+def _deletion_authorized_paths(
+    plan: JsonMapping, allowed_paths: Sequence[str]
+) -> tuple[str, ...]:
+    values = plan.get("deletionAuthorizedFiles", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must be an array"
+        )
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must contain unique normalized paths"
+        )
+    if not set(paths).issubset(allowed_paths):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.deletionAuthorizedFiles must be a subset of intendedFiles"
+        )
+    return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _required_insertions(
+    plan: JsonMapping, allowed_paths: Sequence[str]
+) -> tuple[dict[str, str], ...]:
+    values = plan.get("requiredInsertions", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must be an array")
+    records: list[dict[str, str]] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise GeneratePatchContractError(
+                "IMPLEMENTATION_PLAN.requiredInsertions must contain path/value objects"
+            )
+        path, token = value.get("path"), value.get("value")
+        if (
+            not isinstance(path, str) or path not in allowed_paths
+            or not isinstance(token, str) or not token
+        ):
+            raise GeneratePatchContractError(
+                "IMPLEMENTATION_PLAN.requiredInsertions must bind values to intendedFiles"
+            )
+        records.append({"path": path, "value": token})
+    if len({(item["path"], item["value"]) for item in records}) != len(records):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredInsertions must be unique")
+    return tuple(records)
+
+
+def _no_change_paths(plan: JsonMapping, allowed_paths: Sequence[str]) -> tuple[str, ...]:
+    values = plan.get("noChangeFiles", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.noChangeFiles must be an array")
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths) or not set(paths).issubset(allowed_paths):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.noChangeFiles must be unique intendedFiles")
+    return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
+    values = plan.get("unsupportedAcceptanceCriteria", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or any(not isinstance(value, str) or not value for value in values):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.unsupportedAcceptanceCriteria must contain non-empty strings")
+    return tuple(dict.fromkeys(values))
+
+
+def _validated_changes(
+    output: object,
+    allowed_paths: Sequence[str],
+    editable_targets: Sequence[JsonMapping],
+) -> tuple[dict[str, str], ...]:
     if not isinstance(output, Mapping):
         raise GeneratePatchContractError("Code Generator output must be an object")
     values = output.get("changes")
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or not values:
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise GeneratePatchContractError("Code Generator output must contain changes")
     changes: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -506,19 +901,52 @@ def _validated_changes(output: object, allowed_paths: Sequence[str]) -> tuple[di
         if not isinstance(value, Mapping):
             raise GeneratePatchContractError("each Code Generator change must be an object")
         path, content = value.get("path"), value.get("content")
+        operation = value.get("operation", "write")
         if not isinstance(path, str) or not _safe_path(path):
             raise GeneratePatchContractError("Code Generator change path is unsafe")
-        if not isinstance(content, str):
+        if operation not in {"write", "delete"}:
+            raise GeneratePatchContractError(f"Code Generator operation for {path!r} is invalid")
+        if operation == "write" and not isinstance(content, str):
             raise GeneratePatchContractError(f"Code Generator content for {path!r} must be text")
+        if operation == "write" and "\x00" in content:
+            raise GeneratePatchContractError(
+                f"Code Generator content for {path!r} contains binary NUL bytes"
+            )
+        if operation == "delete" and content not in {None, ""}:
+            raise GeneratePatchContractError(f"Code Generator delete for {path!r} must not include content")
         if path in seen:
             raise GeneratePatchContractError(f"Code Generator repeats path {path!r}")
         if not any(path == rule or path.startswith(f"{rule}/") for rule in allowed_paths):
             raise DisallowedPatchPathError(
                 f"Code Generator path {path!r} is outside IMPLEMENTATION_PLAN.intendedFiles"
             )
+        target = next((item for item in editable_targets if item.get("path") == path), None)
+        if target is None or value.get("preimageSha256") != target.get("preimageSha256"):
+            raise GeneratePatchContractError(
+                f"Code Generator change for {path!r} is not bound to the supplied preimage"
+            )
         seen.add(path)
-        changes.append({"path": path, "content": content})
+        changes.append({"path": path, "content": content or "", "operation": operation})
     return tuple(changes)
+
+
+def _verify_no_change_targets(
+    no_change_paths: Sequence[str],
+    required_insertions: Sequence[Mapping[str, str]],
+    editable_targets: Sequence[JsonMapping],
+) -> None:
+    for path in no_change_paths:
+        criteria = [item["value"] for item in required_insertions if item["path"] == path]
+        target = next((item for item in editable_targets if item.get("path") == path), None)
+        content = target.get("content") if isinstance(target, Mapping) else None
+        if (
+            not criteria
+            or not isinstance(content, str)
+            or any(value not in content for value in criteria)
+        ):
+            raise GeneratePatchContractError(
+                f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
+            )
 
 
 def _changed_paths(values: object) -> list[str]:
@@ -540,7 +968,12 @@ def _safe_path(value: str) -> bool:
     if not value or "\\" in value:
         return False
     path = PurePosixPath(value)
-    return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
+    return (
+        value == path.as_posix()
+        and not path.is_absolute()
+        and all(part not in {"", ".", ".."} for part in path.parts)
+        and (not path.parts or path.parts[0].casefold() != ".git")
+    )
 
 
 def _tool_failure(result: ToolResult, operation: str) -> TaskExecutionResult:
