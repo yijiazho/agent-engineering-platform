@@ -167,19 +167,33 @@ class ResourceLoader:
                         f"{resource.path} references missing resource {format_ref(reference)}"
                     )
 
-        for resource in resources:
-            if resource.kind != "Agent" or "outputSchema" not in resource.data["spec"]:
-                continue
-            model_ref = ResourceRef.from_mapping(resource.data["spec"]["modelRef"])
+        for agent in (item for item in resources if item.kind == "Agent"):
+            agent_spec = agent.data["spec"]
+            model_ref = ResourceRef.from_mapping(agent_spec["modelRef"])
             model = index.get(model_ref)
             if model is None or model.data["spec"].get("provider") != "openai":
                 continue
-            try:
-                validate_openai_strict_schema(resource.data["spec"]["outputSchema"])
-            except StrictProviderSchemaError as error:
-                raise ResourceValidationError(
-                    f"{resource.path}: spec.outputSchema: {error}"
-                ) from None
+            if "outputSchema" in agent_spec:
+                _validate_openai_output_schema(
+                    agent.path, "spec.outputSchema", agent_spec["outputSchema"]
+                )
+
+        for task in (item for item in resources if item.kind == "Task"):
+            task_spec = task.data["spec"]
+            agent_ref_value = task_spec.get("agentRef")
+            if not isinstance(agent_ref_value, dict):
+                continue
+            agent = index.get(ResourceRef.from_mapping(agent_ref_value))
+            if agent is None:
+                continue
+            agent_spec = agent.data["spec"]
+            model = index.get(ResourceRef.from_mapping(agent_spec["modelRef"]))
+            if model is None or model.data["spec"].get("provider") != "openai":
+                continue
+            if "outputSchema" not in agent_spec:
+                _validate_openai_output_schema(
+                    task.path, "spec.outputs", task_spec["outputs"]
+                )
 
         ordered = tuple(sorted(resources, key=_resource_sort_key))
         return ResourceCollection(workspace=resources[0], resources=ordered)
@@ -240,6 +254,13 @@ class ResourceLoader:
 
 def load_resources(repo_root: Path | str) -> ResourceCollection:
     return ResourceLoader(repo_root).load()
+
+
+def _validate_openai_output_schema(path: Path, field: str, schema: Any) -> None:
+    try:
+        validate_openai_strict_schema(schema)
+    except StrictProviderSchemaError as error:
+        raise ResourceValidationError(f"{path}: {field}: {error}") from None
 
 
 def format_ref(ref: ResourceRef) -> str:

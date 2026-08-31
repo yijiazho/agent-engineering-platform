@@ -32,13 +32,23 @@ def test_reports_original_planner_nested_mismatch_at_stable_path():
     assert raised.value.names == ("requiredInsertion",)
 
 
+@pytest.mark.parametrize("schema", [{"type": "string"}, {"type": "array", "items": {"type": "string"}}])
+def test_rejects_non_object_root_while_nested_scalars_remain_supported(schema):
+    with pytest.raises(StrictProviderSchemaError) as raised:
+        validate_openai_strict_schema(schema)
+    assert raised.value.path == "$"
+    assert raised.value.reason == "root schema type must be object"
+
+
 @pytest.mark.parametrize(
     ("schema", "path"),
     [
         (object_schema({"nested": object_schema({"x": {"type": "string"}}, [])}),
          "$.properties.nested.required"),
-        ({"type": "array", "items": object_schema({"x": {"type": "string"}}, ["x", "ghost"])},
-         "$.items.required"),
+        (object_schema({"values": {
+            "type": "array",
+            "items": object_schema({"x": {"type": "string"}}, ["x", "ghost"]),
+        }}), "$.properties.values.items.required"),
         (object_schema({"nested": {"type": "object", "properties": {}, "required": []}}),
          "$.properties.nested.additionalProperties"),
         (object_schema({"value": {"anyOf": [object_schema({"x": {"type": "string"}}), {"type": "null"}]}}),

@@ -940,3 +940,20 @@ def test_unknown_http_400_remains_generic_and_redacted(body):
         adapter(ScriptedTransport([ProviderHttpResponse(400, {"X-Secret": "raw"}, body)])).invoke(model_request())
     assert raised.value.code == "provider_error"
     assert "secret" not in repr(raised.value.provider_metadata) + str(raised.value)
+
+
+def test_generic_invalid_request_type_does_not_imply_response_schema_failure():
+    body = {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "context_length_exceeded",
+            "param": "input",
+            "message": "secret context detail",
+        }
+    }
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([response(400, body)])).invoke(model_request())
+
+    assert raised.value.code == "provider_error"
+    assert "providerErrorReason" not in raised.value.provider_metadata
+    assert "secret" not in repr(raised.value.provider_metadata) + str(raised.value)

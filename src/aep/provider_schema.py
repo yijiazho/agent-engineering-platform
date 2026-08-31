@@ -40,6 +40,8 @@ def validate_openai_strict_schema(schema: Any) -> None:
     them without changing structure; AEP applies the complete schema afterward.
     """
 
+    if not isinstance(schema, Mapping) or schema.get("type") != "object":
+        raise StrictProviderSchemaError("$", "root schema type must be object")
     _validate(schema, "$", schema_position=True)
 
 
