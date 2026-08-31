@@ -67,7 +67,8 @@ def test_rejects_invalid_keyword_values_with_redacted_schema_paths(schema, path)
          "$.properties.nested.additionalProperties"),
         (object_schema({"value": {"anyOf": [object_schema({"x": {"type": "string"}}), {"type": "null"}]}}),
          None),
-        (object_schema({"value": {"allOf": [{"type": "string"}]}}), None),
+        (object_schema({"value": {"allOf": [{"type": "string"}]}}), "$.properties.value"),
+        (object_schema({"value": {"oneOf": [{"type": "string"}]}}), "$.properties.value"),
         (object_schema({"value": {"not": {"type": "null"}}}), "$.properties.value"),
     ],
 )

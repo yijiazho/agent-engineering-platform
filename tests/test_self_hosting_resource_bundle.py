@@ -115,6 +115,15 @@ def test_context_and_agent_boundaries_are_explicit(
         {"kind": "Tool", "name": "git", "version": "1.3.0"},
     ]
     assert "toolRefs" not in agents["pr-writer"]
+    code_generator = resources.get(ResourceRef(
+        "Agent", "code-generator", EXPECTED["resourceVersions"]["codeGeneratorAgent"]
+    ))
+    assert code_generator is not None
+    change_items = code_generator.data["spec"]["outputSchema"]["properties"][
+        "changes"
+    ]["items"]
+    assert "anyOf" in change_items
+    assert "oneOf" not in change_items
     planner = resources.get(ResourceRef(
         "Agent", "planner", EXPECTED["resourceVersions"]["plannerAgent"]
     ))

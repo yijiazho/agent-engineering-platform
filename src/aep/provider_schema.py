@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
 
-_COMPOSITIONS = ("allOf", "anyOf", "oneOf")
+_COMPOSITIONS = ("anyOf",)
 _ANNOTATIONS = frozenset({"title", "description", "$comment", "default", "examples"})
 _AEP_ONLY_VALIDATION = frozenset({"minLength", "maxLength", "uniqueItems"})
 _SUPPORTED = frozenset(
