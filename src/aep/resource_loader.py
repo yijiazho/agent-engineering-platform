@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
+from aep.provider_schema import StrictProviderSchemaError, validate_openai_strict_schema
 
 
 RESOURCE_DIRECTORIES: dict[str, tuple[str, ...]] = {
@@ -165,6 +166,20 @@ class ResourceLoader:
                     raise MissingResourceReferenceError(
                         f"{resource.path} references missing resource {format_ref(reference)}"
                     )
+
+        for resource in resources:
+            if resource.kind != "Agent" or "outputSchema" not in resource.data["spec"]:
+                continue
+            model_ref = ResourceRef.from_mapping(resource.data["spec"]["modelRef"])
+            model = index.get(model_ref)
+            if model is None or model.data["spec"].get("provider") != "openai":
+                continue
+            try:
+                validate_openai_strict_schema(resource.data["spec"]["outputSchema"])
+            except StrictProviderSchemaError as error:
+                raise ResourceValidationError(
+                    f"{resource.path}: spec.outputSchema: {error}"
+                ) from None
 
         ordered = tuple(sorted(resources, key=_resource_sort_key))
         return ResourceCollection(workspace=resources[0], resources=ordered)

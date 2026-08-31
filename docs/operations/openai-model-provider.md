@@ -41,6 +41,23 @@ and then the AgentInvocation coordinator
 performs authoritative validation against the complete immutable schema before
 artifact publication. This follows the
 [official Structured Outputs schema contract](https://developers.openai.com/api/docs/guides/structured-outputs);
+
+Before readiness or invocation, AEP recursively validates object schemas in
+properties, array items, composition branches, and `$defs`. Every object must
+set `additionalProperties` to `false`, and its `required` names must exactly
+match its declared properties. Express an optional value as a required property
+whose schema includes an explicit `{ "type": "null" }` branch in `anyOf`.
+Provider projection preserves names, requiredness, enums, and nullability; it
+only removes the documented AEP-side `minLength`, `maxLength`, and `uniqueItems`
+checks. The immutable AEP schema remains authoritative after generation.
+
+An incompatible local schema fails as `invalid_response_schema` with a safe
+`schemaPath`, zero provider attempts, no quota reservation, and suppressed
+retry. An allowlisted OpenAI HTTP 400 invalid-schema response fails permanently
+as `invalid_request` with sanitized error type/code and schema parameter.
+Malformed or unknown bodies remain generic `provider_error`; raw bodies,
+headers, prompts, context, credentials, project identifiers, and raw request IDs
+are never persisted.
 the configured GPT-5 model supports both the Responses endpoint and Structured
 Outputs according to the
 [official model page](https://developers.openai.com/api/docs/models/gpt-5).

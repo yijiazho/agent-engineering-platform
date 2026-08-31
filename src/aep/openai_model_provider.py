@@ -34,6 +34,7 @@ from aep.model_rate_limits import (
     CoordinatorStateError,
     ProcessLocalModelAdmissionCoordinator,
 )
+from aep.provider_schema import StrictProviderSchemaError, validate_openai_strict_schema
 
 
 _DEFAULT_API_URL = "https://api.openai.com/v1"
@@ -262,6 +263,28 @@ class OpenAIModelAdapter(ModelAdapter):
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
             )
+
+        try:
+            validate_openai_strict_schema(request.input["outputSchema"])
+        except (KeyError, StrictProviderSchemaError) as error:
+            path = error.path if isinstance(error, StrictProviderSchemaError) else "$.outputSchema"
+            metadata: dict[str, Any] = {
+                "provider": "openai",
+                "requestedModel": configuration.model,
+                "schemaPath": path,
+                "attemptCount": 0,
+                "attempts": [],
+                "retryDecision": "suppressed",
+                "quotaReserved": False,
+            }
+            if isinstance(error, StrictProviderSchemaError) and error.names:
+                metadata["schemaNames"] = list(error.names)
+            raise ModelInvocationError(
+                "model output schema is incompatible with the provider strict schema contract",
+                classification=ModelErrorClass.PERMANENT,
+                code="invalid_response_schema",
+                provider_metadata=metadata,
+            ) from None
 
         timeout_ms = configuration.timeout_ms
         deadline = self._monotonic() + timeout_ms / 1000
@@ -787,6 +810,13 @@ def _http_failure(response: ProviderHttpResponse) -> ModelInvocationError | None
     if response.status in {401, 403}:
         code = "authentication" if response.status == 401 else "authorization"
         return _failure(code, recoverable=False, metadata={"httpStatus": response.status})
+    if response.status == 400:
+        details = _safe_invalid_request_evidence(response.body)
+        if details:
+            return _failure(
+                "invalid_request", recoverable=False,
+                metadata={"httpStatus": 400, **details},
+            )
     return _failure("provider_error", recoverable=False)
 
 
@@ -974,6 +1004,36 @@ def _provider_error_reason(body: bytes) -> tuple[str | None, str]:
         if value in mappings:
             return mappings[value]
     return None, "unknown"
+
+
+def _safe_invalid_request_evidence(body: bytes) -> dict[str, Any]:
+    """Extract only fixed classifications and a sanitized schema parameter."""
+
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        return {}
+    error = document.get("error") if isinstance(document, Mapping) else None
+    if not isinstance(error, Mapping):
+        return {}
+    error_type = error.get("type")
+    error_code = error.get("code")
+    if error_type != "invalid_request_error" and error_code not in {
+        "invalid_json_schema", "invalid_response_format"
+    }:
+        return {}
+    evidence: dict[str, Any] = {"providerErrorReason": "invalid_response_format"}
+    if error_type == "invalid_request_error":
+        evidence["providerErrorType"] = "invalid_request_error"
+    if error_code in {"invalid_json_schema", "invalid_response_format"}:
+        evidence["providerErrorCode"] = error_code
+    parameter = error.get("param")
+    if isinstance(parameter, str) and re.fullmatch(
+        r"(?:text\.format\.schema|response_format\.json_schema\.schema)(?:\.(?:properties|items|required|anyOf|oneOf|allOf|\$defs|[A-Za-z0-9_-]+))*",
+        parameter,
+    ):
+        evidence["schemaParameter"] = parameter
+    return evidence
 
 
 def _safe_rate_limit_evidence(

@@ -1,13 +1,13 @@
 {
   "apiVersion": "aep.dev/v1alpha1",
   "kind": "Workflow",
-  "metadata": {"name": "issue-to-pr", "version": "1.12.0", "description": "Turn a repository issue into a validated, unmerged pull request."},
+  "metadata": {"name": "issue-to-pr", "version": "1.13.0", "description": "Turn a repository issue into a validated, unmerged pull request."},
   "spec": {
     "triggers": [{"eventRef": {"kind": "Event", "name": "github-issue-created", "version": "1.0.0"}}],
     "tasks": [
       {"taskRef": {"kind": "Task", "name": "analyze-issue", "version": "1.2.0"}},
-      {"taskRef": {"kind": "Task", "name": "build-implementation-plan", "version": "1.6.0"}, "dependsOn": [{"kind": "Task", "name": "analyze-issue", "version": "1.2.0"}]},
-      {"taskRef": {"kind": "Task", "name": "generate-patch", "version": "1.10.0"}, "dependsOn": [{"kind": "Task", "name": "build-implementation-plan", "version": "1.6.0"}]},
+      {"taskRef": {"kind": "Task", "name": "build-implementation-plan", "version": "1.7.0"}, "dependsOn": [{"kind": "Task", "name": "analyze-issue", "version": "1.2.0"}]},
+      {"taskRef": {"kind": "Task", "name": "generate-patch", "version": "1.10.0"}, "dependsOn": [{"kind": "Task", "name": "build-implementation-plan", "version": "1.7.0"}]},
       {"taskRef": {"kind": "Task", "name": "run-validation", "version": "1.1.0"}, "dependsOn": [{"kind": "Task", "name": "generate-patch", "version": "1.10.0"}]},
       {"taskRef": {"kind": "Task", "name": "evaluate-acceptance", "version": "1.0.0"}, "dependsOn": [{"kind": "Task", "name": "run-validation", "version": "1.1.0"}]},
       {"taskRef": {"kind": "Task", "name": "create-pull-request", "version": "1.2.0"}, "dependsOn": [{"kind": "Task", "name": "evaluate-acceptance", "version": "1.0.0"}]}

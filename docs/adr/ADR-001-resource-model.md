@@ -550,6 +550,15 @@ Controllers never perform AI reasoning.
 
 ## Trade-offs
 
+Provider-neutral Agent `outputSchema` remains a complete JSON Schema contract.
+When its resolved Model selects OpenAI strict Structured Outputs, Resource
+loading additionally audits the provider subset recursively. Closed objects
+must require every declared property; semantic optionality is represented by a
+required property with an explicit nullable `anyOf` branch. Provider projection
+may remove only documented generation-time validation hints and cannot alter
+property names, requiredness, enums, or nullability. The complete Resource
+schema remains authoritative for post-response evaluation.
+
 * Increased number of resource types.
 * More explicit dependency management.
 * Higher initial implementation complexity.

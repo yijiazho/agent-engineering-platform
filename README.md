@@ -469,6 +469,13 @@ The shared container image runs the copied `/opt/aep/src` tree so its
 source-relative runtime validators resolve the matching `/opt/aep/schemas`
 bundle included in the same immutable image.
 
+OpenAI-backed Agent output schemas are recursively checked against the strict
+Structured Outputs subset while Resources load and again before provider quota
+admission. Every nested object must be closed with `additionalProperties: false`
+and require every declared property. Optional values remain required fields and
+use a nullable `anyOf` branch; the complete AEP schema is still applied after
+generation.
+
 The concrete repository-bound provider uses GitHub App installation tokens for
 both API calls and ephemeral Git askpass leases. It performs duplicate-PR
 reconciliation before creation, caches tokens only until their refresh window,
@@ -559,7 +566,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 51 implementation tasks are complete.
+contracts are established, and 43 of the 52 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -654,7 +661,7 @@ Implemented foundations currently include:
 
 The repository now aligns `publication-evidence:1.1.0` with the canonical
 runtime evidence contract through `create-pull-request:1.2.0` and
-`issue-to-pr:1.12.0`. Credential-free local and source/published exact-image
+`issue-to-pr:1.13.0`. Credential-free local and source/published exact-image
 verification pass. The subsequent live run passed validation, acceptance, and
 Publication Policy but exposed AEP-049 at authenticated push. The corrected
 helper now uses the running service's verified absolute interpreter, private

@@ -126,6 +126,7 @@ def model_request(
             },
             "outputSchema": {
                 "type": "object",
+                "additionalProperties": False,
                 "required": ["answer"],
                 "properties": {"answer": {"type": "integer"}},
                 "additionalProperties": False,
@@ -883,3 +884,59 @@ def test_schema_projection_preserves_property_names_that_match_removed_keywords(
         "type": "array",
         "items": {"type": "string"},
     }
+
+
+def test_incompatible_schema_fails_before_transport_or_quota_admission():
+    transport = ScriptedTransport([success()])
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2, tokens_per_minute=80_000
+    )
+    request = model_request()
+    broken = dict(request.input["outputSchema"])
+    broken["required"] = []
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": broken},
+        correlation=request.correlation,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="secret"), transport=transport,
+            coordinator=coordinator,
+        ).invoke(request)
+
+    assert raised.value.code == "invalid_response_schema"
+    assert raised.value.provider_metadata["schemaPath"] == "$.required"
+    assert raised.value.provider_metadata["attemptCount"] == 0
+    assert raised.value.provider_metadata["quotaReserved"] is False
+    assert transport.requests == []
+
+
+def test_http_400_invalid_schema_evidence_is_allowlisted_and_redacted():
+    body = {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_json_schema",
+            "param": "text.format.schema.properties.plan.required",
+            "message": "secret prompt project-id raw provider details",
+        }
+    }
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([response(400, body)])).invoke(model_request())
+
+    metadata = raised.value.provider_metadata
+    assert raised.value.code == "invalid_request"
+    assert metadata["providerErrorReason"] == "invalid_response_format"
+    assert metadata["schemaParameter"] == "text.format.schema.properties.plan.required"
+    assert metadata["attemptCount"] == 1
+    assert metadata["retryDecision"] == "suppressed"
+    assert "secret" not in repr(metadata) + str(raised.value)
+
+
+@pytest.mark.parametrize("body", [b"malformed secret", b'{"error":{"message":"secret"}}'])
+def test_unknown_http_400_remains_generic_and_redacted(body):
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([ProviderHttpResponse(400, {"X-Secret": "raw"}, body)])).invoke(model_request())
+    assert raised.value.code == "provider_error"
+    assert "secret" not in repr(raised.value.provider_metadata) + str(raised.value)

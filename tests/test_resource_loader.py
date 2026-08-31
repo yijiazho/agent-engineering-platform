@@ -91,6 +91,40 @@ def test_rejects_invalid_schema(tmp_path: Path) -> None:
         ResourceLoader(tmp_path).load()
 
 
+def test_rejects_nested_openai_strict_output_schema_before_readiness(tmp_path: Path) -> None:
+    write_valid_workspace(tmp_path, default_policies=[])
+    write_resource(tmp_path, "models/openai.yaml", resource("Model", "openai", "1.0.0", {
+        "provider": "openai", "model": "gpt-5",
+    }))
+    write_resource(tmp_path, "prompts/planner.yaml", resource("Prompt", "planner", "1.0.0", {
+        "system": "Plan.",
+    }))
+    write_resource(tmp_path, "agents/planner.yaml", resource("Agent", "planner", "1.0.0", {
+        "promptRef": ref("Prompt", "planner"),
+        "modelRef": ref("Model", "openai"),
+        "outputSchema": {
+            "type": "object", "additionalProperties": False,
+            "required": ["classifications"],
+            "properties": {"classifications": {
+                "type": "array", "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["criterion"],
+                    "properties": {
+                        "criterion": {"type": "string"},
+                        "requiredInsertion": {"type": "null"},
+                    },
+                },
+            }},
+        },
+    }))
+
+    with pytest.raises(
+        ResourceValidationError,
+        match=r"\$\.properties\.classifications\.items\.required.*requiredInsertion",
+    ):
+        ResourceLoader(tmp_path).load()
+
+
 def test_rejects_missing_workspace_file(tmp_path: Path) -> None:
     (tmp_path / ".ai").mkdir()
 

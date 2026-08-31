@@ -441,7 +441,7 @@ exactly `patchGenerated`, `validationRan`, `requiredArtifactsPresent`,
 `requiredEvaluationsPresent`, `allRequiredEvaluationsPassed`,
 `noPriorPolicyViolation`, and `failures`; its runtime schema rejects vocabulary
 drift. The self-hosting graph pins `publication-evidence:1.1.0` through
-`create-pull-request:1.2.0` and `issue-to-pr:1.12.0`. Only a matching Publication
+`create-pull-request:1.2.0` and `issue-to-pr:1.13.0`. Only a matching Publication
 Policy allow proceeds to the separate `git.push` capability decision and Git
 mutation, followed by a separate `github.create_pr` capability decision and PR
 mutation. A denial produces neither Git ToolInvocation, GitHub call, nor
@@ -617,3 +617,10 @@ through the same Filesystem handle and rolls back earlier writes through that
 Tool boundary if a later write fails.
 Plans can mark exact targets `NO_CHANGE`; required insertions are bound to their
 target paths, and authorized deletions use preimage-bound delete operations.
+
+OpenAI strict-output compatibility is a separate provider contract from the
+provider-neutral Agent JSON Schema. Resource loading validates it recursively,
+and the adapter repeats the preflight before admission as defense in depth.
+Failures therefore create no provider attempt or quota reservation and carry
+only a stable schema path. Nullable required properties represent optional
+semantic values; AEP still validates the complete immutable schema afterward.
