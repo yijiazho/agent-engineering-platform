@@ -1000,3 +1000,29 @@ def test_direct_adapter_rejects_invalid_schema_keyword_values_before_admission()
     assert raised.value.provider_metadata["attemptCount"] == 0
     assert raised.value.provider_metadata["quotaReserved"] is False
     assert transport.requests == []
+
+
+def test_direct_adapter_redacts_local_schema_property_names_before_evidence():
+    secret_name = "secret-project-123"
+    transport = ScriptedTransport([success()])
+    request = model_request()
+    invalid_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [secret_name],
+        "properties": {secret_name: {"type": "bogus"}},
+    }
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": invalid_schema},
+        correlation=request.correlation,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(request)
+
+    metadata = raised.value.provider_metadata
+    assert raised.value.code == "invalid_response_schema"
+    assert metadata["schemaPath"] == "$.properties.<redacted>.type"
+    assert secret_name not in repr(metadata) + str(raised.value)
+    assert transport.requests == []

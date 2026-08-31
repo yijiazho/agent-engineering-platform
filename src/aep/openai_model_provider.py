@@ -34,7 +34,11 @@ from aep.model_rate_limits import (
     CoordinatorStateError,
     ProcessLocalModelAdmissionCoordinator,
 )
-from aep.provider_schema import StrictProviderSchemaError, validate_openai_strict_schema
+from aep.provider_schema import (
+    StrictProviderSchemaError,
+    redact_schema_path,
+    validate_openai_strict_schema,
+)
 
 
 _DEFAULT_API_URL = "https://api.openai.com/v1"
@@ -267,7 +271,11 @@ class OpenAIModelAdapter(ModelAdapter):
         try:
             validate_openai_strict_schema(request.input["outputSchema"])
         except (KeyError, StrictProviderSchemaError) as error:
-            path = error.path if isinstance(error, StrictProviderSchemaError) else "$.outputSchema"
+            path = (
+                redact_schema_path(error.path)
+                if isinstance(error, StrictProviderSchemaError)
+                else "$.outputSchema"
+            )
             metadata: dict[str, Any] = {
                 "provider": "openai",
                 "requestedModel": configuration.model,

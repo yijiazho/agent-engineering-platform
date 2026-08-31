@@ -52,7 +52,29 @@ def validate_openai_strict_schema(schema: Any) -> None:
             _safe_schema_error_path(error.absolute_path),
             "invalid JSON Schema keyword value",
         ) from None
+    if "anyOf" in schema:
+        raise StrictProviderSchemaError("$.anyOf", "anyOf is not supported at the root")
     _validate(schema, "$", schema_position=True)
+
+
+def redact_schema_path(path: str) -> str:
+    """Redact declared property and definition names from an evidence path."""
+
+    segments = path.split(".")
+    rendered: list[str] = []
+    redact_next = False
+    for segment in segments:
+        if redact_next:
+            suffix = ""
+            if "[" in segment:
+                _, suffix = segment.split("[", 1)
+                suffix = "[" + suffix
+            rendered.append("<redacted>" + suffix)
+            redact_next = False
+        else:
+            rendered.append(segment)
+            redact_next = segment in {"properties", "$defs"}
+    return ".".join(rendered)
 
 
 def _safe_schema_error_path(parts: Sequence[Any]) -> str:
@@ -89,6 +111,11 @@ def _validate(value: Any, path: str, *, schema_position: bool) -> None:
     unsupported = sorted(str(key) for key in value if key not in _SUPPORTED)
     if unsupported:
         raise StrictProviderSchemaError(path, "unsupported keyword", tuple(unsupported))
+
+    if isinstance(value.get("type"), list):
+        raise StrictProviderSchemaError(
+            f"{path}.type", "type unions are unsupported; use nested anyOf"
+        )
 
     properties = value.get("properties")
     object_schema = value.get("type") == "object" or isinstance(properties, Mapping)

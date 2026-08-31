@@ -48,7 +48,8 @@ set `additionalProperties` to `false`, and its `required` names must exactly
 match its declared properties. Express an optional value as a required property
 whose schema includes an explicit `{ "type": "null" }` branch in `anyOf`.
 `anyOf` is the only supported composition keyword; `allOf` and `oneOf` fail
-preflight rather than being forwarded to the provider.
+preflight rather than being forwarded to the provider. `anyOf` is nested-only;
+root-level composition and array-valued `type` unions also fail preflight.
 Provider projection preserves names, requiredness, enums, and nullability; it
 only removes the documented AEP-side `minLength`, `maxLength`, and `uniqueItems`
 checks. The immutable AEP schema remains authoritative after generation.

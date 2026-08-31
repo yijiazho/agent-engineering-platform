@@ -1,6 +1,10 @@
 import pytest
 
-from aep.provider_schema import StrictProviderSchemaError, validate_openai_strict_schema
+from aep.provider_schema import (
+    StrictProviderSchemaError,
+    redact_schema_path,
+    validate_openai_strict_schema,
+)
 
 
 def object_schema(properties, required=None, **extra):
@@ -52,6 +56,35 @@ def test_rejects_invalid_keyword_values_with_redacted_schema_paths(schema, path)
         validate_openai_strict_schema(schema)
     assert raised.value.path == path
     assert raised.value.reason == "invalid JSON Schema keyword value"
+
+
+def test_rejects_root_anyof_but_allows_nested_anyof():
+    nested = object_schema({
+        "value": {"anyOf": [{"type": "string"}, {"type": "null"}]}
+    })
+    validate_openai_strict_schema(nested)
+
+    root = {**nested, "anyOf": [object_schema({"other": {"type": "string"}})]}
+    with pytest.raises(StrictProviderSchemaError) as raised:
+        validate_openai_strict_schema(root)
+    assert raised.value.path == "$.anyOf"
+
+
+def test_rejects_type_union_and_redacts_dynamic_evidence_path():
+    schema = object_schema({
+        "secret-project-123": {
+            "type": ["object", "null"],
+            "additionalProperties": True,
+            "properties": {"hidden-tenant": {"type": "string"}},
+        }
+    })
+    with pytest.raises(StrictProviderSchemaError) as raised:
+        validate_openai_strict_schema(schema)
+    assert "secret-project-123" in raised.value.path
+    safe_path = redact_schema_path(raised.value.path)
+    assert safe_path == "$.properties.<redacted>.type"
+    assert "secret-project-123" not in safe_path
+    assert "hidden-tenant" not in safe_path
 
 
 @pytest.mark.parametrize(
