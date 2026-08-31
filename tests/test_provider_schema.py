@@ -43,6 +43,20 @@ def test_rejects_non_object_root_while_nested_scalars_remain_supported(schema):
 @pytest.mark.parametrize(
     ("schema", "path"),
     [
+        (object_schema({"value": {"type": "bogus"}}), "$.properties.<redacted>.type"),
+        (object_schema({"value": {"type": "string"}}, ["value", "value"]), "$.required"),
+    ],
+)
+def test_rejects_invalid_keyword_values_with_redacted_schema_paths(schema, path):
+    with pytest.raises(StrictProviderSchemaError) as raised:
+        validate_openai_strict_schema(schema)
+    assert raised.value.path == path
+    assert raised.value.reason == "invalid JSON Schema keyword value"
+
+
+@pytest.mark.parametrize(
+    ("schema", "path"),
+    [
         (object_schema({"nested": object_schema({"x": {"type": "string"}}, [])}),
          "$.properties.nested.required"),
         (object_schema({"values": {

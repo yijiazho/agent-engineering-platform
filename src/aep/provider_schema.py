@@ -6,6 +6,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+
 
 _COMPOSITIONS = ("allOf", "anyOf", "oneOf")
 _ANNOTATIONS = frozenset({"title", "description", "$comment", "default", "examples"})
@@ -42,7 +45,39 @@ def validate_openai_strict_schema(schema: Any) -> None:
 
     if not isinstance(schema, Mapping) or schema.get("type") != "object":
         raise StrictProviderSchemaError("$", "root schema type must be object")
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as error:
+        raise StrictProviderSchemaError(
+            _safe_schema_error_path(error.absolute_path),
+            "invalid JSON Schema keyword value",
+        ) from None
     _validate(schema, "$", schema_position=True)
+
+
+def _safe_schema_error_path(parts: Sequence[Any]) -> str:
+    """Render a useful schema path without retaining declared property names."""
+
+    rendered = "$"
+    redact_next = False
+    structural = {
+        "$defs", "additionalProperties", "allOf", "anyOf", "enum", "items",
+        "oneOf", "properties", "required", "type",
+    }
+    for part in parts:
+        if isinstance(part, int):
+            rendered += f"[{part}]"
+            continue
+        value = str(part)
+        if redact_next:
+            rendered += ".<redacted>"
+            redact_next = False
+        elif value in structural:
+            rendered += f".{value}"
+            redact_next = value in {"$defs", "properties"}
+        else:
+            rendered += ".<redacted>"
+    return rendered
 
 
 def _validate(value: Any, path: str, *, schema_position: bool) -> None:

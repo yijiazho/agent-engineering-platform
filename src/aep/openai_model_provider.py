@@ -1019,15 +1019,7 @@ def _safe_invalid_request_evidence(body: bytes) -> dict[str, Any]:
     error_type = error.get("type")
     error_code = error.get("code")
     schema_codes = {"invalid_json_schema", "invalid_response_format"}
-    parameter = error.get("param")
-    safe_parameter = (
-        parameter
-        if isinstance(parameter, str) and re.fullmatch(
-            r"(?:text\.format\.schema|response_format\.json_schema\.schema)(?:\.(?:properties|items|required|anyOf|oneOf|allOf|\$defs|[A-Za-z0-9_-]+))*",
-            parameter,
-        )
-        else None
-    )
+    safe_parameter = _safe_schema_parameter(error.get("param"))
     if error_code not in schema_codes and safe_parameter is None:
         return {}
     evidence: dict[str, Any] = {"providerErrorReason": "invalid_response_format"}
@@ -1038,6 +1030,41 @@ def _safe_invalid_request_evidence(body: bytes) -> dict[str, Any]:
     if safe_parameter is not None:
         evidence["schemaParameter"] = safe_parameter
     return evidence
+
+
+def _safe_schema_parameter(value: Any) -> str | None:
+    """Normalize a provider schema path while redacting dynamic schema names."""
+
+    if not isinstance(value, str):
+        return None
+    prefixes = ("text.format.schema", "response_format.json_schema.schema")
+    prefix = next(
+        (candidate for candidate in prefixes if value == candidate or value.startswith(candidate + ".")),
+        None,
+    )
+    if prefix is None:
+        return None
+    remainder = value[len(prefix):].removeprefix(".")
+    if not remainder:
+        return prefix
+    segments = remainder.split(".")
+    structural = {"properties", "items", "required", "anyOf", "oneOf", "allOf", "$defs"}
+    rendered: list[str] = []
+    redact_next = False
+    for segment in segments:
+        if not segment or not re.fullmatch(r"[A-Za-z0-9_$-]+", segment):
+            return None
+        if redact_next:
+            rendered.append("<redacted>")
+            redact_next = False
+        elif segment in structural or segment.isdigit():
+            rendered.append(segment)
+            redact_next = segment in {"properties", "$defs"}
+        else:
+            return None
+    if redact_next:
+        return None
+    return ".".join((prefix, *rendered))
 
 
 def _safe_rate_limit_evidence(
