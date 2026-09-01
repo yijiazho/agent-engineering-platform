@@ -558,6 +558,10 @@ required property with an explicit nullable `anyOf` branch. Provider projection
 may remove only documented generation-time validation hints and cannot alter
 property names, requiredness, enums, or nullability. The complete Resource
 schema remains authoritative for post-response evaluation.
+For the deployed OpenAI Responses API / `gpt-5` contract, `const` is not an
+accepted provider keyword. Authors use an explicit scalar `type` plus a
+singleton `enum` for discriminators. Endpoint/model support is recorded in one
+code-level compatibility matrix rather than inferred from Draft 2020-12.
 
 * Increased number of resource types.
 * More explicit dependency management.

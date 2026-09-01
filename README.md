@@ -475,6 +475,9 @@ admission. Every nested object must be closed with `additionalProperties: false`
 and require every declared property. Optional values remain required fields and
 use a nullable `anyOf` branch; the complete AEP schema is still applied after
 generation.
+For the deployed Responses API / `gpt-5` contract, discriminators use typed
+singleton enums; `const` is rejected before admission. Exact projected
+self-hosting schemas are audited against one reviewed keyword matrix.
 
 The concrete repository-bound provider uses GitHub App installation tokens for
 both API calls and ephemeral Git askpass leases. It performs duplicate-PR
@@ -661,7 +664,7 @@ Implemented foundations currently include:
 
 The repository now aligns `publication-evidence:1.1.0` with the canonical
 runtime evidence contract through `create-pull-request:1.2.0` and
-`issue-to-pr:1.14.0`. Credential-free local and source/published exact-image
+`issue-to-pr:1.15.0`. Credential-free local and source/published exact-image
 verification pass. The subsequent live run passed validation, acceptance, and
 Publication Policy but exposed AEP-049 at authenticated push. The corrected
 helper now uses the running service's verified absolute interpreter, private

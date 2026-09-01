@@ -55,6 +55,18 @@ fragment-missing, or nested-pointer references fail before admission.
 Provider projection preserves names, requiredness, enums, and nullability; it
 only removes the documented AEP-side `minLength`, `maxLength`, and `uniqueItems`
 checks. The immutable AEP schema remains authoritative after generation.
+For the deployed Responses API / `gpt-5` generation, the reviewed matrix is:
+
+| Disposition | Keywords |
+| --- | --- |
+| Transmitted | `$defs`, `$ref`, `type`, `enum`, `properties`, `required`, `additionalProperties`, `items`, nested `anyOf`, annotations, `minItems`, `maxItems`, `minimum`, `maximum`, `pattern`, `format` |
+| AEP-only after response | `minLength`, `maxLength`, `uniqueItems` |
+| Rejected | `const`, `allOf`, `oneOf`, `not`, and unlisted keywords |
+
+Use a typed singleton enum such as `{"type":"string","enum":["write"]}`
+for a discriminator. General JSON Schema validity is not evidence that a
+keyword belongs to this endpoint/model subset. Tests audit the exact projected
+self-hosting schemas against this matrix.
 
 An incompatible local schema fails as `invalid_response_schema` with a safe
 `schemaPath`, zero provider attempts, no quota reservation, and suppressed

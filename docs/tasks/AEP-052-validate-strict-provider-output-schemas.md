@@ -52,15 +52,64 @@ reason that distinguishes an invalid strict response schema from other HTTP
 400 requests. Redaction must remain fail-closed, but operators need a stable,
 safe classification for this failure.
 
+The first AEP-052 implementation corrected and versioned the Planner contract,
+added recursive validation, and added safe invalid-schema classification. A
+second controlled MTP-09/MTP-10 run for GitHub issue #76 proves that work is
+incomplete. At repository revision
+`7b51ff36ac55986d63cba69bbe88d8fc506775f2`, AnalyzeIssue and the corrected
+`build-implementation-plan:1.7.0` both succeeded, but
+`generate-patch:1.11.0` failed before output was returned:
+
+```text
+WorkflowExecution = workflowexecution-4453cee8-45d2-52f4-903c-a8b3eadea0cc
+TaskExecution = taskexecution-fe3bca8b-8b76-5d7b-aa4f-7bf4b1cb1718
+AgentInvocation = agentinvocation-ff4fdeaaf468b3882d149eaf
+ModelInvocation = modelinvocation-d04522a8b8b509a81360e024
+provider = openai
+requestedModel = gpt-5
+httpStatus = 400
+errorCode = invalid_request
+providerErrorReason = invalid_response_format
+providerErrorCode = invalid_json_schema
+providerErrorType = invalid_request_error
+schemaParameter = text.format.schema
+attemptCount = 1
+retryDecision = suppressed
+schemaValidation = NOT_RUN
+```
+
+The improved diagnostic and retry behavior worked: the response is now
+classified as a permanent invalid schema rather than a generic provider error,
+and the unchanged request was attempted only once. The compatibility boundary
+did not work. `code-generator:1.11.0` represents its write/delete discriminator
+with `{"const": "write"}` and `{"const": "delete"}` inside nested `anyOf`
+branches. `provider_schema._SUPPORTED` explicitly admits `const`, and
+`_provider_schema` transmits it unchanged, so Resource loading, Agent
+resolution, and invocation preflight all accept the schema before the live
+endpoint rejects `text.format.schema`.
+
+For the deployed Responses API and `gpt-5` contract, these discriminators must
+use the supported string-enum representation, such as
+`{"type": "string", "enum": ["write"]}`, unless a provider-contract test
+proves another representation against the exact endpoint/model generation.
+The local allowlist must be derived from the effective provider subset rather
+than from general Draft 2020-12 validity or assumptions about similarly named
+provider limits. Passing the project's validator is not sufficient evidence
+when the exact rendered self-hosting schemas have never been exercised against
+a provider-faithful compatibility oracle.
+
 Resolve the contract gap before another credentialed pilot. Do not treat a
 different model, a larger token budget, or retries of the unchanged HTTP 400
 request as a fix.
 
 ## Reproduction
 
-Provide a credential-free regression using the production Resource loader,
-Agent resolver, provider schema projection, and a scripted OpenAI transport.
-Do not require a live API key or persist a raw provider response.
+Provide credential-free regressions for both live failures using the production
+Resource loader, Agent resolver, provider schema projection, and a scripted
+OpenAI transport. Do not require a live API key or persist a raw provider
+response.
+
+### Issue #74: Nested Required-Field Mismatch
 
 1. Load the current `planner:1.6.0` Agent and resolve its output schema for
    `build-implementation-plan:1.6.0`.
@@ -77,6 +126,26 @@ Do not require a live API key or persist a raw provider response.
 6. Demonstrate that the existing self-hosting schema projection test passes
    because it compares `required` and `properties` only at the root object.
 
+### Issue #76: Accepted Locally, Rejected By Provider
+
+1. Load `code-generator:1.11.0` and resolve its output schema for
+   `generate-patch:1.11.0`.
+2. Render the exact schema sent in `text.format.schema` and demonstrate that
+   both `changes.items.anyOf` object branches preserve their `const`
+   discriminators.
+3. Demonstrate that Resource loading, the recursive strict-schema validator,
+   self-hosting bundle validation, and invocation preflight all accept this
+   rendered schema.
+4. Feed a scripted HTTP 400 carrying only allowlisted
+   `invalid_request_error`, `invalid_json_schema`, and
+   `text.format.schema` fields through the production adapter.
+5. Assert the issue #76 evidence shape: one failed ModelInvocation,
+   `invalid_request`, `invalid_response_format`, `schemaValidation: NOT_RUN`,
+   one attempt, and suppressed retry.
+6. Replace each discriminator with an explicit string type and singleton enum,
+   then demonstrate that the provider-faithful compatibility contract accepts
+   the complete rendered Code Generator schema.
+
 The regression fixture may contain an allowlisted provider error type, code,
 parameter name, and sanitized schema location. It must not retain raw response
 bodies or headers, prompts, ContextPackage contents, generated output, API
@@ -88,6 +157,11 @@ Implement recursive provider-schema compatibility validation that:
 
 * defines the OpenAI strict Structured Outputs subset separately from AEP's
   provider-neutral JSON Schema contracts;
+* removes `const` from the accepted and transmitted subset for the deployed
+  OpenAI Responses API contract, or gates it behind explicit endpoint/model
+  capability evidence rather than admitting it globally;
+* expresses Code Generator write/delete discriminators as supported typed
+  singleton enums without weakening the AEP-side operation contract;
 * recursively validates every object reachable through properties, array
   items, and supported composition keywords, including the invariant that
   `additionalProperties` is false and every declared property is required;
@@ -100,8 +174,16 @@ Implement recursive provider-schema compatibility validation that:
 * fixes and versions the Planner, BuildImplementationPlan Task, Workflow, and
   every other changed Resource, updating exact references and self-hosting
   inventory fixtures atomically;
+* fixes and versions the Code Generator, GeneratePatch Task, Workflow, and
+  every downstream exact Resource reference affected by the issue #76 schema;
 * audits every self-hosting Agent output schema recursively so another nested
   incompatibility cannot remain hidden behind a top-level-only assertion;
+* validates the complete post-projection schemas actually transmitted for all
+  self-hosting Agents, not only their unprojected Resource schemas or isolated
+  hand-built fixtures;
+* maintains one explicit, reviewable compatibility matrix for accepted AEP
+  keywords, projected provider keywords, endpoint/model support, and AEP-only
+  post-response validation keywords;
 * keeps provider projection deterministic and prevents projection from
   silently changing which fields are required or weakening the immutable AEP
   output contract;
@@ -146,10 +228,26 @@ request from another caller.
 * The Planner, BuildImplementationPlan Task, and issue-to-PR Workflow receive
   new immutable versions, and all Agent/Task/Workflow references, expected
   inventory, fixtures, and tests agree on those exact versions.
+* A regression using the uncorrected `code-generator:1.11.0` rendered schema
+  fails the provider-compatibility contract specifically at both nested
+  operation discriminators; it cannot pass merely because `const` is valid
+  general JSON Schema.
+* The corrected Code Generator schema uses typed singleton enums for `write`
+  and `delete`, retains mutually exclusive operation payloads, and continues
+  to require `content` only for writes while preserving preimage binding for
+  both operations.
+* The Code Generator, GeneratePatch Task, issue-to-PR Workflow, expected
+  self-hosting inventory, and all exact references receive synchronized new
+  immutable versions.
 * Every self-hosting Agent output schema passes a recursive strict-provider
   compatibility audit. Tests cover nested objects, array items, nullable
   objects, supported composition, missing `required`, extra required names,
-  open `additionalProperties`, and unsupported keywords at multiple depths.
+  open `additionalProperties`, `const`, typed singleton enums, and unsupported
+  keywords at multiple depths.
+* The audit runs against each exact post-projection schema sent to OpenAI and
+  asserts that its keyword set is a subset of the reviewed endpoint/model
+  compatibility matrix. Adding a keyword to `_SUPPORTED` alone cannot make the
+  audit pass.
 * Invalid schemas fail deterministically before transport invocation. Tests
   prove the scripted transport received zero requests, no provider quota was
   reserved or consumed, and no retry was scheduled.
@@ -172,12 +270,14 @@ request from another caller.
   continue to pass.
 * The full `python -m pytest` suite and self-hosting Resource bundle validation
   pass without network access or live credentials.
-* A new controlled MTP-09/MTP-10 execution progresses beyond
-  BuildImplementationPlan without an HTTP 400 response-format rejection. It
-  either completes the six-Task workflow and creates exactly one pull request,
-  or fails later with independently actionable evidence.
-* GitHub issue #74 and its failed WorkflowExecution remain historical evidence;
-  they are not replayed or mutated as part of credential-free validation.
+* A new controlled MTP-09/MTP-10 execution progresses beyond both
+  BuildImplementationPlan and GeneratePatch without an HTTP 400
+  response-format rejection. It either completes the six-Task workflow and
+  creates exactly one pull request, or fails later with independently
+  actionable evidence.
+* GitHub issues #74 and #76 and their failed WorkflowExecutions remain
+  historical evidence; they are not replayed or mutated as part of
+  credential-free validation.
 * `README.md`, model-provider and workflow-runtime architecture,
   observability guidance, Resource authoring guidance, the self-hosting
   runbook, schemas, fixtures, this task, and `docs/execution-plan.md` describe

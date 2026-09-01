@@ -267,6 +267,9 @@ OpenAI Agent output schema to pass the recursive strict-schema audit. Optional
 output values must be required nullable fields, not omitted names. A local
 `invalid_response_schema` must show zero attempts; do not retry the unchanged
 schema or substitute a model/token setting as a workaround.
+Require the audit of each exact post-projection schema to contain only keywords
+in the reviewed Responses API / `gpt-5` matrix. `const` is unsupported; use a
+typed singleton enum for operation discriminators.
 
 ```text
 analyze-issue
@@ -859,7 +862,7 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `generate-patch:1.11.0` uses `code-generator:1.11.0` and requires one exact
+* `generate-patch:1.12.0` uses `code-generator:1.12.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
   patch EvaluationResult for required-file dispositions and change statistics
