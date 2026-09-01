@@ -50,6 +50,8 @@ whose schema includes an explicit `{ "type": "null" }` branch in `anyOf`.
 `anyOf` is the only supported composition keyword; `allOf` and `oneOf` fail
 preflight rather than being forwarded to the provider. `anyOf` is nested-only;
 root-level composition and array-valued `type` unions also fail preflight.
+References must resolve to an audited root-local `$defs` entry; external,
+fragment-missing, or nested-pointer references fail before admission.
 Provider projection preserves names, requiredness, enums, and nullability; it
 only removes the documented AEP-side `minLength`, `maxLength`, and `uniqueItems`
 checks. The immutable AEP schema remains authoritative after generation.
@@ -61,6 +63,9 @@ as `invalid_request` with sanitized error type/code and schema parameter.
 Malformed or unknown bodies remain generic `provider_error`; raw bodies,
 headers, prompts, context, credentials, project identifiers, and raw request IDs
 are never persisted.
+Local diagnostic paths may identify exact Resource properties for authoring,
+but persisted provider evidence replaces property and definition names with a
+fixed marker and omits missing/extra schema names entirely.
 the configured GPT-5 model supports both the Responses endpoint and Structured
 Outputs according to the
 [official model page](https://developers.openai.com/api/docs/models/gpt-5).

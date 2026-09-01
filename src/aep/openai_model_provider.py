@@ -36,7 +36,6 @@ from aep.model_rate_limits import (
 )
 from aep.provider_schema import (
     StrictProviderSchemaError,
-    redact_schema_path,
     validate_openai_strict_schema,
 )
 
@@ -272,7 +271,7 @@ class OpenAIModelAdapter(ModelAdapter):
             validate_openai_strict_schema(request.input["outputSchema"])
         except (KeyError, StrictProviderSchemaError) as error:
             path = (
-                redact_schema_path(error.path)
+                error.safe_path
                 if isinstance(error, StrictProviderSchemaError)
                 else "$.outputSchema"
             )
@@ -285,8 +284,6 @@ class OpenAIModelAdapter(ModelAdapter):
                 "retryDecision": "suppressed",
                 "quotaReserved": False,
             }
-            if isinstance(error, StrictProviderSchemaError) and error.names:
-                metadata["schemaNames"] = list(error.names)
             raise ModelInvocationError(
                 "model output schema is incompatible with the provider strict schema contract",
                 classification=ModelErrorClass.PERMANENT,

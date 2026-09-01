@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -30,6 +31,11 @@ class StrictProviderSchemaError(ValueError):
     path: str
     reason: str
     names: tuple[str, ...] = ()
+    evidence_path: str | None = None
+
+    @property
+    def safe_path(self) -> str:
+        return self.evidence_path or self.path
 
     def __str__(self) -> str:
         detail = f" ({', '.join(self.names)})" if self.names else ""
@@ -54,27 +60,14 @@ def validate_openai_strict_schema(schema: Any) -> None:
         ) from None
     if "anyOf" in schema:
         raise StrictProviderSchemaError("$.anyOf", "anyOf is not supported at the root")
-    _validate(schema, "$", schema_position=True)
-
-
-def redact_schema_path(path: str) -> str:
-    """Redact declared property and definition names from an evidence path."""
-
-    segments = path.split(".")
-    rendered: list[str] = []
-    redact_next = False
-    for segment in segments:
-        if redact_next:
-            suffix = ""
-            if "[" in segment:
-                _, suffix = segment.split("[", 1)
-                suffix = "[" + suffix
-            rendered.append("<redacted>" + suffix)
-            redact_next = False
-        else:
-            rendered.append(segment)
-            redact_next = segment in {"properties", "$defs"}
-    return ".".join(rendered)
+    root_definitions = schema.get("$defs", {})
+    _validate(
+        schema,
+        "$",
+        safe_path="$",
+        root_definitions=root_definitions,
+        schema_position=True,
+    )
 
 
 def _safe_schema_error_path(parts: Sequence[Any]) -> str:
@@ -102,60 +95,148 @@ def _safe_schema_error_path(parts: Sequence[Any]) -> str:
     return rendered
 
 
-def _validate(value: Any, path: str, *, schema_position: bool) -> None:
+def _validate(
+    value: Any,
+    path: str,
+    *,
+    safe_path: str,
+    root_definitions: Any,
+    schema_position: bool,
+) -> None:
     if not isinstance(value, Mapping):
         if schema_position:
-            raise StrictProviderSchemaError(path, "schema must be an object")
+            raise StrictProviderSchemaError(
+                path, "schema must be an object", evidence_path=safe_path
+            )
         return
 
     unsupported = sorted(str(key) for key in value if key not in _SUPPORTED)
     if unsupported:
-        raise StrictProviderSchemaError(path, "unsupported keyword", tuple(unsupported))
+        raise StrictProviderSchemaError(
+            path,
+            "unsupported keyword",
+            tuple(unsupported),
+            evidence_path=safe_path,
+        )
 
     if isinstance(value.get("type"), list):
         raise StrictProviderSchemaError(
-            f"{path}.type", "type unions are unsupported; use nested anyOf"
+            f"{path}.type",
+            "type unions are unsupported; use nested anyOf",
+            evidence_path=f"{safe_path}.type",
         )
+
+    reference = value.get("$ref")
+    if reference is not None:
+        target = _local_definition_target(reference)
+        if target is None or not isinstance(root_definitions, Mapping) or target not in root_definitions:
+            raise StrictProviderSchemaError(
+                f"{path}.$ref",
+                "reference must resolve to a root-local definition",
+                evidence_path=f"{safe_path}.$ref",
+            )
 
     properties = value.get("properties")
     object_schema = value.get("type") == "object" or isinstance(properties, Mapping)
     if object_schema:
         if not isinstance(properties, Mapping):
-            raise StrictProviderSchemaError(f"{path}.properties", "object properties must be declared")
+            raise StrictProviderSchemaError(
+                f"{path}.properties",
+                "object properties must be declared",
+                evidence_path=f"{safe_path}.properties",
+            )
         if value.get("additionalProperties") is not False:
             raise StrictProviderSchemaError(
-                f"{path}.additionalProperties", "additionalProperties must be false"
+                f"{path}.additionalProperties",
+                "additionalProperties must be false",
+                evidence_path=f"{safe_path}.additionalProperties",
             )
         required = value.get("required")
         if not isinstance(required, list) or any(not isinstance(item, str) for item in required):
-            raise StrictProviderSchemaError(f"{path}.required", "required must list every property")
+            raise StrictProviderSchemaError(
+                f"{path}.required",
+                "required must list every property",
+                evidence_path=f"{safe_path}.required",
+            )
         declared = set(properties)
         required_names = set(required)
         missing = tuple(sorted(declared - required_names))
         extra = tuple(sorted(required_names - declared))
         if missing:
-            raise StrictProviderSchemaError(f"{path}.required", "declared properties are not required", missing)
+            raise StrictProviderSchemaError(
+                f"{path}.required",
+                "declared properties are not required",
+                missing,
+                evidence_path=f"{safe_path}.required",
+            )
         if extra:
-            raise StrictProviderSchemaError(f"{path}.required", "required names are not declared", extra)
+            raise StrictProviderSchemaError(
+                f"{path}.required",
+                "required names are not declared",
+                extra,
+                evidence_path=f"{safe_path}.required",
+            )
         for name, child in properties.items():
-            _validate(child, f"{path}.properties.{name}", schema_position=True)
+            _validate(
+                child,
+                f"{path}.properties.{name}",
+                safe_path=f"{safe_path}.properties.<redacted>",
+                root_definitions=root_definitions,
+                schema_position=True,
+            )
 
     items = value.get("items")
     if items is not None:
-        _validate(items, f"{path}.items", schema_position=True)
+        _validate(
+            items,
+            f"{path}.items",
+            safe_path=f"{safe_path}.items",
+            root_definitions=root_definitions,
+            schema_position=True,
+        )
 
     definitions = value.get("$defs")
     if definitions is not None:
         if not isinstance(definitions, Mapping):
-            raise StrictProviderSchemaError(f"{path}.$defs", "$defs must be an object")
+            raise StrictProviderSchemaError(
+                f"{path}.$defs",
+                "$defs must be an object",
+                evidence_path=f"{safe_path}.$defs",
+            )
         for name, child in definitions.items():
-            _validate(child, f"{path}.$defs.{name}", schema_position=True)
+            _validate(
+                child,
+                f"{path}.$defs.{name}",
+                safe_path=f"{safe_path}.$defs.<redacted>",
+                root_definitions=root_definitions,
+                schema_position=True,
+            )
 
     for keyword in _COMPOSITIONS:
         branches = value.get(keyword)
         if branches is None:
             continue
         if not isinstance(branches, Sequence) or isinstance(branches, (str, bytes)) or not branches:
-            raise StrictProviderSchemaError(f"{path}.{keyword}", f"{keyword} must contain schema branches")
+            raise StrictProviderSchemaError(
+                f"{path}.{keyword}",
+                f"{keyword} must contain schema branches",
+                evidence_path=f"{safe_path}.{keyword}",
+            )
         for index, child in enumerate(branches):
-            _validate(child, f"{path}.{keyword}[{index}]", schema_position=True)
+            _validate(
+                child,
+                f"{path}.{keyword}[{index}]",
+                safe_path=f"{safe_path}.{keyword}[{index}]",
+                root_definitions=root_definitions,
+                schema_position=True,
+            )
+
+
+def _local_definition_target(reference: Any) -> str | None:
+    if not isinstance(reference, str) or not reference.startswith("#/$defs/"):
+        return None
+    encoded = reference[len("#/$defs/"):]
+    if not encoded or "/" in encoded or not re.fullmatch(r"(?:[^~]|~[01])*", encoded):
+        return None
+    decoded = encoded.replace("~1", "/").replace("~0", "~")
+    return decoded

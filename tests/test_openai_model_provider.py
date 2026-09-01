@@ -1024,5 +1024,30 @@ def test_direct_adapter_redacts_local_schema_property_names_before_evidence():
     metadata = raised.value.provider_metadata
     assert raised.value.code == "invalid_response_schema"
     assert metadata["schemaPath"] == "$.properties.<redacted>.type"
+    assert "schemaNames" not in metadata
+    assert secret_name not in repr(metadata) + str(raised.value)
+    assert transport.requests == []
+
+
+def test_direct_adapter_omits_sensitive_missing_property_names_from_evidence():
+    secret_name = "secret.project-123"
+    transport = ScriptedTransport([success()])
+    request = model_request()
+    invalid_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {secret_name: {"type": "string"}},
+    }
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": invalid_schema},
+        correlation=request.correlation,
+    )
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(request)
+    metadata = raised.value.provider_metadata
+    assert metadata["schemaPath"] == "$.required"
+    assert "schemaNames" not in metadata
     assert secret_name not in repr(metadata) + str(raised.value)
     assert transport.requests == []
