@@ -498,7 +498,7 @@ and explanation. The evaluator does not push Git state or invoke a publication
 provider.
 
 The self-hosting immutable graph is `publication-evidence:1.1.0` referenced by
-`create-pull-request:1.2.0`, which is referenced by `issue-to-pr:1.12.0`.
+`create-pull-request:1.2.0`, which is referenced by `issue-to-pr:1.14.0`.
 Publication Policy is evaluated before the handler creates a local commit. An
 allow is followed by distinct `git.push` and `github.create_pr` capability
 decisions immediately before their corresponding external mutations.

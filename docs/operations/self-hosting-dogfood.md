@@ -262,6 +262,12 @@ Require one Workspace, one Event, one Workflow, six Tasks, four Agents, and all
 versioned Prompt, Model, Tool, Policy, Evaluation, and KnowledgeBase references.
 Confirm in `.ai/workflows/issue-to-pr.yaml` that the resolved DAG is:
 
+Before a credentialed run, load the complete Resource bundle and require every
+OpenAI Agent output schema to pass the recursive strict-schema audit. Optional
+output values must be required nullable fields, not omitted names. A local
+`invalid_response_schema` must show zero attempts; do not retry the unchanged
+schema or substitute a model/token setting as a workaround.
+
 ```text
 analyze-issue
   -> build-implementation-plan
@@ -853,7 +859,7 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `generate-patch:1.10.0` uses `code-generator:1.10.0` and requires one exact
+* `generate-patch:1.11.0` uses `code-generator:1.11.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
   patch EvaluationResult for required-file dispositions and change statistics

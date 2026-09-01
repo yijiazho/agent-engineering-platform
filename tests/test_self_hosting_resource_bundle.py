@@ -20,6 +20,7 @@ from aep.resource_loader import (
     ResourceLoader,
     ResourceRef,
 )
+from aep.provider_schema import validate_openai_strict_schema
 from aep.task_dag import resolve_task_dag
 from aep.workflow_resolver import resolve_workflow_for_event
 
@@ -114,6 +115,28 @@ def test_context_and_agent_boundaries_are_explicit(
         {"kind": "Tool", "name": "git", "version": "1.3.0"},
     ]
     assert "toolRefs" not in agents["pr-writer"]
+    code_generator = resources.get(ResourceRef(
+        "Agent", "code-generator", EXPECTED["resourceVersions"]["codeGeneratorAgent"]
+    ))
+    assert code_generator is not None
+    change_items = code_generator.data["spec"]["outputSchema"]["properties"][
+        "changes"
+    ]["items"]
+    assert "anyOf" in change_items
+    assert "oneOf" not in change_items
+    planner = resources.get(ResourceRef(
+        "Agent", "planner", EXPECTED["resourceVersions"]["plannerAgent"]
+    ))
+    assert planner is not None
+    classifications = planner.data["spec"]["outputSchema"]["properties"][
+        "acceptanceCriteriaClassifications"
+    ]["items"]
+    assert "requiredInsertion" in classifications["required"]
+    assert classifications["properties"]["requiredInsertion"]["anyOf"][1] == {
+        "type": "null"
+    }
+    for agent in resources.by_kind("Agent"):
+        validate_openai_strict_schema(agent.data["spec"]["outputSchema"])
     for agent in agents.values():
         assert "repository.retrieve" not in {
             capability

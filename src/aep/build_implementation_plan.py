@@ -71,6 +71,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"
                 )
+            if disposition == "UNSUPPORTED" and item.get("requiredInsertion") is not None:
+                raise BuildImplementationPlanContractError(
+                    "unsupported criterion classification must set requiredInsertion to null"
+                )
             if disposition == "REQUIRED_INSERTION" and (
                 not isinstance(item.get("requiredInsertion"), Mapping)
                 or (

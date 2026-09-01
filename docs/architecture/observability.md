@@ -140,3 +140,9 @@ coordinator/applied delay and source, retry eligibility, hashed request ID, and
 numeric limit/remaining/reset hints. Raw provider bodies and headers, prompts,
 ContextPackage/model output bodies, API keys, credential/project identity, and
 raw request IDs are omitted.
+
+Strict output-schema failures distinguish three safe cases: local
+`invalid_response_schema` evidence has a schema path and attempt count zero;
+allowlisted provider-reported response-format rejection is `invalid_request`
+with a sanitized schema parameter; unrelated or malformed HTTP 400 responses
+remain `provider_error`. None may retain provider bodies or raw headers.

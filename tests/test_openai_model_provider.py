@@ -126,6 +126,7 @@ def model_request(
             },
             "outputSchema": {
                 "type": "object",
+                "additionalProperties": False,
                 "required": ["answer"],
                 "properties": {"answer": {"type": "integer"}},
                 "additionalProperties": False,
@@ -883,3 +884,170 @@ def test_schema_projection_preserves_property_names_that_match_removed_keywords(
         "type": "array",
         "items": {"type": "string"},
     }
+
+
+def test_incompatible_schema_fails_before_transport_or_quota_admission():
+    transport = ScriptedTransport([success()])
+    coordinator = ProcessLocalModelAdmissionCoordinator(
+        requests_per_minute=2, tokens_per_minute=80_000
+    )
+    request = model_request()
+    broken = dict(request.input["outputSchema"])
+    broken["required"] = []
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": broken},
+        correlation=request.correlation,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        OpenAIModelAdapter(
+            OpenAIProviderConfig(api_key="secret"), transport=transport,
+            coordinator=coordinator,
+        ).invoke(request)
+
+    assert raised.value.code == "invalid_response_schema"
+    assert raised.value.provider_metadata["schemaPath"] == "$.required"
+    assert raised.value.provider_metadata["attemptCount"] == 0
+    assert raised.value.provider_metadata["quotaReserved"] is False
+    assert transport.requests == []
+
+
+def test_http_400_invalid_schema_evidence_is_allowlisted_and_redacted():
+    body = {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_json_schema",
+            "param": "text.format.schema.properties.plan.required",
+            "message": "secret prompt project-id raw provider details",
+        }
+    }
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([response(400, body)])).invoke(model_request())
+
+    metadata = raised.value.provider_metadata
+    assert raised.value.code == "invalid_request"
+    assert metadata["providerErrorReason"] == "invalid_response_format"
+    assert metadata["schemaParameter"] == "text.format.schema.properties.<redacted>.required"
+    assert metadata["attemptCount"] == 1
+    assert metadata["retryDecision"] == "suppressed"
+    assert "secret" not in repr(metadata) + str(raised.value)
+
+
+@pytest.mark.parametrize("body", [b"malformed secret", b'{"error":{"message":"secret"}}'])
+def test_unknown_http_400_remains_generic_and_redacted(body):
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([ProviderHttpResponse(400, {"X-Secret": "raw"}, body)])).invoke(model_request())
+    assert raised.value.code == "provider_error"
+    assert "secret" not in repr(raised.value.provider_metadata) + str(raised.value)
+
+
+def test_generic_invalid_request_type_does_not_imply_response_schema_failure():
+    body = {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "context_length_exceeded",
+            "param": "input",
+            "message": "secret context detail",
+        }
+    }
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([response(400, body)])).invoke(model_request())
+
+    assert raised.value.code == "provider_error"
+    assert "providerErrorReason" not in raised.value.provider_metadata
+    assert "secret" not in repr(raised.value.provider_metadata) + str(raised.value)
+
+
+def test_provider_schema_parameter_redacts_dynamic_property_names():
+    secret_name = "secret-project-123"
+    body = {
+        "error": {
+            "type": "invalid_request_error",
+            "param": f"text.format.schema.properties.{secret_name}.required",
+        }
+    }
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(ScriptedTransport([response(400, body)])).invoke(model_request())
+
+    metadata = raised.value.provider_metadata
+    assert raised.value.code == "invalid_request"
+    assert metadata["schemaParameter"] == (
+        "text.format.schema.properties.<redacted>.required"
+    )
+    assert secret_name not in repr(metadata) + str(raised.value)
+
+
+def test_direct_adapter_rejects_invalid_schema_keyword_values_before_admission():
+    transport = ScriptedTransport([success()])
+    request = model_request()
+    invalid_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["answer"],
+        "properties": {"answer": {"type": "bogus"}},
+    }
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": invalid_schema},
+        correlation=request.correlation,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(request)
+
+    assert raised.value.code == "invalid_response_schema"
+    assert raised.value.provider_metadata["attemptCount"] == 0
+    assert raised.value.provider_metadata["quotaReserved"] is False
+    assert transport.requests == []
+
+
+def test_direct_adapter_redacts_local_schema_property_names_before_evidence():
+    secret_name = "secret-project-123"
+    transport = ScriptedTransport([success()])
+    request = model_request()
+    invalid_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [secret_name],
+        "properties": {secret_name: {"type": "bogus"}},
+    }
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": invalid_schema},
+        correlation=request.correlation,
+    )
+
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(request)
+
+    metadata = raised.value.provider_metadata
+    assert raised.value.code == "invalid_response_schema"
+    assert metadata["schemaPath"] == "$.properties.<redacted>.type"
+    assert "schemaNames" not in metadata
+    assert secret_name not in repr(metadata) + str(raised.value)
+    assert transport.requests == []
+
+
+def test_direct_adapter_omits_sensitive_missing_property_names_from_evidence():
+    secret_name = "secret.project-123"
+    transport = ScriptedTransport([success()])
+    request = model_request()
+    invalid_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [],
+        "properties": {secret_name: {"type": "string"}},
+    }
+    request = ModelRequest(
+        configuration=request.configuration,
+        input={**dict(request.input), "outputSchema": invalid_schema},
+        correlation=request.correlation,
+    )
+    with pytest.raises(ModelInvocationError) as raised:
+        adapter(transport).invoke(request)
+    metadata = raised.value.provider_metadata
+    assert metadata["schemaPath"] == "$.required"
+    assert "schemaNames" not in metadata
+    assert secret_name not in repr(metadata) + str(raised.value)
+    assert transport.requests == []

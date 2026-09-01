@@ -1,10 +1,10 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Task",
-  "metadata": {"name": "generate-patch", "version": "1.10.0"},
+  "metadata": {"name": "generate-patch", "version": "1.11.0"},
   "spec": {
     "objective": "Generate only changes authorized by the evaluated implementation plan.",
-    "agentRef": {"kind": "Agent", "name": "code-generator", "version": "1.10.0"},
-    "outputs": {"type": "object", "additionalProperties": false, "required": ["changes"], "properties": {"changes": {"type": "array", "items": {"oneOf": [{"type": "object", "additionalProperties": false, "required": ["operation", "path", "content", "preimageSha256"], "properties": {"operation": {"const": "write"}, "path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}, {"type": "object", "additionalProperties": false, "required": ["operation", "path", "preimageSha256"], "properties": {"operation": {"const": "delete"}, "path": {"type": "string", "minLength": 1}, "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}]}}}},
+    "agentRef": {"kind": "Agent", "name": "code-generator", "version": "1.11.0"},
+    "outputs": {"type": "object", "additionalProperties": false, "required": ["changes"], "properties": {"changes": {"type": "array", "items": {"anyOf": [{"type": "object", "additionalProperties": false, "required": ["operation", "path", "content", "preimageSha256"], "properties": {"operation": {"const": "write"}, "path": {"type": "string", "minLength": 1}, "content": {"type": "string"}, "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}, {"type": "object", "additionalProperties": false, "required": ["operation", "path", "preimageSha256"], "properties": {"operation": {"const": "delete"}, "path": {"type": "string", "minLength": 1}, "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}]}}}},
     "requiredContext": ["editable-targets", "dependency-manifests", "test-hints", "policies", "prior-artifacts"], "optionalContext": ["repository-inventory", "documentation", "knowledge"], "inputContextTokenBudget": 32000,
     "knowledgeBases": [{"kind": "KnowledgeBase", "name": "aep-repository", "version": "1.1.0"}], "evaluations": [{"kind": "Evaluation", "name": "patch-safety", "version": "1.1.0"}], "policies": [{"kind": "Policy", "name": "workspace-write", "version": "1.1.0"}]
   }

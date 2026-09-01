@@ -54,7 +54,12 @@ def test_loads_valid_resources_in_stable_order(tmp_path: Path) -> None:
         "objective": "Analyze issue.",
         "agentRef": ref("Agent", "issue-analyzer"),
         "inputContextTokenBudget": 32_000,
-        "outputs": {"type": "object"},
+        "outputs": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [],
+            "properties": {},
+        },
         "evaluations": [ref("Evaluation", "issue-analysis-schema")],
     }))
     write_resource(tmp_path, "workflows/issue-to-pr.yaml", resource("Workflow", "issue-to-pr", "1.0.0", {
@@ -88,6 +93,69 @@ def test_rejects_invalid_schema(tmp_path: Path) -> None:
     }))
 
     with pytest.raises(ResourceValidationError):
+        ResourceLoader(tmp_path).load()
+
+
+def test_rejects_nested_openai_strict_output_schema_before_readiness(tmp_path: Path) -> None:
+    write_valid_workspace(tmp_path, default_policies=[])
+    write_resource(tmp_path, "models/openai.yaml", resource("Model", "openai", "1.0.0", {
+        "provider": "openai", "model": "gpt-5",
+    }))
+    write_resource(tmp_path, "prompts/planner.yaml", resource("Prompt", "planner", "1.0.0", {
+        "system": "Plan.",
+    }))
+    write_resource(tmp_path, "agents/planner.yaml", resource("Agent", "planner", "1.0.0", {
+        "promptRef": ref("Prompt", "planner"),
+        "modelRef": ref("Model", "openai"),
+        "outputSchema": {
+            "type": "object", "additionalProperties": False,
+            "required": ["classifications"],
+            "properties": {"classifications": {
+                "type": "array", "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["criterion"],
+                    "properties": {
+                        "criterion": {"type": "string"},
+                        "requiredInsertion": {"type": "null"},
+                    },
+                },
+            }},
+        },
+    }))
+
+    with pytest.raises(
+        ResourceValidationError,
+        match=r"\$\.properties\.classifications\.items\.required.*requiredInsertion",
+    ):
+        ResourceLoader(tmp_path).load()
+
+
+def test_rejects_task_derived_openai_schema_before_readiness(tmp_path: Path) -> None:
+    write_valid_workspace(tmp_path, default_policies=[])
+    write_resource(tmp_path, "models/openai.yaml", resource("Model", "openai", "1.0.0", {
+        "provider": "openai", "model": "gpt-5",
+    }))
+    write_resource(tmp_path, "prompts/planner.yaml", resource("Prompt", "planner", "1.0.0", {
+        "system": "Plan.",
+    }))
+    write_resource(tmp_path, "agents/planner.yaml", resource("Agent", "planner", "1.0.0", {
+        "promptRef": ref("Prompt", "planner"),
+        "modelRef": ref("Model", "openai"),
+    }))
+    write_resource(tmp_path, "tasks/plan.yaml", resource("Task", "plan", "1.0.0", {
+        "objective": "Plan.",
+        "agentRef": ref("Agent", "planner"),
+        "inputContextTokenBudget": 100,
+        "outputs": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    }))
+
+    with pytest.raises(
+        ResourceValidationError,
+        match=r"spec\.outputs.*root schema type must be object",
+    ):
         ResourceLoader(tmp_path).load()
 
 

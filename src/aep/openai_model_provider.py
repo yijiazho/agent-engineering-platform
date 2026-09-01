@@ -34,6 +34,10 @@ from aep.model_rate_limits import (
     CoordinatorStateError,
     ProcessLocalModelAdmissionCoordinator,
 )
+from aep.provider_schema import (
+    StrictProviderSchemaError,
+    validate_openai_strict_schema,
+)
 
 
 _DEFAULT_API_URL = "https://api.openai.com/v1"
@@ -262,6 +266,30 @@ class OpenAIModelAdapter(ModelAdapter):
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
             )
+
+        try:
+            validate_openai_strict_schema(request.input["outputSchema"])
+        except (KeyError, StrictProviderSchemaError) as error:
+            path = (
+                error.safe_path
+                if isinstance(error, StrictProviderSchemaError)
+                else "$.outputSchema"
+            )
+            metadata: dict[str, Any] = {
+                "provider": "openai",
+                "requestedModel": configuration.model,
+                "schemaPath": path,
+                "attemptCount": 0,
+                "attempts": [],
+                "retryDecision": "suppressed",
+                "quotaReserved": False,
+            }
+            raise ModelInvocationError(
+                "model output schema is incompatible with the provider strict schema contract",
+                classification=ModelErrorClass.PERMANENT,
+                code="invalid_response_schema",
+                provider_metadata=metadata,
+            ) from None
 
         timeout_ms = configuration.timeout_ms
         deadline = self._monotonic() + timeout_ms / 1000
@@ -787,6 +815,13 @@ def _http_failure(response: ProviderHttpResponse) -> ModelInvocationError | None
     if response.status in {401, 403}:
         code = "authentication" if response.status == 401 else "authorization"
         return _failure(code, recoverable=False, metadata={"httpStatus": response.status})
+    if response.status == 400:
+        details = _safe_invalid_request_evidence(response.body)
+        if details:
+            return _failure(
+                "invalid_request", recoverable=False,
+                metadata={"httpStatus": 400, **details},
+            )
     return _failure("provider_error", recoverable=False)
 
 
@@ -974,6 +1009,67 @@ def _provider_error_reason(body: bytes) -> tuple[str | None, str]:
         if value in mappings:
             return mappings[value]
     return None, "unknown"
+
+
+def _safe_invalid_request_evidence(body: bytes) -> dict[str, Any]:
+    """Extract only fixed classifications and a sanitized schema parameter."""
+
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+        return {}
+    error = document.get("error") if isinstance(document, Mapping) else None
+    if not isinstance(error, Mapping):
+        return {}
+    error_type = error.get("type")
+    error_code = error.get("code")
+    schema_codes = {"invalid_json_schema", "invalid_response_format"}
+    safe_parameter = _safe_schema_parameter(error.get("param"))
+    if error_code not in schema_codes and safe_parameter is None:
+        return {}
+    evidence: dict[str, Any] = {"providerErrorReason": "invalid_response_format"}
+    if error_type == "invalid_request_error":
+        evidence["providerErrorType"] = "invalid_request_error"
+    if error_code in schema_codes:
+        evidence["providerErrorCode"] = error_code
+    if safe_parameter is not None:
+        evidence["schemaParameter"] = safe_parameter
+    return evidence
+
+
+def _safe_schema_parameter(value: Any) -> str | None:
+    """Normalize a provider schema path while redacting dynamic schema names."""
+
+    if not isinstance(value, str):
+        return None
+    prefixes = ("text.format.schema", "response_format.json_schema.schema")
+    prefix = next(
+        (candidate for candidate in prefixes if value == candidate or value.startswith(candidate + ".")),
+        None,
+    )
+    if prefix is None:
+        return None
+    remainder = value[len(prefix):].removeprefix(".")
+    if not remainder:
+        return prefix
+    segments = remainder.split(".")
+    structural = {"properties", "items", "required", "anyOf", "oneOf", "allOf", "$defs"}
+    rendered: list[str] = []
+    redact_next = False
+    for segment in segments:
+        if not segment or not re.fullmatch(r"[A-Za-z0-9_$-]+", segment):
+            return None
+        if redact_next:
+            rendered.append("<redacted>")
+            redact_next = False
+        elif segment in structural or segment.isdigit():
+            rendered.append(segment)
+            redact_next = segment in {"properties", "$defs"}
+        else:
+            return None
+    if redact_next:
+        return None
+    return ".".join((prefix, *rendered))
 
 
 def _safe_rate_limit_evidence(
