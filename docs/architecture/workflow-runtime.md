@@ -441,7 +441,7 @@ exactly `patchGenerated`, `validationRan`, `requiredArtifactsPresent`,
 `requiredEvaluationsPresent`, `allRequiredEvaluationsPassed`,
 `noPriorPolicyViolation`, and `failures`; its runtime schema rejects vocabulary
 drift. The self-hosting graph pins `publication-evidence:1.1.0` through
-`create-pull-request:1.2.0` and `issue-to-pr:1.14.0`. Only a matching Publication
+`create-pull-request:1.2.0` and `issue-to-pr:1.15.0`. Only a matching Publication
 Policy allow proceeds to the separate `git.push` capability decision and Git
 mutation, followed by a separate `github.create_pr` capability decision and PR
 mutation. A denial produces neither Git ToolInvocation, GitHub call, nor
@@ -624,3 +624,7 @@ and the adapter repeats the preflight before admission as defense in depth.
 Failures therefore create no provider attempt or quota reservation and carry
 only a stable schema path. Nullable required properties represent optional
 semantic values; AEP still validates the complete immutable schema afterward.
+The Code Generator's write/delete branches use typed singleton enums because
+`const` is rejected by the deployed Responses API / `gpt-5` compatibility
+matrix. Runtime audits operate on the exact post-projection schema, not merely
+the provider-neutral Resource.

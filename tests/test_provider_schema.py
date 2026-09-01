@@ -1,6 +1,9 @@
 import pytest
 
 from aep.provider_schema import (
+    OPENAI_RESPONSES_GPT5_ACCEPTED_KEYWORDS,
+    OPENAI_RESPONSES_GPT5_PROVIDER_KEYWORDS,
+    OPENAI_RESPONSES_GPT5_SCHEMA_COMPATIBILITY,
     StrictProviderSchemaError,
     validate_openai_strict_schema,
 )
@@ -143,3 +146,29 @@ def test_recursive_strict_subset(schema, path):
         with pytest.raises(StrictProviderSchemaError) as raised:
             validate_openai_strict_schema(schema)
         assert raised.value.path == path
+
+
+@pytest.mark.parametrize(("branch", "operation"), [(0, "write"), (1, "delete")])
+def test_rejects_const_at_each_code_generator_discriminator(branch, operation):
+    branches = [
+        object_schema({"operation": {"type": "string", "enum": ["write"]}}),
+        object_schema({"operation": {"type": "string", "enum": ["delete"]}}),
+    ]
+    branches[branch]["properties"]["operation"] = {"const": operation}
+    schema = object_schema({"changes": {"type": "array", "items": {"anyOf": branches}}})
+
+    with pytest.raises(StrictProviderSchemaError) as raised:
+        validate_openai_strict_schema(schema)
+
+    assert raised.value.path == (
+        f"$.properties.changes.items.anyOf[{branch}].properties.operation"
+    )
+    assert raised.value.names == ("const",)
+
+
+def test_typed_singleton_enums_are_in_reviewed_provider_contract():
+    schema = object_schema({"operation": {"type": "string", "enum": ["write"]}})
+    validate_openai_strict_schema(schema)
+    assert OPENAI_RESPONSES_GPT5_SCHEMA_COMPATIBILITY["enum"] == "provider"
+    assert "enum" in OPENAI_RESPONSES_GPT5_PROVIDER_KEYWORDS
+    assert "const" not in OPENAI_RESPONSES_GPT5_ACCEPTED_KEYWORDS

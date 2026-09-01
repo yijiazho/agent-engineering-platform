@@ -124,6 +124,17 @@ def test_context_and_agent_boundaries_are_explicit(
     ]["items"]
     assert "anyOf" in change_items
     assert "oneOf" not in change_items
+    write_change, delete_change = change_items["anyOf"]
+    assert write_change["properties"]["operation"] == {
+        "type": "string", "enum": ["write"]
+    }
+    assert delete_change["properties"]["operation"] == {
+        "type": "string", "enum": ["delete"]
+    }
+    assert "content" in write_change["required"]
+    assert "content" not in delete_change["properties"]
+    assert "preimageSha256" in write_change["required"]
+    assert "preimageSha256" in delete_change["required"]
     planner = resources.get(ResourceRef(
         "Agent", "planner", EXPECTED["resourceVersions"]["plannerAgent"]
     ))

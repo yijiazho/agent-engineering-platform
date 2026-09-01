@@ -24,6 +24,10 @@ from aep.model_rate_limits import (
     CoordinatorStateError,
     ProcessLocalModelAdmissionCoordinator,
 )
+from aep.provider_schema import (
+    OPENAI_RESPONSES_GPT5_PROVIDER_KEYWORDS,
+    validate_openai_strict_schema,
+)
 
 
 class ScriptedTransport:
@@ -850,6 +854,9 @@ def test_every_self_hosting_agent_schema_projects_to_supported_provider_subset()
 
         projected = _provider_schema(declared)
 
+        validate_openai_strict_schema(projected)
+        assert _schema_keywords(projected) <= OPENAI_RESPONSES_GPT5_PROVIDER_KEYWORDS
+
         rendered = json.dumps(projected)
         assert "minLength" not in rendered
         assert "maxLength" not in rendered
@@ -857,6 +864,25 @@ def test_every_self_hosting_agent_schema_projects_to_supported_provider_subset()
         assert projected["type"] == "object"
         assert projected["additionalProperties"] is False
         assert set(projected["required"]) == set(projected["properties"])
+
+
+def _schema_keywords(value):
+    """Collect schema keywords without treating property names as keywords."""
+    if isinstance(value, list):
+        result = set()
+        for item in value:
+            result.update(_schema_keywords(item))
+        return result
+    if not isinstance(value, dict):
+        return set()
+    result = set(value)
+    for keyword, item in value.items():
+        if keyword in {"properties", "$defs"} and isinstance(item, dict):
+            for child in item.values():
+                result.update(_schema_keywords(child))
+        elif keyword not in {"enum", "required", "examples"}:
+            result.update(_schema_keywords(item))
+    return result
 
 
 def test_schema_projection_preserves_property_names_that_match_removed_keywords():

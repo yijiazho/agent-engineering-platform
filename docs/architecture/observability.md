@@ -124,7 +124,12 @@ Git askpass evidence is limited to operation, repository, branch, safe failure
 class, remote mutation state, duration, command exit status, and the
 content-addressed redacted log reference. Helper source, interpreter output,
 credential values, scoped or ambient environment maps, provider response
-bodies, and unrestricted stderr are never lifecycle fields.
+bodies, and unrestricted stderr are never lifecycle fields. Local
+provider-schema incompatibility is distinguished from a provider-reported
+invalid response format: the former has zero attempts and no quota reservation;
+the latter records one suppressed-retry attempt plus only allowlisted error
+type, code, and redacted schema parameter. Unknown HTTP 400 bodies remain a
+generic, redacted provider error.
 
 ## Failure And Timing Semantics
 

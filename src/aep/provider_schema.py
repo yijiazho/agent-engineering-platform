@@ -12,15 +12,33 @@ from jsonschema.exceptions import SchemaError
 
 
 _COMPOSITIONS = ("anyOf",)
-_ANNOTATIONS = frozenset({"title", "description", "$comment", "default", "examples"})
-_AEP_ONLY_VALIDATION = frozenset({"minLength", "maxLength", "uniqueItems"})
-_SUPPORTED = frozenset(
-    {
-        "$defs", "$ref", "type", "enum", "const", "properties", "required",
-        "additionalProperties", "items", *_COMPOSITIONS, *_ANNOTATIONS,
-        "minItems", "maxItems", "minimum", "maximum", "pattern", "format",
-        *_AEP_ONLY_VALIDATION,
-    }
+
+# Reviewed contract for OpenAI Responses API strict outputs on the deployed
+# gpt-5 model generation.  Keep acceptance and projection derived from this
+# table so adding a validator keyword cannot accidentally make it transmissible.
+OPENAI_RESPONSES_GPT5_SCHEMA_COMPATIBILITY = {
+    "$defs": "provider", "$ref": "provider", "type": "provider",
+    "enum": "provider", "properties": "provider", "required": "provider",
+    "additionalProperties": "provider", "items": "provider",
+    "anyOf": "provider", "title": "provider", "description": "provider",
+    "$comment": "provider", "default": "provider", "examples": "provider",
+    "minItems": "provider", "maxItems": "provider", "minimum": "provider",
+    "maximum": "provider", "pattern": "provider", "format": "provider",
+    "minLength": "aep-only", "maxLength": "aep-only",
+    "uniqueItems": "aep-only", "const": "unsupported",
+    "allOf": "unsupported", "oneOf": "unsupported", "not": "unsupported",
+}
+OPENAI_RESPONSES_GPT5_PROVIDER_KEYWORDS = frozenset(
+    key for key, support in OPENAI_RESPONSES_GPT5_SCHEMA_COMPATIBILITY.items()
+    if support == "provider"
+)
+OPENAI_RESPONSES_GPT5_AEP_ONLY_KEYWORDS = frozenset(
+    key for key, support in OPENAI_RESPONSES_GPT5_SCHEMA_COMPATIBILITY.items()
+    if support == "aep-only"
+)
+OPENAI_RESPONSES_GPT5_ACCEPTED_KEYWORDS = (
+    OPENAI_RESPONSES_GPT5_PROVIDER_KEYWORDS
+    | OPENAI_RESPONSES_GPT5_AEP_ONLY_KEYWORDS
 )
 
 
@@ -110,7 +128,10 @@ def _validate(
             )
         return
 
-    unsupported = sorted(str(key) for key in value if key not in _SUPPORTED)
+    unsupported = sorted(
+        str(key) for key in value
+        if key not in OPENAI_RESPONSES_GPT5_ACCEPTED_KEYWORDS
+    )
     if unsupported:
         raise StrictProviderSchemaError(
             path,

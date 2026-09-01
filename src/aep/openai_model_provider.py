@@ -35,6 +35,7 @@ from aep.model_rate_limits import (
     ProcessLocalModelAdmissionCoordinator,
 )
 from aep.provider_schema import (
+    OPENAI_RESPONSES_GPT5_AEP_ONLY_KEYWORDS,
     StrictProviderSchemaError,
     validate_openai_strict_schema,
 )
@@ -45,9 +46,7 @@ _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
 _ALLOWED_PARAMETERS = frozenset({"temperature", "top_p"})
 _PROVIDER_MODEL_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
-_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset(
-    {"minLength", "maxLength", "uniqueItems"}
-)
+_UNSUPPORTED_SCHEMA_KEYWORDS = OPENAI_RESPONSES_GPT5_AEP_ONLY_KEYWORDS
 _SCHEMA_MAP_KEYWORDS = frozenset(
     {"$defs", "definitions", "dependentSchemas", "patternProperties", "properties"}
 )
