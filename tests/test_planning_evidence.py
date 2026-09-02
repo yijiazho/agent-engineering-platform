@@ -98,6 +98,17 @@ def test_plan_dispositions_require_the_expected_predicate_outcome() -> None:
     validate_plan_path_contract(verified_no_change, REVISION, trusted_path_evidence=[completed])
 
 
+def test_plan_predicates_use_conjunction_and_mixed_results_mean_no_change() -> None:
+    item = evaluate_path_predicates(path="docs/task.md", content="**Status:** Completed\nmanual testing\n",
+        repository_revision=REVISION, predicates=[
+            {"kind": "STATUS_EQUALS", "value": "In Progress"},
+            {"kind": "TEXT_PRESENT", "value": "manual testing"},
+        ], source_id="snapshot")
+    plan = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": [],
+        "verifiedNoChangePaths": ["docs/task.md"], "unsupportedPaths": [], "pathEvidence": [item]}
+    validate_plan_path_contract(plan, REVISION, trusted_path_evidence=[item])
+
+
 def test_reconciliation_accepts_proven_no_change_but_not_bare_assertion() -> None:
     content = "**Status:** Completed\n"
     target = {"path": "docs/task.md", "content": content, "preimageSha256": sha256(content.encode()).hexdigest(),
@@ -110,6 +121,7 @@ def test_reconciliation_accepts_proven_no_change_but_not_bare_assertion() -> Non
     assert result["originalRequiredPaths"] == ["docs/task.md"]
     assert result["effectiveRequiredPaths"] == []
     assert result["verifiedNoChangePaths"] == ["docs/task.md"]
+    assert result["pathDispositions"][0]["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
     with pytest.raises(PlanningEvidenceError, match="no predicates"):
         reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
             original_required_paths=["docs/task.md"], targets=[target],
@@ -159,3 +171,25 @@ def test_no_change_rejects_satisfied_precondition_when_postcondition_is_missing(
             dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
             postconditions_by_path={"docs/task.md": ({"kind": "STATUS_EQUALS", "value": "Completed"},)},
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+
+
+def test_reconciliation_identity_binds_the_postcondition_proof() -> None:
+    content = "**Status:** Completed\nmanual testing\n"
+    target = {"path": "docs/task.md", "content": content, "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {}}
+    common = {"plan_id": "artifact-1", "repository_revision": REVISION,
+        "original_required_paths": ["docs/task.md"], "targets": [target],
+        "dispositions": [{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
+        "evaluator_ref": {"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"}}
+    status = reconcile_dispositions(**common,
+        postconditions_by_path={"docs/task.md": ({"kind": "STATUS_EQUALS", "value": "Completed"},)})
+    text = reconcile_dispositions(**common,
+        postconditions_by_path={"docs/task.md": ({"kind": "TEXT_PRESENT", "value": "manual testing"},)})
+    assert status["id"] != text["id"]
+
+
+@pytest.mark.parametrize("path", [".git/config", ".GIT/HEAD", ".", "docs/task.md/", "docs\\task.md"])
+def test_repository_metadata_and_non_normalized_paths_are_rejected(path: str) -> None:
+    with pytest.raises(PlanningEvidenceError, match="unsafe"):
+        evaluate_path_predicates(path=path, content="text", repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "text"}], source_id="snapshot")

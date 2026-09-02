@@ -113,12 +113,17 @@ def validate_plan_path_contract(
         results = item.get("predicateResults")
         if not isinstance(results, Sequence) or not results:
             raise PlanningEvidenceError(f"planning evidence for {path!r} lacks predicate results")
-        states = {result.get("result") for result in results if isinstance(result, Mapping)}
-        if path in required and states != {"MATCH"}:
+        states = [result.get("result") for result in results if isinstance(result, Mapping)]
+        if len(states) != len(results):
+            raise PlanningEvidenceError(f"planning evidence for {path!r} has malformed predicate results")
+        has_unsupported = "UNSUPPORTED" in states
+        all_match = bool(states) and all(state == "MATCH" for state in states)
+        conjunction_failed = bool(states) and not has_unsupported and not all_match
+        if path in required and not all_match:
             raise PlanningEvidenceError(f"required-change path {path!r} does not satisfy its planning predicates")
-        if path in no_change and states != {"NO_MATCH"}:
+        if path in no_change and not conjunction_failed:
             raise PlanningEvidenceError(f"no-change path {path!r} still satisfies a required-change predicate")
-        if path in unsupported and "UNSUPPORTED" not in states:
+        if path in unsupported and not has_unsupported:
             raise PlanningEvidenceError(f"unsupported path {path!r} lacks unsupported evidence")
 
 
@@ -149,6 +154,7 @@ def reconcile_dispositions(
         if digest != target.get("preimageSha256"):
             raise PlanningEvidenceError(f"editable target {path!r} has stale content evidence")
         state = disposition.get("disposition")
+        proof = None
         if state == "CHANGE":
             effective.append(path)
         elif state == "NO_CHANGE":
@@ -159,7 +165,8 @@ def reconcile_dispositions(
             no_change.append(path)
         else:
             raise PlanningEvidenceError(f"disposition for {path!r} must be CHANGE or NO_CHANGE")
-        records.append({"path": path, "disposition": state, "targetSha256": digest})
+        records.append({"path": path, "disposition": state, "targetSha256": digest,
+            "postconditionProof": proof})
     record = {"planArtifactId": plan_id, "repositoryRevision": repository_revision,
         "originalRequiredPaths": sorted(original_required_paths), "effectiveRequiredPaths": effective,
         "verifiedNoChangePaths": no_change, "pathDispositions": records,
@@ -184,8 +191,9 @@ def _paths(value: Any, field: str, required: bool = False) -> tuple[str, ...]:
 
 
 def _path(value: Any) -> None:
-    if not isinstance(value, str) or not value or "\\" in value:
+    if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
         raise PlanningEvidenceError("planning evidence path is unsafe")
     path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts or str(path) != value:
+    if (path.is_absolute() or ".." in path.parts or str(path) != value
+            or value == "." or path.parts[0].casefold() == ".git"):
         raise PlanningEvidenceError(f"planning evidence path {value!r} is unsafe")

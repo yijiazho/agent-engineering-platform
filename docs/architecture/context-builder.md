@@ -687,4 +687,7 @@ Ambiguous fields, binary or oversized content, stale revisions, duplicate
 paths, and unsupported semantic predicates fail closed or remain explicitly
 unsupported. Planner-returned evidence must match the independently trusted
 record byte-for-byte by selection identity; its shape alone is insufficient.
+Multiple predicates use conjunction: all must match for a required change;
+any supported no-match proves the conjunction false; any unsupported result
+keeps the path unsupported.
 Agents receive immutable evidence and never query the repository provider.
