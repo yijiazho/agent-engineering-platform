@@ -151,3 +151,11 @@ Strict output-schema failures distinguish three safe cases: local
 allowlisted provider-reported response-format rejection is `invalid_request`
 with a sanitized schema parameter; unrelated or malformed HTTP 400 responses
 remain `provider_error`. None may retain provider bodies or raw headers.
+
+## Planning And Reconciliation Events
+
+Structured evidence may log candidate identity and score, predicate kind and
+result, path, repository revision, preimage digest, plan disposition,
+reconciliation identity, and terminal outcome. It must not log file bodies,
+prompts, model output bodies, credentials, provider headers, or raw provider
+messages.

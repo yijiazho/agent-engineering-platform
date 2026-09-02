@@ -628,3 +628,14 @@ The Code Generator's write/delete branches use typed singleton enums because
 `const` is rejected by the deployed Responses API / `gpt-5` compatibility
 matrix. Runtime audits operate on the exact post-projection schema, not merely
 the provider-neutral Resource.
+
+## Plan Reconciliation
+
+An implementation plan distinguishes authorized, required-change, verified
+no-change, and unsupported paths, with exactly one disposition per authorized
+path. If freshly verified editable content narrows an evaluated plan, the
+runtime preserves the original artifact and creates a content-addressed
+reconciliation record containing original and effective sets, per-path target
+digests, reason, revision, and evaluator identity. A generator omission is not
+a disposition; `NO_CHANGE` is accepted only when every deterministic criterion
+is proven by the exact target.

@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from aep.analyze_issue import AnalyzeIssueContractError, AnalyzeIssueTaskHandler
+from aep.planning_evidence import PlanningEvidenceError, validate_plan_path_contract
 
 
 class BuildImplementationPlanContractError(AnalyzeIssueContractError):
@@ -27,6 +28,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         self._validate_acceptance_criteria_accounting(
             kwargs["task_execution"], content
         )
+        if isinstance(content, Mapping) and "authorizedPaths" in content:
+            try:
+                validate_plan_path_contract(
+                    content,
+                    str(kwargs["task_execution"]["provenance"]["repositoryRevision"]),
+                )
+            except PlanningEvidenceError as error:
+                raise BuildImplementationPlanContractError(str(error)) from error
         return super()._run_schema_evaluation(content=content, **kwargs)
 
     def _validate_acceptance_criteria_accounting(
