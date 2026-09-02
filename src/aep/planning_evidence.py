@@ -66,6 +66,23 @@ def evaluate_path_predicates(
     return record
 
 
+def finalize_planning_evidence(
+    record: Mapping[str, Any], *, postconditions: Sequence[Mapping[str, Any]],
+    selection_reasons: Sequence[str],
+) -> dict[str, Any]:
+    """Bind downstream criteria and selection reasons into the evidence identity."""
+    if not postconditions or not selection_reasons:
+        raise PlanningEvidenceError(
+            "planning evidence requires postconditions and selection reasons"
+        )
+    result = _plain(record)
+    result.pop("selectionId", None)
+    result["postconditions"] = [dict(item) for item in postconditions]
+    result["selectionReasons"] = list(selection_reasons)
+    result["selectionId"] = "planselection-" + sha256(_canonical(result)).hexdigest()[:20]
+    return result
+
+
 def validate_plan_path_contract(
     plan: Mapping[str, Any],
     repository_revision: str,
@@ -176,7 +193,15 @@ def reconcile_dispositions(
 
 
 def _canonical(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(_plain(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _paths(value: Any, field: str, required: bool = False) -> tuple[str, ...]:

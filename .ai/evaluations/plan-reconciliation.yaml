@@ -1,0 +1,1 @@
+{"apiVersion":"aep.dev/v1alpha1","kind":"Evaluation","metadata":{"name":"plan-reconciliation","version":"1.0.0"},"spec":{"type":"reconciliation","successCriteria":["Every originally required path has one revision- and digest-bound CHANGE or postcondition-proven NO_CHANGE disposition."]}}

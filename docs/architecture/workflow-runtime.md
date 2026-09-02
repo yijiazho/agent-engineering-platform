@@ -633,12 +633,11 @@ the provider-neutral Resource.
 
 The reconciliation contract distinguishes authorized, required-change,
 verified-no-change, and unsupported paths, with exactly one disposition per
-authorized path. Before enabling it in GeneratePatch, the runtime must preserve
-the original artifact and durably attach a content-addressed reconciliation
-record containing original and effective sets, per-path target digests, reason,
-revision, and evaluator identity. Only after that persistence succeeds may the
-effective sets influence patch completeness or downstream gates. A generator
+authorized path. GeneratePatch preserves the original artifact and durably
+attaches a content-addressed reconciliation EvaluationResult containing original
+and effective sets, per-path target digests, reason, revision, and evaluator
+identity. Only after that persistence succeeds may the effective sets influence
+patch completeness or downstream gates. A generator
 omission is not a disposition; `NO_CHANGE` requires the requested postcondition,
-not merely the planning precondition, to be proven by the exact target. Until
-the complete versioned path is installed, AEP-051 omission checks remain in
-force.
+not merely the planning precondition, to be proven by the exact target. The
+AEP-051 omission checks remain in force for every effective required path.

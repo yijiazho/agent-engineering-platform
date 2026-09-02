@@ -14,7 +14,7 @@
       "additionalProperties": false,
       "required": ["type"],
       "properties": {
-        "type": { "type": "string", "enum": ["schema", "patch", "build", "test", "artifact-exists", "acceptance"] },
+        "type": { "type": "string", "enum": ["schema", "patch", "reconciliation", "build", "test", "artifact-exists", "acceptance"] },
         "inputSchema": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" },
         "successCriteria": {
           "type": "array",

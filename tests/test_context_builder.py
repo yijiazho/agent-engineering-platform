@@ -129,6 +129,58 @@ def task(name: str, required_context: list[str]) -> dict:
     return resource
 
 
+def test_planning_evidence_materializes_bounded_revision_bound_records() -> None:
+    task_resource = task("plan", ["candidate-files", "planning-evidence"])
+    task_resource["spec"]["objective"] = "Update README status after manual testing."
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md",
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "Declared status transition",
+        "maxBytes": 1024,
+    }]
+    calls = []
+
+    def read(path: str, revision: str, max_bytes: int) -> str:
+        calls.append((path, revision, max_bytes))
+        return "# README\n\n**Status:** In Progress\n"
+
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=read,
+    ).build(task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
+
+    evidence = [item for item in package["elements"] if item["type"] == "planning-evidence"]
+    assert calls == [("README.md", REVISION, 1024)]
+    assert len(evidence) == 1
+    assert evidence[0]["content"]["predicateResults"][0]["result"] == "MATCH"
+    assert [dict(item) for item in evidence[0]["content"]["postconditions"]] == [
+        {"kind": "STATUS_EQUALS", "value": "Completed"}
+    ]
+    assert "# README" not in repr(evidence)
+    assert package["tokenCount"] <= package["tokenBudget"]
+
+
+def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None:
+    task_resource = task("plan", ["candidate-files", "planning-evidence"])
+    task_resource["spec"]["objective"] = "Update README status."
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md", "predicate": {"kind": "TEXT_PRESENT", "value": "Status"},
+        "postcondition": {"kind": "TEXT_ABSENT", "value": "Status"},
+        "selectionReason": "Declared transition",
+    }]
+    builder = ContextBuilder(repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=lambda *_: (_ for _ in ()).throw(OSError("secret body")))
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
+    assert "OSError" in str(captured.value)
+    assert "secret body" not in str(captured.value)
+
+
 def task_execution(task_resource: dict) -> dict:
     execution = {
         "apiVersion": "aep.dev/v1alpha1",

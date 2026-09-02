@@ -862,8 +862,14 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `generate-patch:1.12.0` uses `code-generator:1.12.0` and requires one exact
+* `build-implementation-plan:1.8.0` uses trusted `planning-evidence` records
+  created from the pinned checkout. Inspect each record's path, revision,
+  digest, predicate result, postcondition, selection reason, and selection ID;
+  full file bodies are intentionally absent.
+* `generate-patch:1.13.0` uses `code-generator:1.13.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
-  patch EvaluationResult for required-file dispositions and change statistics
-  before authorizing publication.
+  reconciliation and patch EvaluationResults for original/effective sets,
+  terminal dispositions, and change statistics before authorizing publication.
+  Missing or failing reconciliation evidence must prevent both push and PR
+  creation.

@@ -27,6 +27,7 @@ from aep.filesystem_tool import FilesystemTool
 from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
+from aep.planning_evidence import PlanningEvidenceError, reconcile_dispositions
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeStoreError
 from aep.task_execution import FailureClass
@@ -112,12 +113,22 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             workflow, event = self._validate_inputs(task, task_execution)
             plan, producer_id = self._implementation_plan(task_execution, workflow)
             allowed_paths = _allowed_paths(plan)
+            unsupported_paths = _unsupported_paths(plan, allowed_paths)
+            if unsupported_paths:
+                raise GeneratePatchContractError(
+                    f"IMPLEMENTATION_PLAN contains unsupported path decisions: {list(unsupported_paths)!r}"
+                )
+            required_change_paths = _required_change_paths(plan, allowed_paths)
             deletion_authorized_paths = _deletion_authorized_paths(plan, allowed_paths)
             no_change_paths = _no_change_paths(plan, allowed_paths)
             required_insertions = _required_insertions(plan, allowed_paths)
             unsupported_criteria = _unsupported_acceptance_criteria(plan)
             task_spec = _spec(task)
             patch_evaluation = self._patch_evaluation(task_spec)
+            reconciliation_evaluation = (
+                self._reconciliation_evaluation(task_spec)
+                if "authorizedPaths" in plan else None
+            )
             output_schema = task_spec.get("outputs")
             if not isinstance(output_schema, Mapping) or not output_schema:
                 raise GeneratePatchContractError("GeneratePatch Task requires spec.outputs")
@@ -158,9 +169,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 tool_ref=git_read_ref,
                 max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
             )
-            _verify_no_change_targets(
-                no_change_paths, required_insertions, editable_targets
-            )
+            if "authorizedPaths" in plan:
+                _verify_plan_evidence_targets(
+                    plan, str(workflow["repositoryRevision"]), editable_targets
+                )
+            else:
+                _verify_no_change_targets(
+                    no_change_paths, required_insertions, editable_targets
+                )
             context_package = self._context_builder.build(
                 task=task,
                 task_execution=task_execution,
@@ -234,7 +250,51 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 )
 
             changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
-            missing = sorted(set(allowed_paths) - set(no_change_paths) - {item["path"] for item in changes})
+            reconciliation = None
+            reconciliation_id = None
+            if "authorizedPaths" in plan:
+                dispositions = _validated_dispositions(invocation.get("output"), allowed_paths, changes)
+                disposition_by_path = {item["path"]: item["disposition"] for item in dispositions}
+                if any(disposition_by_path[path] != "NO_CHANGE" for path in no_change_paths):
+                    raise GeneratePatchContractError("planning-time no-change paths must retain NO_CHANGE")
+                try:
+                    reconciliation = reconcile_dispositions(
+                        plan_id=str(plan["_artifactId"]), repository_revision=str(workflow["repositoryRevision"]),
+                        original_required_paths=required_change_paths,
+                        targets=[item for item in editable_targets if item["path"] in required_change_paths],
+                        dispositions=[item for item in dispositions if item["path"] in required_change_paths],
+                        postconditions_by_path=_postconditions_by_path(plan),
+                        evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
+                    )
+                except PlanningEvidenceError as error:
+                    raise GeneratePatchContractError(str(error)) from error
+                assert reconciliation_evaluation is not None
+                reconciliation_ref = _ref_record(reconciliation_evaluation.ref)
+                reconciliation_id = self._runtime_id(
+                    "evaluationresult", f"{task_execution['id']}:plan-reconciliation"
+                )
+                timestamp = self._timestamp()
+                self._runtime_store.create({
+                    "apiVersion": "aep.dev/v1alpha1", "kind": "EvaluationResult",
+                    "id": reconciliation_id, "traceId": task_execution["traceId"],
+                    "createdAt": timestamp, "updatedAt": timestamp,
+                    "provenance": {"actor": "plan-reconciliation-evaluator",
+                        "workflowExecutionId": workflow["id"], "taskExecutionId": task_execution["id"],
+                        "repositoryRevision": workflow["repositoryRevision"],
+                        "resourceRefs": [reconciliation_ref]},
+                    "taskExecutionId": task_execution["id"],
+                    "evaluationRef": reconciliation_ref,
+                    "target": {"type": "AgentInvocation", "id": invocation_id},
+                    "status": "SUCCEEDED", "outcome": "PASS", "evidence": reconciliation,
+                    "startedAt": timestamp, "completedAt": timestamp,
+                }, deterministic_key=f"plan-reconciliation:{task_execution['id']}")
+                self._attach(task_execution["id"], {"evaluationResultIds": [reconciliation_id]})
+                effective_required = tuple(reconciliation["effectiveRequiredPaths"])
+                effective_no_change = tuple(sorted(set(no_change_paths) | set(reconciliation["verifiedNoChangePaths"])))
+            else:
+                effective_required = required_change_paths
+                effective_no_change = no_change_paths
+            missing = sorted(set(effective_required) - {item["path"] for item in changes})
             if missing:
                 raise GeneratePatchContractError(
                     f"Code Generator omitted required planned files: {missing!r}"
@@ -320,7 +380,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             diff_output = diff_result.output_record()
             patch = diff_output.get("diff") if isinstance(diff_output, Mapping) else None
             patch_text = patch.get("text") if isinstance(patch, Mapping) else None
-            all_no_change = not changes and set(no_change_paths) == set(allowed_paths)
+            all_no_change = not changes and set(effective_no_change) == set(allowed_paths)
             if not isinstance(patch_text, str) or (not patch_text and not all_no_change):
                 self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
@@ -359,7 +419,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 "mediaType": "text/x-diff; charset=utf-8",
                 "contentAddress": "sha256:"
                 + sha256(patch_text.encode("utf-8")).hexdigest(),
-                "evaluationResultIds": [evaluation_id],
+                "evaluationResultIds": ([reconciliation_id] if reconciliation_id else []) + [evaluation_id],
                 "changedFiles": changed_files,
             }
             evaluation_result = evaluate_patch(
@@ -373,12 +433,12 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 patch_content=patch_text,
                 expected_revision=str(workflow["repositoryRevision"]),
                 allowed_paths=allowed_paths,
-                required_paths=tuple(path for path in allowed_paths if path not in no_change_paths),
-                no_change_paths=no_change_paths,
+                required_paths=effective_required,
+                no_change_paths=effective_no_change,
                 deletion_authorized_paths=deletion_authorized_paths,
                 required_insertions=tuple(
                     item for item in required_insertions
-                    if item["path"] not in no_change_paths
+                    if item["path"] not in effective_no_change
                 ),
                 unsupported_acceptance_criteria=unsupported_criteria,
                 working_branch=self._working_branch,
@@ -741,7 +801,20 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             raise GeneratePatchContractError(
                 "IMPLEMENTATION_PLAN content must be a JSON object"
             )
-        return deepcopy(dict(content)), producer_id
+        result = deepcopy(dict(content))
+        result["_artifactId"] = str(artifact["id"])
+        context_id = producer.get("contextPackageId")
+        context = self._runtime_store.get(str(context_id)) if isinstance(context_id, str) else None
+        evidence_ids = result.get("pathEvidence", ())
+        if "authorizedPaths" in result:
+            trusted = [item.get("content") for item in (context or {}).get("elements", ())
+                if isinstance(item, Mapping) and item.get("type") == "planning-evidence"
+                and isinstance(item.get("content"), Mapping)]
+            selected = [item for item in trusted if item.get("selectionId") in evidence_ids]
+            if len(selected) != len(evidence_ids):
+                raise GeneratePatchContractError("IMPLEMENTATION_PLAN planning evidence is missing or stale")
+            result["_trustedPathEvidence"] = selected
+        return result, producer_id
 
     def _patch_evaluation(self, task_spec: JsonMapping) -> Resource:
         evaluations = self._resolve_declared(task_spec.get("evaluations", ()), "Evaluation")
@@ -751,6 +824,15 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 "GeneratePatch Task must declare exactly one patch Evaluation"
             )
         return patch_evaluations[0]
+
+    def _reconciliation_evaluation(self, task_spec: JsonMapping) -> Resource:
+        evaluations = self._resolve_declared(task_spec.get("evaluations", ()), "Evaluation")
+        matches = [item for item in evaluations if _spec(item).get("type") == "reconciliation"]
+        if len(matches) != 1:
+            raise GeneratePatchContractError(
+                "evidence-bound GeneratePatch Task must declare exactly one reconciliation Evaluation"
+            )
+        return matches[0]
 
     def _authorized_tools(self, resolved_agent: JsonMapping) -> dict[str, dict[str, Any]]:
         records: dict[str, dict[str, Any]] = {}
@@ -809,7 +891,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
 
 
 def _allowed_paths(plan: JsonMapping) -> tuple[str, ...]:
-    values = plan.get("intendedFiles")
+    values = plan.get("authorizedPaths", plan.get("intendedFiles"))
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or not values:
         raise GeneratePatchContractError(
             "IMPLEMENTATION_PLAN.intendedFiles must contain allowed paths"
@@ -820,6 +902,30 @@ def _allowed_paths(plan: JsonMapping) -> tuple[str, ...]:
             "IMPLEMENTATION_PLAN.intendedFiles must contain unique normalized repository-relative paths"
         )
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _required_change_paths(plan: JsonMapping, allowed_paths: Sequence[str]) -> tuple[str, ...]:
+    values = plan.get("requiredChangePaths")
+    if values is None:
+        return tuple(path for path in allowed_paths if path not in _no_change_paths(plan, allowed_paths))
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredChangePaths must be an array")
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or not set(paths).issubset(allowed_paths):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.requiredChangePaths must be unique authorized paths")
+    return tuple(sorted(paths))
+
+
+def _unsupported_paths(plan: JsonMapping, allowed_paths: Sequence[str]) -> tuple[str, ...]:
+    values = plan.get("unsupportedPaths", ())
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("IMPLEMENTATION_PLAN.unsupportedPaths must be an array")
+    paths = tuple(str(value) for value in values)
+    if len(set(paths)) != len(paths) or not set(paths).issubset(allowed_paths):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.unsupportedPaths must be unique authorized paths"
+        )
+    return tuple(sorted(paths))
 
 
 def _deletion_authorized_paths(
@@ -869,13 +975,46 @@ def _required_insertions(
 
 
 def _no_change_paths(plan: JsonMapping, allowed_paths: Sequence[str]) -> tuple[str, ...]:
-    values = plan.get("noChangeFiles", ())
+    values = plan.get("verifiedNoChangePaths", plan.get("noChangeFiles", ()))
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise GeneratePatchContractError("IMPLEMENTATION_PLAN.noChangeFiles must be an array")
     paths = tuple(str(value) for value in values)
     if len(set(paths)) != len(paths) or any(not _safe_path(path) for path in paths) or not set(paths).issubset(allowed_paths):
         raise GeneratePatchContractError("IMPLEMENTATION_PLAN.noChangeFiles must be unique intendedFiles")
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
+
+
+def _validated_dispositions(output: object, allowed_paths: Sequence[str], changes: Sequence[JsonMapping]) -> tuple[dict[str, str], ...]:
+    if not isinstance(output, Mapping):
+        raise GeneratePatchContractError("Code Generator output must be an object")
+    values = output.get("dispositions")
+    if values is None:  # compatibility for prior immutable Task generations
+        changed = {item["path"] for item in changes}
+        return tuple({"path": path, "disposition": "CHANGE" if path in changed else "NO_CHANGE"} for path in allowed_paths)
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError("Code Generator dispositions must be an array")
+    records = []
+    for item in values:
+        if not isinstance(item, Mapping) or item.get("disposition") not in {"CHANGE", "NO_CHANGE"}:
+            raise GeneratePatchContractError("each Code Generator disposition must be CHANGE or NO_CHANGE")
+        records.append({"path": item.get("path"), "disposition": item["disposition"]})
+    paths = [item["path"] for item in records]
+    if any(not isinstance(path, str) for path in paths) or len(set(paths)) != len(paths) or set(paths) != set(allowed_paths):
+        raise GeneratePatchContractError("Code Generator dispositions must cover every authorized path exactly once")
+    changed = {item["path"] for item in changes}
+    if {item["path"] for item in records if item["disposition"] == "CHANGE"} != changed:
+        raise GeneratePatchContractError("CHANGE dispositions must correspond exactly to generated changes")
+    return tuple(records)
+
+
+def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    result = {}
+    for item in plan.get("_trustedPathEvidence", ()):
+        if isinstance(item, Mapping) and isinstance(item.get("path"), str):
+            values = item.get("postconditions", ())
+            if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                result[item["path"]] = tuple(value for value in values if isinstance(value, Mapping))
+    return result
 
 
 def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
@@ -946,6 +1085,34 @@ def _verify_no_change_targets(
         ):
             raise GeneratePatchContractError(
                 f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
+            )
+
+
+def _verify_plan_evidence_targets(
+    plan: JsonMapping,
+    repository_revision: str,
+    editable_targets: Sequence[JsonMapping],
+) -> None:
+    evidence = {
+        item.get("path"): item
+        for item in plan.get("_trustedPathEvidence", ())
+        if isinstance(item, Mapping) and isinstance(item.get("path"), str)
+    }
+    targets = {item.get("path"): item for item in editable_targets}
+    allowed = set(_allowed_paths(plan))
+    if set(evidence) != allowed or set(targets) != allowed:
+        raise GeneratePatchContractError(
+            "planning evidence and editable targets must exactly cover authorized paths"
+        )
+    for path in sorted(allowed):
+        record, target = evidence[path], targets[path]
+        if (
+            record.get("repositoryRevision") != repository_revision
+            or target.get("repositoryRevision") != repository_revision
+            or record.get("preimageSha256") != target.get("preimageSha256")
+        ):
+            raise GeneratePatchContractError(
+                f"planning evidence for {path!r} does not bind the exact editable target"
             )
 
 

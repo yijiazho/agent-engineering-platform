@@ -30,6 +30,7 @@ from aep.git_tool import (
     InMemoryGitCommandLogStore,
 )
 from aep.model_invocation import FakeModelAdapter, ModelResponse, ModelUsage
+from aep.planning_evidence import evaluate_path_predicates, finalize_planning_evidence
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
     RepositoryFile,
@@ -69,6 +70,21 @@ CHANGE_SCHEMA = {
                 },
             },
         }
+    },
+}
+
+EVIDENCE_CHANGE_SCHEMA = json.loads(json.dumps(CHANGE_SCHEMA))
+EVIDENCE_CHANGE_SCHEMA["required"].append("dispositions")
+EVIDENCE_CHANGE_SCHEMA["properties"]["dispositions"] = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["path", "disposition"],
+        "properties": {
+            "path": {"type": "string"},
+            "disposition": {"enum": ["CHANGE", "NO_CHANGE"]},
+        },
     },
 }
 
@@ -484,6 +500,66 @@ def test_no_change_accepts_required_text_present_in_exact_content(tmp_path: Path
     assert artifacts.get_content(artifact["id"]) == b""
 
 
+def test_evidence_bound_late_no_change_persists_reconciliation_before_patch(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [], "dispositions": [
+            {"path": "src/app.py", "disposition": "NO_CHANGE"}
+        ]},
+        evidence_bound=True,
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    execution = store.get(TASK_EXECUTION_ID)
+    assert len(execution["evaluationResultIds"]) == 2
+    reconciliation = store.get(execution["evaluationResultIds"][0])
+    assert reconciliation["evaluationRef"]["name"] == "plan-reconciliation"
+    assert reconciliation["target"]["type"] == "AgentInvocation"
+    assert reconciliation["evidence"]["originalRequiredPaths"] == ["src/app.py"]
+    assert reconciliation["evidence"]["effectiveRequiredPaths"] == []
+    assert reconciliation["evidence"]["verifiedNoChangePaths"] == ["src/app.py"]
+    artifact = artifacts.get(execution["generatedArtifactIds"][0])
+    assert artifact["evaluationResultIds"] == execution["evaluationResultIds"]
+
+
+def test_evidence_bound_no_change_fails_when_postcondition_is_unsatisfied(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [], "dispositions": [
+            {"path": "src/app.py", "disposition": "NO_CHANGE"}
+        ]},
+        evidence_bound=True,
+        postcondition_value="value = 2",
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "unsatisfied or unsupported" in result.message
+    assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
+
+
+def test_evidence_bound_required_change_cannot_be_omitted(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [], "dispositions": [
+            {"path": "src/app.py", "disposition": "CHANGE"}
+        ]},
+        evidence_bound=True,
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "correspond exactly" in result.message
+
+
 def test_mode_drift_is_rejected_by_compare_write(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("Windows does not expose POSIX executable mode changes")
@@ -560,19 +636,37 @@ def setup_handler(
     publish_plan: bool = True,
     no_change_files: list[str] | None = None,
     required_insertions: list[dict[str, str]] | None = None,
+    evidence_bound: bool = False,
+    postcondition_value: str = "value = 1",
 ):
     workspace, evaluation_workspace, revision = repositories(tmp_path)
-    resources, task = resource_collection()
+    resources, task = resource_collection(evidence_bound=evidence_bound)
     store = InMemoryRuntimeObjectStore()
     store.create(workflow_execution(revision), deterministic_key="workflow")
-    store.create(producer_execution(revision), deterministic_key="producer")
+    planning_record = None
+    context_id = None
+    if evidence_bound:
+        planning_record = evaluate_path_predicates(
+            path="src/app.py", content="value = 1\n", repository_revision=revision,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "value = 1"}],
+            source_id="file:src/app.py",
+        )
+        planning_record = finalize_planning_evidence(
+            planning_record,
+            postconditions=[{"kind": "TEXT_PRESENT", "value": postcondition_value}],
+            selection_reasons=["fixture predicate"],
+        )
+        context_id = "contextpackage-111111111111"
+    store.create(producer_execution(revision, context_id=context_id), deterministic_key="producer")
+    if planning_record is not None:
+        store.create(planning_context(revision, planning_record), deterministic_key="planning-context")
     store.create(task_execution(revision), deterministic_key="generate")
     store.create(plan_evaluation(revision), deterministic_key="plan-evaluation")
     artifact_store = InMemoryGeneratedArtifactStore(runtime_store=store)
     if publish_plan:
         artifact_store.publish(
             plan_metadata(revision),
-            implementation_plan(
+            evidence_plan(planning_record) if planning_record is not None else implementation_plan(
                 intended_files or ["src/app.py"],
                 no_change_files=no_change_files,
                 required_insertions=required_insertions,
@@ -659,7 +753,7 @@ def git_adapter(root: Path, revision: str) -> GitToolAdapter:
     )
 
 
-def resource_collection() -> tuple[ResourceCollection, Resource]:
+def resource_collection(*, evidence_bound: bool = False) -> tuple[ResourceCollection, Resource]:
     workspace = resource("Workspace", "local", {"repository": "octo/repo"})
     task = resource(
         "Task",
@@ -667,10 +761,12 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
         {
             "objective": "Generate scoped code and test changes.",
             "agentRef": ref("Agent", "code-generator"),
-            "outputs": CHANGE_SCHEMA,
+            "outputs": EVIDENCE_CHANGE_SCHEMA if evidence_bound else CHANGE_SCHEMA,
             "requiredContext": ["editable-targets", "prior-artifacts", "repository-inventory", "policies"],
             "inputContextTokenBudget": 32_000,
-            "evaluations": [ref("Evaluation", "patch-safety")],
+            "evaluations": [ref("Evaluation", "patch-safety")] + (
+                [ref("Evaluation", "plan-reconciliation")] if evidence_bound else []
+            ),
             "policies": [ref("Policy", "workspace-write")],
         },
     )
@@ -682,7 +778,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             "promptRef": ref("Prompt", "generate-patch"),
             "modelRef": ref("Model", "fake-generator"),
             "toolRefs": [ref("Tool", "filesystem"), ref("Tool", "git")],
-            "outputSchema": CHANGE_SCHEMA,
+            "outputSchema": EVIDENCE_CHANGE_SCHEMA if evidence_bound else CHANGE_SCHEMA,
         },
     )
     prompt = resource(
@@ -725,6 +821,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
         },
     )
     evaluation = resource("Evaluation", "patch-safety", {"type": "patch"})
+    reconciliation = resource("Evaluation", "plan-reconciliation", {"type": "reconciliation"})
     policy = resource(
         "Policy",
         "workspace-write",
@@ -738,7 +835,9 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             ],
         },
     )
-    values = (workspace, task, agent, prompt, model, filesystem, git_tool, evaluation, policy)
+    values = (workspace, task, agent, prompt, model, filesystem, git_tool, evaluation, policy) + (
+        (reconciliation,) if evidence_bound else ()
+    )
     return ResourceCollection(workspace=workspace, resources=values), task
 
 
@@ -764,8 +863,8 @@ def workflow_execution(revision: str) -> dict:
     }
 
 
-def producer_execution(revision: str) -> dict:
-    return {
+def producer_execution(revision: str, *, context_id: str | None = None) -> dict:
+    result = {
         **task_execution(revision),
         "id": PRODUCER_ID,
         "taskRef": ref("Task", "build-implementation-plan"),
@@ -782,6 +881,9 @@ def producer_execution(revision: str) -> dict:
             "resourceRefs": [ref("Task", "build-implementation-plan")],
         },
     }
+    if context_id is not None:
+        result["contextPackageId"] = context_id
+    return result
 
 
 def task_execution(revision: str) -> dict:
@@ -869,6 +971,40 @@ def implementation_plan(
         "assumptions": ["The checkout is revision-bound."],
         "risks": ["A change may exceed the plan scope."],
         "implementationSteps": ["Apply scoped changes.", "Evaluate the patch."],
+    }
+
+
+def evidence_plan(record: dict) -> dict:
+    return {
+        **implementation_plan(["src/app.py"]),
+        "authorizedPaths": ["src/app.py"],
+        "requiredChangePaths": ["src/app.py"],
+        "verifiedNoChangePaths": [],
+        "unsupportedPaths": [],
+        "pathEvidence": [record["selectionId"]],
+    }
+
+
+def planning_context(revision: str, record: dict) -> dict:
+    return {
+        "apiVersion": "aep.dev/v1alpha1", "kind": "ContextPackage",
+        "id": "contextpackage-111111111111", "traceId": "trace-generate-patch",
+        "createdAt": TIMESTAMP, "updatedAt": TIMESTAMP,
+        "provenance": {"actor": "context-builder", "workflowExecutionId": WORKFLOW_ID,
+            "taskExecutionId": PRODUCER_ID, "repositoryRevision": revision,
+            "resourceRefs": [ref("Task", "build-implementation-plan")]},
+        "taskExecutionId": PRODUCER_ID,
+        "taskRef": ref("Task", "build-implementation-plan"),
+        "repositoryRevision": revision,
+        "elements": [{"type": "planning-evidence", "content": record,
+            "provenance": {"actor": "context-builder", "repositoryRevision": revision,
+                "resourceRefs": [ref("Task", "build-implementation-plan")]} }],
+        "tokenBudget": 1000, "tokenCount": 50,
+        "tokenEstimate": {"algorithm": "fixture", "count": 50,
+            "breakdown": {"planning-evidence": {"elementCount": 1, "tokenCount": 50}}},
+        "truncation": "NONE",
+        "selection": {"requiredContext": ["planning-evidence"], "optionalContext": [],
+            "selected": ["planning-evidence"], "discarded": []},
     }
 
 

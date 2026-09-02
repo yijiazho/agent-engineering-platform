@@ -11,7 +11,7 @@ from math import ceil
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Callable, Final
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
@@ -40,6 +40,7 @@ SUPPORTED_CONTEXT: Final = frozenset(
         "issue",
         "repository-inventory",
         "candidate-files",
+        "planning-evidence",
         "editable-targets",
         "documentation",
         "dependency-manifests",
@@ -90,6 +91,7 @@ class ContextBuilder:
         artifact_store: GeneratedArtifactStore,
         runtime_store: RuntimeObjectStore | None = None,
         lifecycle_logger: StructuredLifecycleLogger | None = None,
+        repository_file_reader: Callable[[str, str, int], str] | None = None,
     ) -> None:
         if not isinstance(repository_knowledge, RepositoryKnowledgeProvider):
             raise TypeError("repository_knowledge must implement RepositoryKnowledgeProvider")
@@ -99,6 +101,9 @@ class ContextBuilder:
         self._artifact_store = artifact_store
         self._runtime_store = runtime_store
         self._lifecycle_logger = lifecycle_logger
+        if repository_file_reader is not None and not callable(repository_file_reader):
+            raise TypeError("repository_file_reader must be callable")
+        self._repository_file_reader = repository_file_reader
 
     def build(
         self,
@@ -266,14 +271,80 @@ class ContextBuilder:
                 "test-hints",
             }
         )
+        repository_results: dict[str, tuple[KnowledgeResult, ...]] = {}
         for name in requested_repository:
+            if name == "planning-evidence":
+                continue
             results = self._query_repository(name, terms)
+            repository_results[name] = results
             _require_result_binding(
                 results, repository_revision, knowledge_graph_version
             )
             target = mandatory if name in required else optional_candidates
             for result in results:
                 target.append((name, _knowledge_element("repository", result)))
+
+        if "planning-evidence" in required or "planning-evidence" in optional:
+            if self._repository_file_reader is None:
+                raise RequiredContextError("planning-evidence requires a revision-bound repository reader")
+            from aep.planning_evidence import evaluate_path_predicates, finalize_planning_evidence
+            declarations = task_spec.get("planningPredicates", ())
+            if isinstance(declarations, (str, bytes)) or not isinstance(declarations, Sequence) or not declarations:
+                raise RequiredContextError("planning-evidence requires Task.spec.planningPredicates")
+            candidates = repository_results.get("candidate-files")
+            if candidates is None:
+                candidates = self._query_repository("candidate-files", terms)
+            evidence_target = mandatory if "planning-evidence" in required else optional_candidates
+            matched = 0
+            seen_paths: set[str] = set()
+            for result in candidates:
+                path = result.provenance.source.path
+                if path in seen_paths:
+                    raise RequiredContextError(
+                        f"planning-evidence candidate {path!r} is duplicated"
+                    )
+                predicates = []
+                postconditions = []
+                reasons = []
+                max_bytes = 64 * 1024
+                for declaration in declarations:
+                    if not isinstance(declaration, Mapping):
+                        raise RequiredContextError("planning predicate declarations must be objects")
+                    exact = declaration.get("path")
+                    prefix = declaration.get("pathPrefix")
+                    applies = exact == path or (isinstance(prefix, str) and (path == prefix or path.startswith(prefix.rstrip("/") + "/")))
+                    if not applies:
+                        continue
+                    predicate = declaration.get("predicate")
+                    postcondition = declaration.get("postcondition")
+                    if not isinstance(predicate, Mapping) or not isinstance(postcondition, Mapping):
+                        raise RequiredContextError("planning predicates require predicate and postcondition")
+                    predicates.append(dict(predicate))
+                    postconditions.append(dict(postcondition))
+                    reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
+                    max_bytes = min(max_bytes, int(declaration.get("maxBytes", max_bytes)))
+                if not predicates:
+                    continue
+                try:
+                    content = self._repository_file_reader(path, repository_revision, max_bytes)
+                    record = evaluate_path_predicates(path=path, content=content,
+                        repository_revision=repository_revision, predicates=predicates,
+                        source_id=result.id, max_bytes=max_bytes)
+                except (OSError, UnicodeError, ValueError) as error:
+                    raise RequiredContextError(f"planning-evidence target {path!r} failed closed: {type(error).__name__}") from error
+                record = finalize_planning_evidence(
+                    record, postconditions=postconditions, selection_reasons=reasons
+                )
+                evidence_target.append(("planning-evidence", {
+                    "type": "planning-evidence", "content": record,
+                    "provenance": {"actor": "context-builder", "repositoryRevision": repository_revision,
+                        "knowledgeGraphVersion": knowledge_graph_version,
+                        "resourceRefs": [task_ref]},
+                }))
+                seen_paths.add(path)
+                matched += 1
+            if matched == 0:
+                raise RequiredContextError("planning-evidence matched no bounded candidate paths")
 
         for knowledge_base in sorted(knowledge_data, key=_resource_sort_key):
             ref = _resource_ref(knowledge_base)
@@ -536,6 +607,8 @@ class ContextBuilder:
             return self._repository_knowledge.search_candidate_files(
                 CandidateFileQuery(terms=terms, limit=CANDIDATE_FILE_LIMIT)
             )
+        if requirement == "planning-evidence":
+            raise AssertionError("planning-evidence is materialized from candidate files")
         if requirement == "documentation":
             return self._repository_knowledge.lookup_documentation(
                 DocumentationQuery(terms=terms, limit=DOCUMENTATION_LIMIT)

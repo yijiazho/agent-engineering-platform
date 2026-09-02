@@ -300,6 +300,17 @@ class EvaluateAcceptanceTaskHandler:
                 producer, producer_task, workflow, issues
             )
             _, expected_artifact_type, expected_evaluation_types = contract
+            declared_evaluations = _spec(producer_task).get("evaluations", ())
+            if (
+                producer_task.name == "generate-patch"
+                and isinstance(declared_evaluations, Sequence)
+                and any(
+                    isinstance(item, Mapping)
+                    and item.get("name") == "plan-reconciliation"
+                    for item in declared_evaluations
+                )
+            ):
+                expected_evaluation_types = ("patch", "reconciliation")
 
             attached_artifact_ids = _optional_string_list(
                 producer.get("generatedArtifactIds"),
@@ -615,6 +626,7 @@ class EvaluateAcceptanceTaskHandler:
         evaluation_type = _spec(evaluation).get("type")
         expected_kind = {
             "schema": "AgentInvocation",
+            "reconciliation": "AgentInvocation",
             "patch": "GeneratedArtifact",
             "build": "ToolInvocation",
             "test": "ToolInvocation",
