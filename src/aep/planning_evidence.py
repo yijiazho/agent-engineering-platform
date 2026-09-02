@@ -66,8 +66,13 @@ def evaluate_path_predicates(
     return record
 
 
-def validate_plan_path_contract(plan: Mapping[str, Any], repository_revision: str) -> None:
-    """Require one evidence-backed disposition for every authorized path."""
+def validate_plan_path_contract(
+    plan: Mapping[str, Any],
+    repository_revision: str,
+    *,
+    trusted_path_evidence: Sequence[Mapping[str, Any]],
+) -> None:
+    """Require model decisions to cite independently materialized evidence."""
     authorized = _paths(plan.get("authorizedPaths"), "authorizedPaths", required=True)
     required = _paths(plan.get("requiredChangePaths"), "requiredChangePaths")
     no_change = _paths(plan.get("verifiedNoChangePaths"), "verifiedNoChangePaths")
@@ -89,11 +94,22 @@ def validate_plan_path_contract(plan: Mapping[str, Any], repository_revision: st
         by_path[path] = item
     if set(by_path) != set(authorized):
         raise PlanningEvidenceError("pathEvidence must cover every authorized path")
+    trusted_by_id: dict[str, Mapping[str, Any]] = {}
+    for item in trusted_path_evidence:
+        selection_id = item.get("selectionId") if isinstance(item, Mapping) else None
+        if not isinstance(selection_id, str) or not selection_id or selection_id in trusted_by_id:
+            raise PlanningEvidenceError("trusted planning evidence has invalid or duplicate identities")
+        trusted_by_id[selection_id] = item
     for path, item in by_path.items():
         if item.get("repositoryRevision") != repository_revision:
             raise PlanningEvidenceError(f"planning evidence for {path!r} is revision-mismatched")
         if not re.fullmatch(r"[0-9a-f]{64}", str(item.get("preimageSha256", ""))):
             raise PlanningEvidenceError(f"planning evidence for {path!r} lacks a content digest")
+        trusted = trusted_by_id.get(str(item.get("selectionId", "")))
+        if trusted is None or _canonical(item) != _canonical(trusted):
+            raise PlanningEvidenceError(
+                f"planning evidence for {path!r} does not match trusted Context Builder evidence"
+            )
         results = item.get("predicateResults")
         if not isinstance(results, Sequence) or not results:
             raise PlanningEvidenceError(f"planning evidence for {path!r} lacks predicate results")
@@ -109,7 +125,7 @@ def validate_plan_path_contract(plan: Mapping[str, Any], repository_revision: st
 def reconcile_dispositions(
     *, plan_id: str, repository_revision: str, original_required_paths: Sequence[str],
     targets: Sequence[Mapping[str, Any]], dispositions: Sequence[Mapping[str, Any]],
-    criteria_by_path: Mapping[str, Sequence[Mapping[str, Any]]], evaluator_ref: Mapping[str, str],
+    postconditions_by_path: Mapping[str, Sequence[Mapping[str, Any]]], evaluator_ref: Mapping[str, str],
 ) -> dict[str, Any]:
     """Create immutable reconciliation evidence from freshly verified targets."""
     target_map = {item.get("path"): item for item in targets}
@@ -132,7 +148,7 @@ def reconcile_dispositions(
             effective.append(path)
         elif state == "NO_CHANGE":
             proof = evaluate_path_predicates(path=path, content=content, repository_revision=repository_revision,
-                predicates=criteria_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")))
+                predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")))
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
             no_change.append(path)
@@ -145,6 +161,10 @@ def reconcile_dispositions(
         "reason": "EXACT_EDITABLE_TARGET_RECONCILIATION", "evaluatorRef": dict(evaluator_ref)}
     record["id"] = "planreconciliation-" + sha256(json.dumps(record, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:20]
     return record
+
+
+def _canonical(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _paths(value: Any, field: str, required: bool = False) -> tuple[str, ...]:

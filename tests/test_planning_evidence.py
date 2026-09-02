@@ -67,7 +67,7 @@ def test_plan_contract_rejects_overlap_omission_and_stale_evidence() -> None:
     item = evidence("docs/task.md", "In Progress")
     plan = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": ["docs/task.md"],
         "verifiedNoChangePaths": [], "unsupportedPaths": [], "pathEvidence": [item]}
-    validate_plan_path_contract(plan, REVISION)
+    validate_plan_path_contract(plan, REVISION, trusted_path_evidence=[item])
     for mutation, message in [
         ({"verifiedNoChangePaths": ["docs/task.md"]}, "conflict"),
         ({"requiredChangePaths": []}, "exactly one"),
@@ -75,7 +75,16 @@ def test_plan_contract_rejects_overlap_omission_and_stale_evidence() -> None:
     ]:
         invalid = {**plan, **mutation}
         with pytest.raises(PlanningEvidenceError, match=message):
-            validate_plan_path_contract(invalid, REVISION)
+            validate_plan_path_contract(invalid, REVISION, trusted_path_evidence=[item])
+
+
+def test_plan_contract_rejects_model_fabricated_evidence() -> None:
+    trusted = evidence("docs/task.md", "In Progress")
+    fabricated = {**trusted, "preimageSha256": "f" * 64}
+    plan = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": ["docs/task.md"],
+        "verifiedNoChangePaths": [], "unsupportedPaths": [], "pathEvidence": [fabricated]}
+    with pytest.raises(PlanningEvidenceError, match="trusted Context Builder evidence"):
+        validate_plan_path_contract(plan, REVISION, trusted_path_evidence=[trusted])
 
 
 def test_reconciliation_accepts_proven_no_change_but_not_bare_assertion() -> None:
@@ -86,14 +95,14 @@ def test_reconciliation_accepts_proven_no_change_but_not_bare_assertion() -> Non
     result = reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
         original_required_paths=["docs/task.md"], targets=[target],
         dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
-        criteria_by_path=criteria, evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+        postconditions_by_path=criteria, evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
     assert result["originalRequiredPaths"] == ["docs/task.md"]
     assert result["effectiveRequiredPaths"] == []
     assert result["verifiedNoChangePaths"] == ["docs/task.md"]
     with pytest.raises(PlanningEvidenceError, match="no predicates"):
         reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
             original_required_paths=["docs/task.md"], targets=[target],
-            dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}], criteria_by_path={},
+            dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}], postconditions_by_path={},
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
 
 
@@ -103,11 +112,23 @@ def test_reconciliation_keeps_required_change_and_rejects_stale_target() -> None
         "repositoryRevision": REVISION, "provenance": {}}
     result = reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
         original_required_paths=["docs/task.md"], targets=[target],
-        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], criteria_by_path={},
+        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
         evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
     assert result["effectiveRequiredPaths"] == ["docs/task.md"]
     with pytest.raises(PlanningEvidenceError, match="stale content"):
         reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
             original_required_paths=["docs/task.md"], targets=[{**target, "preimageSha256": "0" * 64}],
-            dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], criteria_by_path={},
+            dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
+            evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+
+
+def test_no_change_rejects_satisfied_precondition_when_postcondition_is_missing() -> None:
+    content = "**Status:** In Progress\n"
+    target = {"path": "docs/task.md", "content": content, "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {}}
+    with pytest.raises(PlanningEvidenceError, match="unsatisfied or unsupported"):
+        reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
+            original_required_paths=["docs/task.md"], targets=[target],
+            dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
+            postconditions_by_path={"docs/task.md": ({"kind": "STATUS_EQUALS", "value": "Completed"},)},
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})

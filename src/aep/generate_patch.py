@@ -27,7 +27,6 @@ from aep.filesystem_tool import FilesystemTool
 from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
-from aep.planning_evidence import PlanningEvidenceError, reconcile_dispositions
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeStoreError
 from aep.task_execution import FailureClass
@@ -235,21 +234,6 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 )
 
             changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
-            explicit_dispositions = _explicit_dispositions(invocation.get("output"))
-            if explicit_dispositions:
-                criteria_by_path = _criteria_by_path(plan)
-                try:
-                    reconciliation = reconcile_dispositions(
-                        plan_id=str(plan.get("artifactId", producer_id)),
-                        repository_revision=str(workflow["repositoryRevision"]),
-                        original_required_paths=tuple(set(allowed_paths) - set(no_change_paths)),
-                        targets=editable_targets, dispositions=explicit_dispositions,
-                        criteria_by_path=criteria_by_path,
-                        evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
-                    )
-                except PlanningEvidenceError as error:
-                    raise GeneratePatchContractError(str(error)) from error
-                no_change_paths = tuple(reconciliation["verifiedNoChangePaths"])
             missing = sorted(set(allowed_paths) - set(no_change_paths) - {item["path"] for item in changes})
             if missing:
                 raise GeneratePatchContractError(
@@ -944,29 +928,6 @@ def _validated_changes(
         seen.add(path)
         changes.append({"path": path, "content": content or "", "operation": operation})
     return tuple(changes)
-
-
-def _explicit_dispositions(output: object) -> tuple[Mapping[str, Any], ...]:
-    if not isinstance(output, Mapping) or "dispositions" not in output:
-        return ()
-    values = output["dispositions"]
-    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
-        raise GeneratePatchContractError("Code Generator dispositions must be an array")
-    return tuple(values)
-
-
-def _criteria_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
-    result: dict[str, list[Mapping[str, Any]]] = {}
-    for item in plan.get("pathEvidence", ()):
-        if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
-            continue
-        predicates = [entry.get("predicate") for entry in item.get("predicateResults", ()) if isinstance(entry, Mapping) and isinstance(entry.get("predicate"), Mapping)]
-        result.setdefault(item["path"], []).extend(predicates)
-    # Older generations express deterministic satisfaction as required insertions.
-    for item in plan.get("requiredInsertions", ()):
-        if isinstance(item, Mapping) and isinstance(item.get("path"), str) and isinstance(item.get("value"), str):
-            result.setdefault(item["path"], []).append({"kind": "TEXT_PRESENT", "value": item["value"]})
-    return {path: tuple(values) for path, values in result.items()}
 
 
 def _verify_no_change_targets(

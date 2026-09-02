@@ -678,11 +678,13 @@ value is recursively immutable.
 ## Planning Evidence
 
 Candidate-file results are discovery hints, not mutation authority. A planning
-Task may declare bounded path predicates (`STATUS_EQUALS`, `TEXT_PRESENT`, or
-`TEXT_ABSENT`). The runtime materializes only the selected UTF-8 target or
-slice at the WorkflowExecution revision and records its digest, source,
+Task contract may declare bounded path predicates (`STATUS_EQUALS`,
+`TEXT_PRESENT`, or `TEXT_ABSENT`). Before such output becomes authoritative,
+the Context Builder must materialize only the selected UTF-8 target or
+slice at the WorkflowExecution revision and record its digest, source,
 selected field/range, predicate result, and deterministic selection identity.
 Ambiguous fields, binary or oversized content, stale revisions, duplicate
 paths, and unsupported semantic predicates fail closed or remain explicitly
-unsupported. Agents receive the immutable evidence; they do not query the
-repository provider directly.
+unsupported. Planner-returned evidence must match the independently trusted
+record byte-for-byte by selection identity; its shape alone is insufficient.
+Agents receive immutable evidence and never query the repository provider.

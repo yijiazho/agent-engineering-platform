@@ -691,9 +691,10 @@ Together, these engines enable autonomous workflows to remain safe, auditable, a
 
 ## Effective Path Evidence
 
-Patch and acceptance evaluation use effective reconciled dispositions while
-retaining the original plan identity. Missing, duplicate, conflicting,
-unsupported, stale, or unproven path evidence is a failing outcome. Publication
-Policy must therefore deny Git push and pull-request creation until every
-authorized path has one passing disposition and each effective required change
-appears in the revision-bound final diff.
+When reconciliation is enabled, patch and acceptance evaluation must use its
+durably persisted effective dispositions while retaining the original plan
+identity. Missing, duplicate, conflicting, unsupported, stale, unproven, or
+unpersisted evidence is a failing outcome. Publication Policy must deny Git
+push and pull-request creation until every authorized path has one passing
+disposition and each effective required change appears in the revision-bound
+final diff.
