@@ -265,6 +265,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
                         evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
+                        proposed_contents_by_path={
+                            item["path"]: item["content"] for item in changes
+                            if item["operation"] == "write"
+                        },
                     )
                 except PlanningEvidenceError as error:
                     raise GeneratePatchContractError(str(error)) from error

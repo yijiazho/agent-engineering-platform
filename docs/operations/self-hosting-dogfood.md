@@ -862,7 +862,9 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `build-implementation-plan:1.8.0` uses trusted `planning-evidence` records
+* `analyze-issue:1.3.0` derives bounded exact or prefix predicate declarations
+  from the request; `build-implementation-plan:1.8.0` uses those declarations
+  to create trusted `planning-evidence` records
   created from the pinned checkout. Inspect each record's path, revision,
   digest, predicate result, postcondition, selection reason, and selection ID;
   full file bodies are intentionally absent.

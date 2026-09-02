@@ -1,19 +1,20 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Agent",
-  "metadata": {"name": "issue-analyzer", "version": "1.1.0"},
+  "metadata": {"name": "issue-analyzer", "version": "1.2.0"},
   "spec": {
     "role": "Issue Analyzer",
-    "promptRef": {"kind": "Prompt", "name": "issue-analysis", "version": "1.0.0"},
+    "promptRef": {"kind": "Prompt", "name": "issue-analysis", "version": "1.1.0"},
     "modelRef": {"kind": "Model", "name": "default-reasoning", "version": "1.1.0"},
     "policyRefs": [{"kind": "Policy", "name": "agent-safety", "version": "1.0.0"}],
     "outputSchema": {
       "type": "object", "additionalProperties": false,
-      "required": ["requestedChange", "acceptanceCriteria", "risks", "likelyRepositoryAreas"],
+      "required": ["requestedChange", "acceptanceCriteria", "risks", "likelyRepositoryAreas", "planningPredicates"],
       "properties": {
         "requestedChange": {"type": "string", "minLength": 1},
         "acceptanceCriteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
         "risks": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "likelyRepositoryAreas": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+        "likelyRepositoryAreas": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "planningPredicates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object", "additionalProperties": false, "required": ["scopeType", "path", "predicate", "postcondition", "selectionReason", "maxBytes", "maxPaths"], "properties": {"scopeType": {"enum": ["EXACT", "PREFIX"]}, "path": {"type": "string", "minLength": 1}, "predicate": {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"enum": ["STATUS_EQUALS", "TEXT_PRESENT", "TEXT_ABSENT", "UNSUPPORTED_SEMANTIC"]}, "value": {"type": "string", "minLength": 1}}}, "postcondition": {"type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": {"kind": {"enum": ["STATUS_EQUALS", "TEXT_PRESENT", "TEXT_ABSENT", "UNSUPPORTED_SEMANTIC"]}, "value": {"type": "string", "minLength": 1}}}, "selectionReason": {"type": "string", "minLength": 1}, "maxBytes": {"type": "integer", "minimum": 1, "maximum": 262144}, "maxPaths": {"type": "integer", "minimum": 1, "maximum": 200}}}}
       }
     }
   }

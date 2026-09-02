@@ -560,6 +560,44 @@ def test_evidence_bound_required_change_cannot_be_omitted(tmp_path: Path) -> Non
     assert "correspond exactly" in result.message
 
 
+def test_evidence_bound_change_must_satisfy_declared_postcondition(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "content": "value = 3\n"}],
+         "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}]},
+        evidence_bound=True,
+        postcondition_value="value = 2",
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "unsatisfied or unsupported postcondition" in result.message
+    assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
+    assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
+
+
+def test_evidence_bound_change_persists_passing_generated_content_proof(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "content": "value = 2\n"}],
+         "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}]},
+        evidence_bound=True,
+        postcondition_value="value = 2",
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    reconciliation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    disposition = reconciliation["evidence"]["pathDispositions"][0]
+    assert disposition["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
+    assert disposition["outputSha256"] == sha256(b"value = 2\n").hexdigest()
+    assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
+
+
 def test_mode_drift_is_rejected_by_compare_write(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("Windows does not expose POSIX executable mode changes")

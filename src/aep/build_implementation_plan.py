@@ -67,8 +67,13 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 unsupported.append(path)
             elif states and all(state == "MATCH" for state in states):
                 required.append(path)
-            else:
+            elif all(
+                item.get("result") == "MATCH"
+                for item in record.get("postconditionResults", ())
+            ) and record.get("postconditionResults"):
                 no_change.append(path)
+            else:
+                unsupported.append(path)
             selected.append(record)
         canonical = dict(output)
         canonical.update({

@@ -49,6 +49,7 @@ def test_issue_78_regression_uses_exact_status_evidence_not_relevance() -> None:
             "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
             "selectionReason": "Issue requests the In Progress to Completed transition",
             "maxBytes": 4096,
+            "maxPaths": 20,
         },
         {
             "path": "docs/execution-plan.md",

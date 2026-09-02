@@ -242,33 +242,6 @@
         "version": "1.6.0"
       }
     ],
-    "planningPredicates": [
-      {
-        "pathPrefix": "docs/tasks",
-        "predicate": {
-          "kind": "STATUS_EQUALS",
-          "value": "In Progress"
-        },
-        "postcondition": {
-          "kind": "STATUS_EQUALS",
-          "value": "Completed"
-        },
-        "selectionReason": "Issue requests completion of currently In Progress task documents",
-        "maxBytes": 65536
-      },
-      {
-        "path": "docs/execution-plan.md",
-        "predicate": {
-          "kind": "TEXT_PRESENT",
-          "value": "In Progress"
-        },
-        "postcondition": {
-          "kind": "TEXT_ABSENT",
-          "value": "In Progress"
-        },
-        "selectionReason": "Execution plan must synchronize pending task statuses",
-        "maxBytes": 131072
-      }
-    ]
+    "planningPredicateSource": "PRIOR_ISSUE_ANALYSIS"
   }
 }

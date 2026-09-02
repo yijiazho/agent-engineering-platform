@@ -639,5 +639,7 @@ and effective sets, per-path target digests, reason, revision, and evaluator
 identity. Only after that persistence succeeds may the effective sets influence
 patch completeness or downstream gates. A generator
 omission is not a disposition; `NO_CHANGE` requires the requested postcondition,
-not merely the planning precondition, to be proven by the exact target. The
+not merely the planning precondition, to be proven by the exact target. A
+`CHANGE` disposition likewise evaluates every postcondition against the
+proposed generated content and records its output digest before mutation. The
 AEP-051 omission checks remain in force for every effective required path.

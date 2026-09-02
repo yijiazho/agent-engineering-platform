@@ -23,6 +23,7 @@ from aep.repository_knowledge import (
     CandidateFileQuery,
     DependencyManifestQuery,
     DocumentationQuery,
+    FileQuery,
     KnowledgeResult,
     RepositoryKnowledgeProvider,
     TestHintQuery,
@@ -288,12 +289,43 @@ class ContextBuilder:
             if self._repository_file_reader is None:
                 raise RequiredContextError("planning-evidence requires a revision-bound repository reader")
             from aep.planning_evidence import evaluate_path_predicates, finalize_planning_evidence
-            declarations = task_spec.get("planningPredicates", ())
+            declarations = self._planning_predicate_declarations(
+                task_spec, prior_task_execution_ids
+            )
             if isinstance(declarations, (str, bytes)) or not isinstance(declarations, Sequence) or not declarations:
                 raise RequiredContextError("planning-evidence requires Task.spec.planningPredicates")
-            candidates = repository_results.get("candidate-files")
-            if candidates is None:
-                candidates = self._query_repository("candidate-files", terms)
+            candidates_by_id: dict[str, KnowledgeResult] = {}
+            for declaration in declarations:
+                if not isinstance(declaration, Mapping):
+                    raise RequiredContextError("planning predicate declarations must be objects")
+                if "pathPrefix" in declaration and "maxPaths" not in declaration:
+                    raise RequiredContextError(
+                        "planning-evidence prefix declarations require maxPaths"
+                    )
+                max_paths = int(declaration.get("maxPaths", 1))
+                if isinstance(declaration.get("path"), str):
+                    scoped = self._repository_knowledge.lookup_file(
+                        FileQuery(path=str(declaration["path"]))
+                    )
+                    if len(scoped) != 1:
+                        raise RequiredContextError(
+                            f"planning-evidence exact target {declaration['path']!r} was not found uniquely"
+                        )
+                else:
+                    scoped = self._repository_knowledge.search_candidate_files(
+                        CandidateFileQuery(terms=(),
+                            path_prefix=str(declaration.get("pathPrefix", "")),
+                            limit=max_paths + 1)
+                    )
+                    if len(scoped) > max_paths:
+                        raise RequiredContextError(
+                            f"planning-evidence prefix {declaration.get('pathPrefix')!r} exceeds maxPaths"
+                        )
+                _require_result_binding(scoped, repository_revision, knowledge_graph_version)
+                for result in scoped:
+                    candidates_by_id[result.id] = result
+            candidates = tuple(sorted(candidates_by_id.values(),
+                key=lambda item: item.provenance.source.path))
             evidence_target = mandatory if "planning-evidence" in required else optional_candidates
             matched = 0
             seen_paths: set[str] = set()
@@ -330,10 +362,17 @@ class ContextBuilder:
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
                         source_id=result.id, max_bytes=max_bytes)
+                    postcondition_record = evaluate_path_predicates(
+                        path=path, content=content,
+                        repository_revision=repository_revision,
+                        predicates=postconditions, source_id=result.id,
+                        max_bytes=max_bytes,
+                    )
                 except (OSError, UnicodeError, ValueError) as error:
                     raise RequiredContextError(f"planning-evidence target {path!r} failed closed: {type(error).__name__}") from error
                 record = finalize_planning_evidence(
-                    record, postconditions=postconditions, selection_reasons=reasons
+                    record, postconditions=postconditions, selection_reasons=reasons,
+                    postcondition_results=postcondition_record["predicateResults"],
                 )
                 evidence_target.append(("planning-evidence", {
                     "type": "planning-evidence", "content": record,
@@ -595,6 +634,49 @@ class ContextBuilder:
                 f"{workflow_execution.get('repositoryRevision')!r}"
             )
         return producer
+
+    def _planning_predicate_declarations(
+        self, task_spec: JsonMapping, prior_task_execution_ids: Sequence[str]
+    ) -> Sequence[JsonMapping]:
+        configured = task_spec.get("planningPredicates", ())
+        if configured:
+            return configured
+        if task_spec.get("planningPredicateSource") != "PRIOR_ISSUE_ANALYSIS":
+            return ()
+        for producer_id in _unique_nonempty(prior_task_execution_ids):
+            for metadata in self._artifact_store.list_by_task_execution(producer_id):
+                if metadata.get("artifactType") != "ISSUE_ANALYSIS":
+                    continue
+                content = _decode_artifact(
+                    self._artifact_store.get_content(metadata["id"]),
+                    metadata.get("mediaType"),
+                )
+                declarations = (
+                    content.get("planningPredicates")
+                    if isinstance(content, Mapping) else None
+                )
+                if isinstance(declarations, Sequence) and not isinstance(
+                    declarations, (str, bytes)
+                ):
+                    normalized = []
+                    for item in declarations:
+                        if not isinstance(item, Mapping):
+                            raise RequiredContextError(
+                                "prior ISSUE_ANALYSIS planning predicates must be objects"
+                            )
+                        record = dict(item)
+                        scope_type = record.pop("scopeType", None)
+                        if scope_type == "PREFIX":
+                            record["pathPrefix"] = record.pop("path", None)
+                        elif scope_type != "EXACT":
+                            raise RequiredContextError(
+                                "prior ISSUE_ANALYSIS planning predicate scopeType is invalid"
+                            )
+                        normalized.append(record)
+                    return normalized
+        raise RequiredContextError(
+            "planning-evidence requires predicate declarations from prior ISSUE_ANALYSIS"
+        )
 
     def _query_repository(
         self, requirement: str, terms: tuple[str, ...]

@@ -5,6 +5,7 @@ import pytest
 from aep.planning_evidence import (
     PlanningEvidenceError,
     evaluate_path_predicates,
+    finalize_planning_evidence,
     reconcile_dispositions,
     validate_plan_path_contract,
 )
@@ -14,10 +15,20 @@ REVISION = "679a0c6f4eb04483aa917faae018a3037d3e82f9"
 
 
 def evidence(path: str, status: str, expected: str = "In Progress") -> dict:
-    return evaluate_path_predicates(
-        path=path, content=f"# Task\n\n**Status:** {status}\n\nManual testing and MTP verification.\n",
+    content = f"# Task\n\n**Status:** {status}\n\nManual testing and MTP verification.\n"
+    record = evaluate_path_predicates(
+        path=path, content=content,
         repository_revision=REVISION,
         predicates=[{"kind": "STATUS_EQUALS", "value": expected}], source_id="snapshot-issue-78",
+    )
+    post = evaluate_path_predicates(
+        path=path, content=content, repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+        source_id="snapshot-issue-78",
+    )
+    return finalize_planning_evidence(
+        record, postconditions=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+        postcondition_results=post["predicateResults"], selection_reasons=["test"],
     )
 
 
@@ -99,11 +110,21 @@ def test_plan_dispositions_require_the_expected_predicate_outcome() -> None:
 
 
 def test_plan_predicates_use_conjunction_and_mixed_results_mean_no_change() -> None:
-    item = evaluate_path_predicates(path="docs/task.md", content="**Status:** Completed\nmanual testing\n",
+    content = "**Status:** Completed\nmanual testing\n"
+    item = evaluate_path_predicates(path="docs/task.md", content=content,
         repository_revision=REVISION, predicates=[
             {"kind": "STATUS_EQUALS", "value": "In Progress"},
             {"kind": "TEXT_PRESENT", "value": "manual testing"},
         ], source_id="snapshot")
+    post = evaluate_path_predicates(path="docs/task.md", content=content,
+        repository_revision=REVISION, predicates=[
+            {"kind": "STATUS_EQUALS", "value": "Completed"},
+            {"kind": "TEXT_PRESENT", "value": "manual testing"},
+        ], source_id="snapshot")
+    item = finalize_planning_evidence(item,
+        postconditions=[{"kind": "STATUS_EQUALS", "value": "Completed"},
+            {"kind": "TEXT_PRESENT", "value": "manual testing"}],
+        postcondition_results=post["predicateResults"], selection_reasons=["test"])
     plan = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": [],
         "verifiedNoChangePaths": ["docs/task.md"], "unsupportedPaths": [], "pathEvidence": [item]}
     validate_plan_path_contract(plan, REVISION, trusted_path_evidence=[item])
@@ -135,13 +156,16 @@ def test_reconciliation_keeps_required_change_and_rejects_stale_target() -> None
         "repositoryRevision": REVISION, "provenance": {}}
     result = reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
         original_required_paths=["docs/task.md"], targets=[target],
-        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
+        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}],
+        postconditions_by_path={"docs/task.md": ({"kind": "STATUS_EQUALS", "value": "Completed"},)},
+        proposed_contents_by_path={"docs/task.md": "**Status:** Completed\n"},
         evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
     assert result["effectiveRequiredPaths"] == ["docs/task.md"]
     with pytest.raises(PlanningEvidenceError, match="stale content"):
         reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
             original_required_paths=["docs/task.md"], targets=[{**target, "preimageSha256": "0" * 64}],
             dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
+            proposed_contents_by_path={"docs/task.md": "**Status:** Completed\n"},
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
 
 

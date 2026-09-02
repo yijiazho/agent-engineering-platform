@@ -173,12 +173,13 @@ A Task does not orchestrate execution and does not contain reasoning logic.
 
 Instead, it specifies the contract for a unit of work.
 
-Planning Tasks may declare bounded `planningPredicates` for exact paths or path
-prefixes. Each declaration supplies a deterministic precondition, required
-postcondition, selection reason, and byte limit. The trusted Context Builder,
-not the Agent, evaluates those declarations at the WorkflowExecution revision
-and publishes body-free `planning-evidence`. Unsupported semantic predicates
-remain explicit and cannot authorize a mutation.
+Issue analysis may declare bounded `planningPredicates` for exact paths or path
+prefixes under a planning Task's `PRIOR_ISSUE_ANALYSIS` contract. Each
+declaration supplies a deterministic precondition, required postcondition,
+selection reason, byte limit, and path-count bound. The trusted Context Builder,
+not the Agent, enumerates that complete bounded scope and evaluates it at the
+WorkflowExecution revision. Unsupported semantic predicates or intermediate
+states remain explicit and cannot authorize a mutation.
 
 Example:
 

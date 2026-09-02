@@ -181,6 +181,66 @@ def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None
     assert "secret body" not in str(captured.value)
 
 
+def test_planning_evidence_prefix_fails_when_complete_scope_exceeds_bound() -> None:
+    task_resource = task("plan", ["candidate-files", "planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "pathPrefix": "docs", "maxPaths": 1,
+        "predicate": {"kind": "TEXT_PRESENT", "value": "Status"},
+        "postcondition": {"kind": "TEXT_ABSENT", "value": "Status"},
+        "selectionReason": "bounded documentation transition",
+    }]
+
+    snapshot = knowledge_provider()._snapshot
+    extra = RepositoryFile(
+        "docs/other.md", "Markdown", True, source("docs/other.md")
+    )
+    provider = InMemoryRepositoryKnowledgeProvider(RepositoryKnowledgeSnapshot(
+        api_version=snapshot.api_version, snapshot_version=snapshot.snapshot_version,
+        repository_revision=snapshot.repository_revision, created_at=snapshot.created_at,
+        scanner_version=snapshot.scanner_version, files=(*snapshot.files, extra),
+        documentation=(*snapshot.documentation, extra),
+        dependency_manifests=snapshot.dependency_manifests,
+        test_command_hints=snapshot.test_command_hints,
+    ))
+    with pytest.raises(RequiredContextError, match="exceeds maxPaths"):
+        ContextBuilder(
+            repository_knowledge=provider,
+            artifact_store=InMemoryGeneratedArtifactStore(),
+            repository_file_reader=lambda *_: "Status",
+        ).build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+
+def test_planning_predicates_are_derived_from_prior_issue_analysis() -> None:
+    artifacts = InMemoryGeneratedArtifactStore()
+    metadata = dict(artifact_store().get("generatedartifact-aaaaaaaaaaaa"))
+    metadata["id"] = "generatedartifact-bbbbbbbbbbbb"
+    metadata["artifactType"] = "ISSUE_ANALYSIS"
+    metadata.pop("contentAddress", None)
+    artifacts.publish(metadata, {"planningPredicates": [{
+        "scopeType": "PREFIX", "path": "src/aep", "maxPaths": 20,
+        "maxBytes": 4096,
+        "predicate": {"kind": "TEXT_PRESENT", "value": "old"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "new"},
+        "selectionReason": "requested source transition",
+    }]})
+    context_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(), artifact_store=artifacts
+    )
+
+    declarations = context_builder._planning_predicate_declarations(
+        {"planningPredicateSource": "PRIOR_ISSUE_ANALYSIS"},
+        (PRIOR_TASK_EXECUTION_ID,),
+    )
+
+    assert declarations[0]["pathPrefix"] == "src/aep"
+    assert "path" not in declarations[0]
+    assert declarations[0]["maxPaths"] == 20
+
+
 def task_execution(task_resource: dict) -> dict:
     execution = {
         "apiVersion": "aep.dev/v1alpha1",

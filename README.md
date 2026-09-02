@@ -649,8 +649,10 @@ Implemented foundations currently include:
   discovery remains bounded metadata for analysis and planning.
 * Deterministic planning-evidence predicate and reconciliation contract
   primitives bind path decisions to a repository revision and content digest.
-  The trusted Context Builder evaluates Task-declared bounded predicates,
-  BuildImplementationPlan publishes only evidence-classified path sets, and
+  The trusted Context Builder evaluates bounded predicates derived by the
+  evaluated issue analysis; exact paths bypass relevance ranking and bounded
+  prefixes fail rather than truncate. BuildImplementationPlan publishes only
+  evidence-classified path sets, and
   GeneratePatch persists reconciliation before applying effective dispositions.
   Patch, acceptance, and publication gates consume both patch and reconciliation
   EvaluationResults.
