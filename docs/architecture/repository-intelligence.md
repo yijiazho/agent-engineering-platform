@@ -546,3 +546,11 @@ Candidate-file results remain bounded discovery metadata. They do not authorize
 editing and do not satisfy patch input requirements. Exact editable preimages
 are materialized separately by the trusted Context Builder from the immutable
 execution checkout; Agents never call repository queries or Filesystem reads.
+
+## Evidence-Bound Planning Queries
+
+Relevance ranking finds bounded candidates but never proves a requested file
+condition. Exact planning evidence is a separate revision-bound read whose
+persisted result contains no full file body: path, revision, SHA-256 preimage,
+source identity, selected field or match count, predicate, and result. The same
+snapshot, predicates, and contents produce the same selection identity.

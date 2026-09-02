@@ -66,3 +66,4 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-050: Normalize Publication Repository Identity](tasks/AEP-050-normalize-publication-repository-identity.md)
 * [AEP-051: Bind Patch Generation To Editable Target Context](tasks/AEP-051-bind-patch-generation-to-editable-target-context.md)
 * [AEP-052: Validate Strict Provider Output Schemas](tasks/AEP-052-validate-strict-provider-output-schemas.md)
+* [AEP-053: Bind Planning Decisions To Exact Repository Evidence](tasks/AEP-053-bind-planning-decisions-to-exact-repository-evidence.md)

@@ -688,3 +688,13 @@ The Evaluation & Policy Engine establishes trust within AEP by separating techni
 The Evaluation Engine verifies that generated artifacts satisfy deterministic acceptance criteria, while the Policy Engine ensures that privileged actions comply with platform rules and approval requirements.
 
 Together, these engines enable autonomous workflows to remain safe, auditable, and reproducible without coupling governance to AI reasoning.
+
+## Effective Path Evidence
+
+When reconciliation is enabled, patch and acceptance evaluation must use its
+durably persisted effective dispositions while retaining the original plan
+identity. Missing, duplicate, conflicting, unsupported, stale, unproven, or
+unpersisted evidence is a failing outcome. Publication Policy must deny Git
+push and pull-request creation until every authorized path has one passing
+disposition and each effective required change appears in the revision-bound
+final diff.

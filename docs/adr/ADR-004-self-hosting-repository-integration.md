@@ -151,3 +151,13 @@ schemas, capability policy, publication policy, and immutable evidence.
 
 Rejected for the MVP because human-reviewed promotion is the safety boundary
 between a proposed self-improvement and the next running release.
+
+### Evidence-bound planning
+
+Self-hosting planning treats ranked repository paths as candidates only.
+Required mutations need deterministic, revision- and digest-bound predicate
+evidence. The versioned GeneratePatch contract will require an explicit
+`CHANGE` or postcondition-proven `NO_CHANGE` for every exact editable target;
+late narrowing must be durably recorded before use and never rewrites the
+evaluated implementation plan. Until that atomic resource/runtime generation
+is installed, the existing missing-required-path guard remains authoritative.

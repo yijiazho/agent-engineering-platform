@@ -674,3 +674,20 @@ estimate, and provenance. This operational evidence contains counts and
 reasons rather than issue bodies, source bodies, prompts, or credentials. Its
 identifier is derived from canonical construction inputs, and the returned
 value is recursively immutable.
+
+## Planning Evidence
+
+Candidate-file results are discovery hints, not mutation authority. A planning
+Task contract may declare bounded path predicates (`STATUS_EQUALS`,
+`TEXT_PRESENT`, or `TEXT_ABSENT`). Before such output becomes authoritative,
+the Context Builder must materialize only the selected UTF-8 target or
+slice at the WorkflowExecution revision and record its digest, source,
+selected field/range, predicate result, and deterministic selection identity.
+Ambiguous fields, binary or oversized content, stale revisions, duplicate
+paths, and unsupported semantic predicates fail closed or remain explicitly
+unsupported. Planner-returned evidence must match the independently trusted
+record byte-for-byte by selection identity; its shape alone is insufficient.
+Multiple predicates use conjunction: all must match for a required change;
+any supported no-match proves the conjunction false; any unsupported result
+keeps the path unsupported.
+Agents receive immutable evidence and never query the repository provider.

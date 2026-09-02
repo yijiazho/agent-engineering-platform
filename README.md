@@ -647,6 +647,10 @@ Implemented foundations currently include:
   dispositions, explicit absent preimages for planned creations, and
   plan-authorized destructive-change evidence. Candidate-file
   discovery remains bounded metadata for analysis and planning.
+* Deterministic planning-evidence predicate and reconciliation contract
+  primitives bind path decisions to a repository revision and content digest.
+  Runtime adoption remains fail-closed until trusted Context Builder evidence
+  and durable reconciliation propagation are versioned together.
 * Authenticated, repository-bound GitHub issue webhook ingress with shared-store
   deduplication, an atomic durable reconciliation outbox, restart-safe replay,
   and redacted lifecycle evidence.
