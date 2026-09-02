@@ -114,10 +114,10 @@ def validate_plan_path_contract(
         if not isinstance(results, Sequence) or not results:
             raise PlanningEvidenceError(f"planning evidence for {path!r} lacks predicate results")
         states = {result.get("result") for result in results if isinstance(result, Mapping)}
-        if path in required and ("UNSUPPORTED" in states or not states.intersection({"MATCH", "NO_MATCH"})):
-            raise PlanningEvidenceError(f"required-change path {path!r} lacks deterministic predicate evidence")
-        if path in no_change and states != {"MATCH"}:
-            raise PlanningEvidenceError(f"no-change path {path!r} is not fully proven")
+        if path in required and states != {"MATCH"}:
+            raise PlanningEvidenceError(f"required-change path {path!r} does not satisfy its planning predicates")
+        if path in no_change and states != {"NO_MATCH"}:
+            raise PlanningEvidenceError(f"no-change path {path!r} still satisfies a required-change predicate")
         if path in unsupported and "UNSUPPORTED" not in states:
             raise PlanningEvidenceError(f"unsupported path {path!r} lacks unsupported evidence")
 
@@ -131,6 +131,11 @@ def reconcile_dispositions(
     target_map = {item.get("path"): item for item in targets}
     if len(target_map) != len(targets):
         raise PlanningEvidenceError("editable targets contain duplicate paths")
+    original_paths = set(original_required_paths)
+    if len(original_paths) != len(original_required_paths) or set(target_map) != original_paths:
+        raise PlanningEvidenceError(
+            "reconciliation targets must exactly cover the original required paths"
+        )
     disposition_map = {item.get("path"): item for item in dispositions}
     if len(disposition_map) != len(dispositions) or set(disposition_map) != set(target_map):
         raise PlanningEvidenceError("every editable target requires one terminal disposition")

@@ -87,6 +87,17 @@ def test_plan_contract_rejects_model_fabricated_evidence() -> None:
         validate_plan_path_contract(plan, REVISION, trusted_path_evidence=[trusted])
 
 
+def test_plan_dispositions_require_the_expected_predicate_outcome() -> None:
+    completed = evidence("docs/task.md", "Completed")
+    false_required = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": ["docs/task.md"],
+        "verifiedNoChangePaths": [], "unsupportedPaths": [], "pathEvidence": [completed]}
+    with pytest.raises(PlanningEvidenceError, match="does not satisfy"):
+        validate_plan_path_contract(false_required, REVISION, trusted_path_evidence=[completed])
+    verified_no_change = {**false_required, "requiredChangePaths": [],
+        "verifiedNoChangePaths": ["docs/task.md"]}
+    validate_plan_path_contract(verified_no_change, REVISION, trusted_path_evidence=[completed])
+
+
 def test_reconciliation_accepts_proven_no_change_but_not_bare_assertion() -> None:
     content = "**Status:** Completed\n"
     target = {"path": "docs/task.md", "content": content, "preimageSha256": sha256(content.encode()).hexdigest(),
@@ -118,6 +129,22 @@ def test_reconciliation_keeps_required_change_and_rejects_stale_target() -> None
     with pytest.raises(PlanningEvidenceError, match="stale content"):
         reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
             original_required_paths=["docs/task.md"], targets=[{**target, "preimageSha256": "0" * 64}],
+            dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
+            evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+
+
+def test_reconciliation_targets_exactly_cover_original_required_paths() -> None:
+    content = "**Status:** In Progress\n"
+    target = {"path": "docs/task.md", "content": content, "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {}}
+    with pytest.raises(PlanningEvidenceError, match="exactly cover"):
+        reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
+            original_required_paths=["docs/task.md", "docs/other.md"], targets=[target],
+            dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
+            evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+    with pytest.raises(PlanningEvidenceError, match="exactly cover"):
+        reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
+            original_required_paths=[], targets=[target],
             dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
 
