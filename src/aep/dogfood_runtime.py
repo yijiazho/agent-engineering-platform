@@ -639,11 +639,12 @@ def _pinned_workspace_reader(
                 PlanningEvidenceInspection, PlanningEvidenceInspectionError,
             )
             if revision != expected_revision:
-                raise ValueError("planning-evidence revision does not match the execution checkout")
+                raise PlanningEvidenceInspectionError(
+                    "REVISION_MISMATCH", path=path)
             relative = Path(path)
             if (relative.is_absolute() or ".." in relative.parts
                     or relative.parts[0].casefold() == ".git"):
-                raise ValueError("planning-evidence path is unsafe")
+                raise PlanningEvidenceInspectionError("UNSAFE_PATH", path=path)
             entry = self._entry(path, revision)
             if entry is None:
                 raise PlanningEvidenceInspectionError(
@@ -743,7 +744,8 @@ def _pinned_workspace_reader(
         def verify_absent(self, path: str, revision: str) -> None:
             from aep.planning_evidence import PlanningEvidenceInspectionError
             if revision != expected_revision:
-                raise ValueError("planning-evidence revision does not match the execution checkout")
+                raise PlanningEvidenceInspectionError(
+                    "REVISION_MISMATCH", path=path)
             entry = self._entry(path, revision)
             if entry is not None:
                 raise PlanningEvidenceInspectionError(

@@ -9,6 +9,9 @@ blob size, trusted ceiling, predicate type, strategy, and completeness. They
 must not contain selected text, file bodies, prompts, model bodies, credentials,
 or raw provider messages. Inspection bytes and serialized context tokens are
 accounted independently.
+Stable inspection reasons include `REVISION_MISMATCH`, `UNSAFE_PATH`,
+`STATUS_FIELD_MISSING`, and `STATUS_FIELD_AMBIGUOUS`; these conditions never
+fall back to exception class names.
 
 ## Purpose
 

@@ -108,9 +108,9 @@ def test_checkout_reader_uses_stable_safe_classifications(
 def test_checkout_reader_rejects_revision_and_unsafe_path(tmp_path: Path) -> None:
     revision = commit_repository(tmp_path)
     reader = _pinned_workspace_reader(tmp_path, revision)
-    with pytest.raises(ValueError, match="revision"):
+    with pytest.raises(PlanningEvidenceInspectionError, match="REVISION_MISMATCH"):
         reader("target", "0" * 40, 100)
-    with pytest.raises(ValueError, match="unsafe"):
+    with pytest.raises(PlanningEvidenceInspectionError, match="UNSAFE_PATH"):
         reader("../target", revision, 100)
 
 

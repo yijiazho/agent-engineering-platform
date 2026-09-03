@@ -67,9 +67,14 @@ def test_predicates_cover_text_absence_and_unsupported_semantics_deterministical
     assert first["selectionId"] == second["selectionId"]
 
 
-@pytest.mark.parametrize("content", ["**Status:** In Progress\n**Status:** Completed\n", "no status"])
-def test_ambiguous_or_missing_structured_field_fails_closed(content: str) -> None:
-    with pytest.raises(PlanningEvidenceError, match="ambiguous status"):
+@pytest.mark.parametrize(("content", "reason"), [
+    ("**Status:** In Progress\n**Status:** Completed\n", "STATUS_FIELD_AMBIGUOUS"),
+    ("no status", "STATUS_FIELD_MISSING"),
+])
+def test_ambiguous_or_missing_structured_field_fails_closed(
+    content: str, reason: str
+) -> None:
+    with pytest.raises(PlanningEvidenceError, match=reason):
         evaluate_path_predicates(path="docs/task.md", content=content, repository_revision=REVISION,
             predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}], source_id="snapshot")
 

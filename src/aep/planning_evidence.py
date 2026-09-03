@@ -61,6 +61,9 @@ def evaluate_path_predicates(
     if not isinstance(content, str) or "\x00" in content:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} is not UTF-8 text")
     encoded = content.encode("utf-8")
+    digest = sha256(encoded).hexdigest()
+    complete_size = len(encoded) if blob_size is None else blob_size
+    complete_digest = digest if blob_sha256 is None else blob_sha256
     if len(encoded) > max_bytes:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} exceeds its byte limit")
     if not predicates:
@@ -73,8 +76,18 @@ def evaluate_path_predicates(
                 (match.group("value"), content.count("\n", 0, match.start()) + 1)
                 for match in _STATUS.finditer(content)
             ]
-            if len(fields) != 1:
-                raise PlanningEvidenceError(f"planning-evidence target {path!r} has an ambiguous status field")
+            if not fields:
+                raise PlanningEvidenceInspectionError(
+                    "STATUS_FIELD_MISSING", path=path, blob_size=complete_size,
+                    applied_ceiling=max_bytes, predicate_type=kind,
+                    strategy=inspection_strategy, evaluation_complete=True,
+                )
+            if len(fields) > 1:
+                raise PlanningEvidenceInspectionError(
+                    "STATUS_FIELD_AMBIGUOUS", path=path, blob_size=complete_size,
+                    applied_ceiling=max_bytes, predicate_type=kind,
+                    strategy=inspection_strategy, evaluation_complete=True,
+                )
             actual, line = fields[0]
             satisfied = actual == expected
             selected = {"kind": "STRUCTURED_FIELD", "field": "Status", "line": line}
@@ -89,9 +102,6 @@ def evaluate_path_predicates(
             results.append({"predicate": dict(predicate), "result": "UNSUPPORTED", "selectedEvidence": None})
             continue
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
-    digest = sha256(encoded).hexdigest()
-    complete_size = len(encoded) if blob_size is None else blob_size
-    complete_digest = digest if blob_sha256 is None else blob_sha256
     partial_status_scan = inspection_strategy == "STRUCTURED_STATUS_FIELD_SCAN" and status_fields is not None
     if (not partial_status_scan and complete_size != len(encoded)) or (
         not partial_status_scan and complete_digest != digest
