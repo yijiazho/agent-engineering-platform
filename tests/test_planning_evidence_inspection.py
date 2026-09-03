@@ -1,0 +1,54 @@
+from pathlib import Path
+
+import pytest
+
+from aep.dogfood_runtime import _pinned_workspace_reader
+from aep.planning_evidence import PlanningEvidenceInspectionError
+
+
+REVISION = "5ac8aaf2ce6ce00b1b69b461a033456a6b4192cc"
+
+
+def test_checkout_reader_accepts_exact_ceiling_and_rejects_one_byte_over(tmp_path: Path) -> None:
+    target = tmp_path / "docs" / "execution-plan.md"
+    target.parent.mkdir()
+    target.write_bytes(b"x" * 17_595)
+    reader = _pinned_workspace_reader(tmp_path, REVISION)
+
+    assert len(reader("docs/execution-plan.md", REVISION, 17_595)) == 17_595
+    with pytest.raises(PlanningEvidenceInspectionError) as captured:
+        reader("docs/execution-plan.md", REVISION, 17_594)
+    assert captured.value.metadata == {
+        "reason": "SIZE_LIMIT_EXCEEDED", "path": "docs/execution-plan.md",
+        "blobSize": 17_595, "appliedTrustedCeiling": 17_594,
+        "predicateType": None, "inspectionStrategy": None,
+        "evaluationComplete": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("setup", "reason"),
+    [
+        (lambda path: None, "TARGET_MISSING"),
+        (lambda path: path.mkdir(), "NON_REGULAR_FILE"),
+        (lambda path: path.write_bytes(b"a\x00b"), "BINARY_CONTENT"),
+        (lambda path: path.write_bytes(b"\xff"), "INVALID_UTF8"),
+    ],
+)
+def test_checkout_reader_uses_stable_safe_classifications(
+    tmp_path: Path, setup, reason: str
+) -> None:
+    target = tmp_path / "target"
+    setup(target)
+    with pytest.raises(PlanningEvidenceInspectionError) as captured:
+        _pinned_workspace_reader(tmp_path, REVISION)("target", REVISION, 100)
+    assert captured.value.reason == reason
+    assert "content" not in repr(captured.value.metadata)
+
+
+def test_checkout_reader_rejects_revision_and_unsafe_path(tmp_path: Path) -> None:
+    reader = _pinned_workspace_reader(tmp_path, REVISION)
+    with pytest.raises(ValueError, match="revision"):
+        reader("target", "0" * 40, 100)
+    with pytest.raises(ValueError, match="unsafe"):
+        reader("../target", REVISION, 100)

@@ -863,8 +863,13 @@ state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
 * `analyze-issue:1.3.0` derives bounded exact or prefix predicate declarations
-  from the request; `build-implementation-plan:1.8.0` uses those declarations
+  from the request; `build-implementation-plan:1.9.0` uses those declarations
   to create trusted `planning-evidence` records
+
+The planning Task owns trusted limits of 256 KiB per file, 1 MiB in aggregate,
+and 64 KiB for structured status scans. AnalyzeIssue `maxBytes` values remain
+compatibility hints only. Change limits by publishing a new immutable Task and
+updating the Workflow, never by rewriting historical analysis evidence.
   created from the pinned checkout. Inspect each record's path, revision,
   digest, predicate result, postcondition, selection reason, and selection ID;
   full file bodies are intentionally absent.

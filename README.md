@@ -569,7 +569,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 52 implementation tasks are complete.
+contracts are established, and 43 of the 54 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -647,13 +647,15 @@ Implemented foundations currently include:
   dispositions, explicit absent preimages for planned creations, and
   plan-authorized destructive-change evidence. Candidate-file
   discovery remains bounded metadata for analysis and planning.
-* Deterministic planning-evidence predicate and reconciliation contract
+* Deterministic planning-evidence predicate, inspection-budget, and reconciliation contract
   primitives bind path decisions to a repository revision and content digest.
   The trusted Context Builder evaluates bounded predicates derived by the
   evaluated issue analysis; exact paths bypass relevance ranking and bounded
   prefixes fail rather than truncate. Exact absent paths carry revision-bound
-  empty-preimage evidence for planned file creation, and declared byte bounds
-  are honored per path. BuildImplementationPlan publishes only
+  empty-preimage evidence for planned file creation. Model-declared byte values
+  are diagnostic hints; versioned Task configuration supplies per-file,
+  aggregate, and structured-status scan ceilings. Inspection bytes are separate
+  from serialized ContextPackage tokens. BuildImplementationPlan publishes only
   evidence-classified path sets, and
   GeneratePatch persists reconciliation before applying effective dispositions;
   late no-change proves exact required insertions, while authorized deletes use

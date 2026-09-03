@@ -14,13 +14,30 @@ class PlanningEvidenceError(ValueError):
     """Raised when planning evidence is incomplete, stale, or contradictory."""
 
 
+class PlanningEvidenceInspectionError(PlanningEvidenceError):
+    """Safe, stable failure raised while inspecting an immutable source blob."""
+
+    def __init__(self, reason: str, *, path: str, blob_size: int | None = None,
+                 applied_ceiling: int | None = None, predicate_type: str | None = None,
+                 strategy: str | None = None, evaluation_complete: bool = False) -> None:
+        self.reason = reason
+        self.metadata = {
+            "reason": reason, "path": path, "blobSize": blob_size,
+            "appliedTrustedCeiling": applied_ceiling, "predicateType": predicate_type,
+            "inspectionStrategy": strategy, "evaluationComplete": evaluation_complete,
+        }
+        super().__init__(reason)
+
+
 _STATUS = re.compile(r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE)
 
 
 def evaluate_path_predicates(
     *, path: str, content: str, repository_revision: str,
     predicates: Sequence[Mapping[str, Any]], source_id: str,
-    max_bytes: int = 64 * 1024,
+    max_bytes: int = 64 * 1024, blob_size: int | None = None,
+    blob_sha256: str | None = None, declared_max_bytes: int | None = None,
+    inspection_strategy: str = "COMPLETE_BLOB_SCAN",
 ) -> dict[str, Any]:
     """Evaluate bounded syntactic predicates and return body-free evidence."""
     _path(path)
@@ -55,10 +72,23 @@ def evaluate_path_predicates(
             continue
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
     digest = sha256(encoded).hexdigest()
+    complete_size = len(encoded) if blob_size is None else blob_size
+    complete_digest = digest if blob_sha256 is None else blob_sha256
+    if complete_size != len(encoded) or complete_digest != digest:
+        raise PlanningEvidenceInspectionError(
+            "BLOB_IDENTITY_MISMATCH", path=path, blob_size=complete_size,
+            applied_ceiling=max_bytes, strategy=inspection_strategy,
+        )
     record = {
         "path": path, "repositoryRevision": repository_revision,
-        "preimageSha256": digest, "sourceProvenance": {"sourceId": source_id},
+        "preimageSha256": complete_digest, "sourceProvenance": {"sourceId": source_id},
         "predicateResults": results,
+        "inspection": {
+            "blobSize": complete_size, "inspectedBytes": len(encoded),
+            "appliedTrustedCeiling": max_bytes,
+            "declaredMaxBytesHint": declared_max_bytes,
+            "strategy": inspection_strategy, "evaluationComplete": True,
+        },
     }
     record["selectionId"] = "planselection-" + sha256(
         json.dumps(record, sort_keys=True, separators=(",", ":")).encode()

@@ -56,6 +56,9 @@ REPOSITORY_INVENTORY_LIMIT: Final = 20
 CANDIDATE_FILE_LIMIT: Final = 20
 DOCUMENTATION_LIMIT: Final = 8
 KNOWLEDGE_SOURCE_LIMIT: Final = 8
+DEFAULT_PLANNING_FILE_CEILING: Final = 256 * 1024
+DEFAULT_PLANNING_TOTAL_CEILING: Final = 1024 * 1024
+DEFAULT_STATUS_SCAN_CEILING: Final = 64 * 1024
 
 
 class ContextBuilderError(Exception):
@@ -348,7 +351,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
-                max_bytes: int | None = None
+                declared_max_bytes: int | None = None
                 for declaration in declarations:
                     if not isinstance(declaration, Mapping):
                         raise RequiredContextError("planning predicate declarations must be objects")
@@ -364,26 +367,66 @@ class ContextBuilder:
                     predicates.append(dict(predicate))
                     postconditions.append(dict(postcondition))
                     reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
-                    declaration_limit = int(declaration.get("maxBytes", 64 * 1024))
-                    max_bytes = declaration_limit if max_bytes is None else min(max_bytes, declaration_limit)
+                    hint = declaration.get("maxBytes")
+                    if hint is not None:
+                        hint = int(hint)
+                        declared_max_bytes = hint if declared_max_bytes is None else min(declared_max_bytes, hint)
                 if not predicates:
                     continue
-                assert max_bytes is not None
+                inspection = task_spec.get("planningEvidenceInspection", {})
+                trusted_ceiling = int(inspection.get("maxFileBytes", DEFAULT_PLANNING_FILE_CEILING))
+                total_ceiling = int(inspection.get("maxTotalBytes", DEFAULT_PLANNING_TOTAL_CEILING))
+                status_ceiling = int(inspection.get("statusFieldScanBytes", DEFAULT_STATUS_SCAN_CEILING))
+                kinds = {str(item.get("kind")) for item in (*predicates, *postconditions)}
+                strategy = "STRUCTURED_STATUS_FIELD_SCAN" if kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
+                applied_ceiling = min(trusted_ceiling, status_ceiling) if strategy == "STRUCTURED_STATUS_FIELD_SCAN" else trusted_ceiling
+                inspected_so_far = sum(
+                    int(item[1]["content"].get("inspection", {}).get("inspectedBytes", 0))
+                    for item in evidence_target if item[0] == "planning-evidence"
+                )
+                applied_ceiling = min(applied_ceiling, total_ceiling - inspected_so_far)
+                if applied_ceiling <= 0:
+                    raise RequiredContextError(
+                        f"planning-evidence target {path!r} failed closed: AGGREGATE_SIZE_LIMIT_EXCEEDED"
+                    )
                 try:
                     content = "" if path in absent_exact_paths else self._repository_file_reader(
-                        path, repository_revision, max_bytes
+                        path, repository_revision, applied_ceiling
                     )
+                    blob_size = len(content.encode("utf-8"))
+                    blob_digest = sha256(content.encode("utf-8")).hexdigest()
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
-                        source_id=source_id, max_bytes=max_bytes)
+                        source_id=source_id, max_bytes=applied_ceiling,
+                        blob_size=blob_size, blob_sha256=blob_digest,
+                        declared_max_bytes=declared_max_bytes,
+                        inspection_strategy=strategy)
                     postcondition_record = evaluate_path_predicates(
                         path=path, content=content,
                         repository_revision=repository_revision,
                         predicates=postconditions, source_id=source_id,
-                        max_bytes=max_bytes,
+                        max_bytes=applied_ceiling, blob_size=blob_size,
+                        blob_sha256=blob_digest, declared_max_bytes=declared_max_bytes,
+                        inspection_strategy=strategy,
                     )
                 except (OSError, UnicodeError, ValueError) as error:
-                    raise RequiredContextError(f"planning-evidence target {path!r} failed closed: {type(error).__name__}") from error
+                    reason = getattr(error, "reason", None) or {
+                        FileNotFoundError: "TARGET_MISSING", UnicodeDecodeError: "INVALID_UTF8",
+                        IsADirectoryError: "NON_REGULAR_FILE",
+                    }.get(type(error), type(error).__name__.upper())
+                    failure = RequiredContextError(
+                        f"planning-evidence target {path!r} failed closed: {reason}"
+                    )
+                    failure.metadata = {
+                        "reason": reason, "path": path,
+                        "declaredMaxBytesHint": declared_max_bytes,
+                        "blobSize": getattr(error, "metadata", {}).get("blobSize"),
+                        "appliedTrustedCeiling": applied_ceiling,
+                        "predicateType": "+".join(sorted(kinds)),
+                        "inspectionStrategy": strategy,
+                        "evaluationComplete": False,
+                    }
+                    raise failure from error
                 record = finalize_planning_evidence(
                     record, postconditions=postconditions, selection_reasons=reasons,
                     postcondition_results=postcondition_record["predicateResults"],

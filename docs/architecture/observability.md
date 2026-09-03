@@ -4,6 +4,12 @@
 
 **Version:** 1.0
 
+Planning-evidence diagnostics may contain reason, path, declared size hint,
+blob size, trusted ceiling, predicate type, strategy, and completeness. They
+must not contain selected text, file bodies, prompts, model bodies, credentials,
+or raw provider messages. Inspection bytes and serialized context tokens are
+accounted independently.
+
 ## Purpose
 
 AEP uses one trace for a complete WorkflowExecution. The WorkflowExecution is

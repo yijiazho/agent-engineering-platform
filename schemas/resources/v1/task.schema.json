@@ -66,6 +66,16 @@
           "type": "string",
           "enum": ["PRIOR_ISSUE_ANALYSIS"]
         },
+        "planningEvidenceInspection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxFileBytes", "maxTotalBytes", "statusFieldScanBytes"],
+          "properties": {
+            "maxFileBytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+            "maxTotalBytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+            "statusFieldScanBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+          }
+        },
         "knowledgeBases": { "$ref": "./resource-definitions.schema.json#/$defs/knowledgeBaseRefList" },
         "evaluations": { "$ref": "./resource-definitions.schema.json#/$defs/evaluationRefList" },
         "policies": { "$ref": "./resource-definitions.schema.json#/$defs/policyRefList" },

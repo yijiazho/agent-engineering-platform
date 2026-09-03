@@ -154,13 +154,15 @@ def test_planning_evidence_materializes_bounded_revision_bound_records() -> None
         workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
 
     evidence = [item for item in package["elements"] if item["type"] == "planning-evidence"]
-    assert calls == [("README.md", REVISION, 1024)]
+    assert calls == [("README.md", REVISION, 64 * 1024)]
     assert len(evidence) == 1
     assert evidence[0]["content"]["predicateResults"][0]["result"] == "MATCH"
     assert [dict(item) for item in evidence[0]["content"]["postconditions"]] == [
         {"kind": "STATUS_EQUALS", "value": "Completed"}
     ]
     assert "# README" not in repr(evidence)
+    assert evidence[0]["content"]["inspection"]["declaredMaxBytesHint"] == 1024
+    assert evidence[0]["content"]["inspection"]["strategy"] == "STRUCTURED_STATUS_FIELD_SCAN"
     assert package["tokenCount"] <= package["tokenBudget"]
 
 
@@ -178,7 +180,7 @@ def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None
     with pytest.raises(RequiredContextError) as captured:
         builder.build(task=task_resource, task_execution=task_execution(task_resource),
             workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
-    assert "OSError" in str(captured.value)
+    assert "OSERROR" in str(captured.value)
     assert "secret body" not in str(captured.value)
 
 
@@ -244,7 +246,7 @@ def test_planning_evidence_authorizes_an_exact_absent_creation_target() -> None:
     assert evidence["predicateResults"][0]["result"] == "MATCH"
 
 
-def test_planning_evidence_honors_declared_byte_limit_above_default() -> None:
+def test_planning_evidence_records_but_does_not_enforce_declared_byte_hint() -> None:
     task_resource = task("plan", ["planning-evidence"])
     task_resource["spec"]["planningPredicates"] = [{
         "path": "README.md",
@@ -264,7 +266,35 @@ def test_planning_evidence_honors_declared_byte_limit_above_default() -> None:
         workflow_execution=workflow_execution(), event=event(),
         created_at=CREATED_AT,
     )
-    assert limits == [100_000]
+    assert limits == [256 * 1024]
+
+
+def test_planning_evidence_uses_trusted_task_ceilings_not_model_hint() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningEvidenceInspection"] = {
+        "maxFileBytes": 20_000, "maxTotalBytes": 30_000,
+        "statusFieldScanBytes": 18_000,
+    }
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md", "maxBytes": 16_384,
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "historical model estimate",
+    }]
+    limits = []
+    content = "**Status:** In Progress\n" + "x" * (17_595 - 24)
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=lambda _path, _revision, limit: limits.append(limit) or content,
+    ).build(task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert len(content.encode()) == 17_595
+    assert limits == [18_000]
+    assert evidence["inspection"]["declaredMaxBytesHint"] == 16_384
+    assert evidence["inspection"]["blobSize"] == 17_595
 
 
 def test_planning_predicates_are_derived_from_prior_issue_analysis() -> None:

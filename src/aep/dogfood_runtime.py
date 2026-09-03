@@ -634,10 +634,33 @@ def _pinned_workspace_reader(
             target.relative_to(root)
         except ValueError as error:
             raise ValueError("planning-evidence path escapes the execution checkout") from error
+        from aep.planning_evidence import PlanningEvidenceInspectionError
+        if not target.exists():
+            raise PlanningEvidenceInspectionError(
+                "TARGET_MISSING", path=path, applied_ceiling=max_bytes)
+        if not target.is_file():
+            raise PlanningEvidenceInspectionError(
+                "NON_REGULAR_FILE", path=path, applied_ceiling=max_bytes)
+        size = target.stat().st_size
+        if size > max_bytes:
+            raise PlanningEvidenceInspectionError(
+                "SIZE_LIMIT_EXCEEDED", path=path, blob_size=size,
+                applied_ceiling=max_bytes)
         data = target.read_bytes()
-        if len(data) > max_bytes:
-            raise ValueError("planning-evidence target exceeds its byte limit")
-        return data.decode("utf-8")
+        if len(data) != size:
+            raise PlanningEvidenceInspectionError(
+                "CONCURRENT_SIZE_DRIFT", path=path, blob_size=len(data),
+                applied_ceiling=max_bytes)
+        if b"\x00" in data:
+            raise PlanningEvidenceInspectionError(
+                "BINARY_CONTENT", path=path, blob_size=size,
+                applied_ceiling=max_bytes)
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise PlanningEvidenceInspectionError(
+                "INVALID_UTF8", path=path, blob_size=size,
+                applied_ceiling=max_bytes) from error
 
     return read
 

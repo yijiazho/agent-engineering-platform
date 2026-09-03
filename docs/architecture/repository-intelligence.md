@@ -6,6 +6,12 @@
 
 **Status:** Draft
 
+Planning-evidence inspection is a trusted, revision-bound inventory consumer,
+not an Agent retrieval capability. Context Builder selects exact or bounded
+prefix candidates, then the checkout reader checks regular-file kind and size
+against versioned Task ceilings before materialization. Predicate evidence is
+bound to the complete blob digest and size and persists no repository body.
+
 **Version:** 0.1
 
 ---

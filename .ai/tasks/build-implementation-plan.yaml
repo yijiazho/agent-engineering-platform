@@ -3,7 +3,7 @@
   "kind": "Task",
   "metadata": {
     "name": "build-implementation-plan",
-    "version": "1.8.0"
+    "version": "1.9.0"
   },
   "spec": {
     "objective": "Turn evaluated issue analysis into an actionable repository-scoped plan.",
@@ -228,6 +228,11 @@
       "knowledge"
     ],
     "inputContextTokenBudget": 32000,
+    "planningEvidenceInspection": {
+      "maxFileBytes": 262144,
+      "maxTotalBytes": 1048576,
+      "statusFieldScanBytes": 65536
+    },
     "knowledgeBases": [
       {
         "kind": "KnowledgeBase",

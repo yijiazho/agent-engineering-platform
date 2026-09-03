@@ -6,6 +6,11 @@
 
 **Status:** Draft
 
+Planning-evidence inspection failures occur before Agent or Model invocation.
+Runtime messages use stable safe reasons such as `SIZE_LIMIT_EXCEEDED`,
+`TARGET_MISSING`, `NON_REGULAR_FILE`, `BINARY_CONTENT`, and `INVALID_UTF8`;
+the failed Task creates no ContextPackage, AgentInvocation, or ModelInvocation.
+
 **Version:** 0.2
 
 ---

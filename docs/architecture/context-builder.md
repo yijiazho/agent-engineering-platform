@@ -693,9 +693,15 @@ of relevance ranking and carry a mandatory `maxPaths`; exceeding it fails
 closed instead of silently truncating. An exact path absent from the bound
 repository snapshot produces content-addressed empty-preimage evidence, allowing
 a `TEXT_ABSENT` precondition to authorize a planned creation without inventing
-an existing repository result. Each path is read using the minimum `maxBytes`
-declared by its applicable predicates, including supported bounds above the
-64 KiB default. Multiple predicates use conjunction:
+an existing repository result. Historical declaration `maxBytes` values are
+diagnostic hints and never enforce runtime safety. The versioned Task's
+`planningEvidenceInspection` supplies per-file, aggregate, and structured-status
+scan ceilings. The reader preflights file kind and immutable size before body
+allocation. `STATUS_EQUALS` uses structured-field evidence; text predicates
+require a proven-complete scan, so an incomplete prefix cannot prove absence or
+emit `NO_MATCH`. Evidence binds revision, path, complete size, and SHA-256 while
+serializing no source text. Inspected source bytes do not count as model tokens;
+only serialized body-free evidence does. Multiple predicates use conjunction:
 all preconditions must match for a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
