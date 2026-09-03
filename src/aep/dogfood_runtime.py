@@ -5,8 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
+from hashlib import sha256
 import logging
 from pathlib import Path
+import re
 import subprocess
 from threading import Event, Thread
 from typing import Any
@@ -58,6 +60,9 @@ from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 from aep.workflow_execution import WorkflowExecutionCreator
 from aep.workflow_resolver import resolve_workflow_for_event
 from aep.workflow_scheduler import TaskExecutionResult, WorkflowScheduler
+
+
+_STATUS_LINE = re.compile(r"\*\*Status:\*\*\s*(?P<value>.+?)\s*")
 
 
 class DogfoodReconciliationError(RuntimeError):
@@ -623,46 +628,89 @@ def _pinned_workspace_reader(
 ) -> Callable[[str, str, int], str]:
     root = workspace.resolve()
 
-    def read(path: str, revision: str, max_bytes: int) -> str:
-        if revision != expected_revision:
-            raise ValueError("planning-evidence revision does not match the execution checkout")
-        relative = Path(path)
-        if relative.is_absolute() or ".." in relative.parts or relative.parts[0].casefold() == ".git":
-            raise ValueError("planning-evidence path is unsafe")
-        target = (root / relative).resolve()
-        try:
-            target.relative_to(root)
-        except ValueError as error:
-            raise ValueError("planning-evidence path escapes the execution checkout") from error
-        from aep.planning_evidence import PlanningEvidenceInspectionError
-        if not target.exists():
-            raise PlanningEvidenceInspectionError(
-                "TARGET_MISSING", path=path, applied_ceiling=max_bytes)
-        if not target.is_file():
-            raise PlanningEvidenceInspectionError(
-                "NON_REGULAR_FILE", path=path, applied_ceiling=max_bytes)
-        size = target.stat().st_size
-        if size > max_bytes:
-            raise PlanningEvidenceInspectionError(
-                "SIZE_LIMIT_EXCEEDED", path=path, blob_size=size,
-                applied_ceiling=max_bytes)
-        data = target.read_bytes()
-        if len(data) != size:
-            raise PlanningEvidenceInspectionError(
-                "CONCURRENT_SIZE_DRIFT", path=path, blob_size=len(data),
-                applied_ceiling=max_bytes)
-        if b"\x00" in data:
-            raise PlanningEvidenceInspectionError(
-                "BINARY_CONTENT", path=path, blob_size=size,
-                applied_ceiling=max_bytes)
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise PlanningEvidenceInspectionError(
-                "INVALID_UTF8", path=path, blob_size=size,
-                applied_ceiling=max_bytes) from error
+    class PinnedWorkspaceReader:
+        def __call__(self, path: str, revision: str, max_bytes: int) -> str:
+            return self.inspect(
+                path, revision, max_bytes=max_bytes,
+                strategy="COMPLETE_BLOB_SCAN", status_scan_bytes=max_bytes,
+            ).content
 
-    return read
+        def inspect(self, path: str, revision: str, *, max_bytes: int,
+                    strategy: str, status_scan_bytes: int):
+            from aep.planning_evidence import (
+                PlanningEvidenceInspection, PlanningEvidenceInspectionError,
+            )
+            if revision != expected_revision:
+                raise ValueError("planning-evidence revision does not match the execution checkout")
+            relative = Path(path)
+            if (relative.is_absolute() or ".." in relative.parts
+                    or relative.parts[0].casefold() == ".git"):
+                raise ValueError("planning-evidence path is unsafe")
+            target = (root / relative).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError as error:
+                raise ValueError("planning-evidence path escapes the execution checkout") from error
+            if not target.exists():
+                raise PlanningEvidenceInspectionError(
+                    "TARGET_MISSING", path=path, applied_ceiling=max_bytes)
+            if not target.is_file():
+                raise PlanningEvidenceInspectionError(
+                    "NON_REGULAR_FILE", path=path, applied_ceiling=max_bytes)
+            initial_stat = target.stat()
+            size = initial_stat.st_size
+            if size > max_bytes:
+                raise PlanningEvidenceInspectionError(
+                    "SIZE_LIMIT_EXCEEDED", path=path, blob_size=size,
+                    applied_ceiling=max_bytes)
+            digest = sha256()
+            data = bytearray() if strategy == "COMPLETE_BLOB_SCAN" else None
+            status_fields: list[tuple[str, int]] = []
+            inspected = 0
+            with target.open("rb") as stream:
+                for line_number, line in enumerate(stream, 1):
+                    inspected += len(line)
+                    digest.update(line)
+                    if b"\x00" in line:
+                        raise PlanningEvidenceInspectionError(
+                            "BINARY_CONTENT", path=path, blob_size=size,
+                            applied_ceiling=max_bytes, strategy=strategy)
+                    if data is not None:
+                        data.extend(line)
+                        continue
+                    if len(line) > status_scan_bytes:
+                        raise PlanningEvidenceInspectionError(
+                            "STATUS_FIELD_SCAN_LIMIT_EXCEEDED", path=path,
+                            blob_size=size, applied_ceiling=status_scan_bytes,
+                            strategy=strategy)
+                    try:
+                        decoded_line = line.decode("utf-8")
+                    except UnicodeDecodeError as error:
+                        raise PlanningEvidenceInspectionError(
+                            "INVALID_UTF8", path=path, blob_size=size,
+                            applied_ceiling=max_bytes, strategy=strategy) from error
+                    match = _STATUS_LINE.fullmatch(decoded_line.rstrip("\r\n"))
+                    if match:
+                        status_fields.append((match.group("value"), line_number))
+            final_stat = target.stat()
+            if (inspected != size or final_stat.st_size != initial_stat.st_size
+                    or final_stat.st_mtime_ns != initial_stat.st_mtime_ns):
+                raise PlanningEvidenceInspectionError(
+                    "CONCURRENT_SIZE_DRIFT", path=path, blob_size=inspected,
+                    applied_ceiling=max_bytes)
+            raw = bytes(data) if data is not None else b""
+            try:
+                content = raw.decode("utf-8") if data is not None else ""
+            except UnicodeDecodeError as error:
+                raise PlanningEvidenceInspectionError(
+                    "INVALID_UTF8", path=path, blob_size=size,
+                    applied_ceiling=max_bytes) from error
+            return PlanningEvidenceInspection(
+                content=content, blob_size=size, blob_sha256=digest.hexdigest(),
+                inspected_bytes=inspected, status_fields=tuple(status_fields),
+            )
+
+    return PinnedWorkspaceReader()
 
 
 def _workflow_execution_id(event_id: str, workflow: Resource) -> str:

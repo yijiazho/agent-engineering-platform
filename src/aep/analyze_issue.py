@@ -222,8 +222,12 @@ class AnalyzeIssueTaskHandler:
             return TaskExecutionResult.success()
         except AgentToolDeniedError as error:
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
+        except ContextBuilderError as error:
+            return TaskExecutionResult.failure(
+                FailureClass.CONFIGURATION, str(error),
+                details=getattr(error, "metadata", None),
+            )
         except (
-            ContextBuilderError,
             AgentResolutionError,
             AgentInvocationContractError,
             SchemaEvaluationContractError,

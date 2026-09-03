@@ -26,6 +26,23 @@ def test_checkout_reader_accepts_exact_ceiling_and_rejects_one_byte_over(tmp_pat
     }
 
 
+def test_status_scanner_streams_large_blob_without_materializing_body(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    body = b"**Status:** In Progress\n" + b"small line\n" * 8_000
+    target.write_bytes(body)
+
+    inspected = _pinned_workspace_reader(tmp_path, REVISION).inspect(
+        "task.md", REVISION, max_bytes=256 * 1024,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=64 * 1024,
+    )
+
+    assert len(body) > 64 * 1024
+    assert inspected.content == ""
+    assert inspected.blob_size == len(body)
+    assert inspected.inspected_bytes == len(body)
+    assert inspected.status_fields == (("In Progress", 1),)
+
+
 @pytest.mark.parametrize(
     ("setup", "reason"),
     [

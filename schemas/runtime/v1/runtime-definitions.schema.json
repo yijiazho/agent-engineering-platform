@@ -92,6 +92,9 @@
         },
         "retryNotBefore": {
           "$ref": "#/$defs/timestamp"
+        },
+        "details": {
+          "type": "object"
         }
       }
     },

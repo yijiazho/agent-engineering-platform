@@ -154,7 +154,7 @@ def test_planning_evidence_materializes_bounded_revision_bound_records() -> None
         workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
 
     evidence = [item for item in package["elements"] if item["type"] == "planning-evidence"]
-    assert calls == [("README.md", REVISION, 64 * 1024)]
+    assert calls == [("README.md", REVISION, 256 * 1024)]
     assert len(evidence) == 1
     assert evidence[0]["content"]["predicateResults"][0]["result"] == "MATCH"
     assert [dict(item) for item in evidence[0]["content"]["postconditions"]] == [
@@ -292,7 +292,7 @@ def test_planning_evidence_uses_trusted_task_ceilings_not_model_hint() -> None:
     evidence = next(item["content"] for item in package["elements"]
         if item["type"] == "planning-evidence")
     assert len(content.encode()) == 17_595
-    assert limits == [18_000]
+    assert limits == [20_000]
     assert evidence["inspection"]["declaredMaxBytesHint"] == 16_384
     assert evidence["inspection"]["blobSize"] == 17_595
 

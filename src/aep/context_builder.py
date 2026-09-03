@@ -379,7 +379,7 @@ class ContextBuilder:
                 status_ceiling = int(inspection.get("statusFieldScanBytes", DEFAULT_STATUS_SCAN_CEILING))
                 kinds = {str(item.get("kind")) for item in (*predicates, *postconditions)}
                 strategy = "STRUCTURED_STATUS_FIELD_SCAN" if kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
-                applied_ceiling = min(trusted_ceiling, status_ceiling) if strategy == "STRUCTURED_STATUS_FIELD_SCAN" else trusted_ceiling
+                applied_ceiling = trusted_ceiling
                 inspected_so_far = sum(
                     int(item[1]["content"].get("inspection", {}).get("inspectedBytes", 0))
                     for item in evidence_target if item[0] == "planning-evidence"
@@ -390,24 +390,37 @@ class ContextBuilder:
                         f"planning-evidence target {path!r} failed closed: AGGREGATE_SIZE_LIMIT_EXCEEDED"
                     )
                 try:
-                    content = "" if path in absent_exact_paths else self._repository_file_reader(
-                        path, repository_revision, applied_ceiling
-                    )
-                    blob_size = len(content.encode("utf-8"))
-                    blob_digest = sha256(content.encode("utf-8")).hexdigest()
+                    if path in absent_exact_paths:
+                        content = ""
+                        blob_size, blob_digest, inspected_bytes, status_fields = 0, sha256(b"").hexdigest(), 0, ()
+                    elif hasattr(self._repository_file_reader, "inspect"):
+                        inspected = self._repository_file_reader.inspect(
+                            path, repository_revision, max_bytes=applied_ceiling,
+                            strategy=strategy, status_scan_bytes=status_ceiling,
+                        )
+                        content = inspected.content
+                        blob_size, blob_digest = inspected.blob_size, inspected.blob_sha256
+                        inspected_bytes, status_fields = inspected.inspected_bytes, inspected.status_fields
+                    else:
+                        content = self._repository_file_reader(path, repository_revision, applied_ceiling)
+                        blob_size = len(content.encode("utf-8"))
+                        blob_digest = sha256(content.encode("utf-8")).hexdigest()
+                        inspected_bytes, status_fields = blob_size, None
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
                         source_id=source_id, max_bytes=applied_ceiling,
                         blob_size=blob_size, blob_sha256=blob_digest,
                         declared_max_bytes=declared_max_bytes,
-                        inspection_strategy=strategy)
+                        inspection_strategy=strategy, status_fields=status_fields,
+                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling)
                     postcondition_record = evaluate_path_predicates(
                         path=path, content=content,
                         repository_revision=repository_revision,
                         predicates=postconditions, source_id=source_id,
                         max_bytes=applied_ceiling, blob_size=blob_size,
                         blob_sha256=blob_digest, declared_max_bytes=declared_max_bytes,
-                        inspection_strategy=strategy,
+                        inspection_strategy=strategy, status_fields=status_fields,
+                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
                     )
                 except (OSError, UnicodeError, ValueError) as error:
                     reason = getattr(error, "reason", None) or {

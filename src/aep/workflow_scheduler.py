@@ -30,6 +30,7 @@ class TaskExecutionResult:
     failure_class: FailureClass | None = None
     message: str | None = None
     retry_not_before: str | None = None
+    details: Mapping[str, Any] | None = None
 
     @classmethod
     def success(cls) -> TaskExecutionResult:
@@ -42,6 +43,7 @@ class TaskExecutionResult:
         message: str,
         *,
         retry_not_before: str | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> TaskExecutionResult:
         if not isinstance(classification, FailureClass):
             raise TypeError("classification must be a FailureClass")
@@ -52,6 +54,7 @@ class TaskExecutionResult:
             failure_class=classification,
             message=message.strip(),
             retry_not_before=retry_not_before,
+            details=dict(details) if details is not None else None,
         )
 
     def validate(self) -> None:
@@ -60,11 +63,14 @@ class TaskExecutionResult:
                 self.failure_class is not None
                 or self.message is not None
                 or self.retry_not_before is not None
+                or self.details is not None
             ):
                 raise ValueError("successful Task result cannot contain failure details")
             return
         if self.failure_class is None or not self.message:
             raise ValueError("failed Task result requires classification and message")
+        if self.details is not None and not isinstance(self.details, Mapping):
+            raise ValueError("failure details must be an object")
         if self.retry_not_before is not None and (
             self.failure_class is not FailureClass.RECOVERABLE
             or not is_rfc3339_timestamp(self.retry_not_before)
@@ -233,6 +239,7 @@ class WorkflowScheduler:
                     result.message or "Task execution failed",
                     timestamp,
                     retry_not_before=result.retry_not_before,
+                    details=result.details,
                 )
                 event_type = "TaskExecutionFailed"
             self._emit(terminal, event_type, sequence=3, timestamp=timestamp)
@@ -381,6 +388,7 @@ class WorkflowScheduler:
         message: str,
         timestamp: str,
         retry_not_before: str | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> RuntimeObject:
         try:
             return self._lifecycle.fail(
@@ -389,6 +397,7 @@ class WorkflowScheduler:
                 message=message,
                 timestamp=timestamp,
                 retry_not_before=retry_not_before,
+                details=details,
             )
         except Exception:
             persisted = self._store.get(str(running["id"]))
