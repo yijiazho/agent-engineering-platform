@@ -39,6 +39,8 @@ class RepositoryPlanningEvidenceReader(Protocol):
     def inspect(self, path: str, revision: str, *, max_bytes: int,
                 strategy: str, status_scan_bytes: int) -> Any: ...
 
+    def verify_absent(self, path: str, revision: str) -> None: ...
+
 SUPPORTED_CONTEXT: Final = frozenset(
     {
         "task",
@@ -110,10 +112,12 @@ class ContextBuilder:
         self._artifact_store = artifact_store
         self._runtime_store = runtime_store
         self._lifecycle_logger = lifecycle_logger
-        if repository_file_reader is not None and not callable(
-            getattr(repository_file_reader, "inspect", None)
-        ):
-            raise TypeError("repository_file_reader must implement inspect")
+        if repository_file_reader is not None and not all(callable(
+            getattr(repository_file_reader, method, None)
+        ) for method in ("inspect", "verify_absent")):
+            raise TypeError(
+                "repository_file_reader must implement inspect and verify_absent"
+            )
         self._repository_file_reader = repository_file_reader
 
     def build(
@@ -407,6 +411,9 @@ class ContextBuilder:
                     raise failure
                 try:
                     if path in absent_exact_paths:
+                        self._repository_file_reader.verify_absent(
+                            path, repository_revision
+                        )
                         content = ""
                         blob_size, blob_digest, inspected_bytes, status_fields = 0, sha256(b"").hexdigest(), 0, ()
                     else:

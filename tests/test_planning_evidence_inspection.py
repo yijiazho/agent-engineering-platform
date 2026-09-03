@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -6,18 +7,28 @@ from aep.dogfood_runtime import _pinned_workspace_reader
 from aep.planning_evidence import PlanningEvidenceInspectionError
 
 
-REVISION = "5ac8aaf2ce6ce00b1b69b461a033456a6b4192cc"
+def commit_repository(root: Path) -> str:
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "AEP Test"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixture", "--allow-empty"], check=True)
+    return subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
 
 
 def test_checkout_reader_accepts_exact_ceiling_and_rejects_one_byte_over(tmp_path: Path) -> None:
     target = tmp_path / "docs" / "execution-plan.md"
     target.parent.mkdir()
     target.write_bytes(b"x" * 17_595)
-    reader = _pinned_workspace_reader(tmp_path, REVISION)
+    revision = commit_repository(tmp_path)
+    reader = _pinned_workspace_reader(tmp_path, revision)
 
-    assert len(reader("docs/execution-plan.md", REVISION, 17_595)) == 17_595
+    assert len(reader("docs/execution-plan.md", revision, 17_595)) == 17_595
     with pytest.raises(PlanningEvidenceInspectionError) as captured:
-        reader("docs/execution-plan.md", REVISION, 17_594)
+        reader("docs/execution-plan.md", revision, 17_594)
     assert captured.value.metadata == {
         "reason": "SIZE_LIMIT_EXCEEDED", "path": "docs/execution-plan.md",
         "blobSize": 17_595, "appliedTrustedCeiling": 17_594,
@@ -31,8 +42,9 @@ def test_status_scanner_streams_large_blob_without_materializing_body(tmp_path: 
     body = b"**Status:** In Progress\n" + b"small line\n" * 8_000
     target.write_bytes(body)
 
-    inspected = _pinned_workspace_reader(tmp_path, REVISION).inspect(
-        "task.md", REVISION, max_bytes=256 * 1024,
+    revision = commit_repository(tmp_path)
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=256 * 1024,
         strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=64 * 1024,
     )
 
@@ -50,12 +62,13 @@ def test_status_scanner_stops_matching_at_cumulative_search_bound(tmp_path: Path
         + "**Status:** Completed\n", encoding="utf-8",
     )
 
-    inspected = _pinned_workspace_reader(tmp_path, REVISION).inspect(
-        "task.md", REVISION, max_bytes=10_000,
+    revision = commit_repository(tmp_path)
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=10_000,
         strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=64,
     )
 
-    assert inspected.inspected_bytes == target.stat().st_size
+    assert inspected.inspected_bytes == inspected.blob_size
     assert inspected.status_fields == (("In Progress", 1),)
 
 
@@ -63,7 +76,6 @@ def test_status_scanner_stops_matching_at_cumulative_search_bound(tmp_path: Path
     ("setup", "reason"),
     [
         (lambda path: None, "TARGET_MISSING"),
-        (lambda path: path.mkdir(), "NON_REGULAR_FILE"),
         (lambda path: path.write_bytes(b"a\x00b"), "BINARY_CONTENT"),
         (lambda path: path.write_bytes(b"\xff"), "INVALID_UTF8"),
     ],
@@ -73,15 +85,54 @@ def test_checkout_reader_uses_stable_safe_classifications(
 ) -> None:
     target = tmp_path / "target"
     setup(target)
+    revision = commit_repository(tmp_path)
     with pytest.raises(PlanningEvidenceInspectionError) as captured:
-        _pinned_workspace_reader(tmp_path, REVISION)("target", REVISION, 100)
+        _pinned_workspace_reader(tmp_path, revision)("target", revision, 100)
     assert captured.value.reason == reason
     assert "content" not in repr(captured.value.metadata)
 
 
 def test_checkout_reader_rejects_revision_and_unsafe_path(tmp_path: Path) -> None:
-    reader = _pinned_workspace_reader(tmp_path, REVISION)
+    revision = commit_repository(tmp_path)
+    reader = _pinned_workspace_reader(tmp_path, revision)
     with pytest.raises(ValueError, match="revision"):
         reader("target", "0" * 40, 100)
     with pytest.raises(ValueError, match="unsafe"):
-        reader("../target", REVISION, 100)
+        reader("../target", revision, 100)
+
+
+def test_checkout_reader_rejects_non_regular_git_entry(tmp_path: Path) -> None:
+    revision = commit_repository(tmp_path)
+    blob = subprocess.run(
+        ["git", "-C", str(tmp_path), "hash-object", "-w", "--stdin"],
+        input=b"destination", capture_output=True, check=True,
+    ).stdout.decode().strip()
+    subprocess.run([
+        "git", "-C", str(tmp_path), "update-index", "--add", "--cacheinfo",
+        f"120000,{blob},link",
+    ], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "symlink"], check=True)
+    revision = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
+
+    reader = _pinned_workspace_reader(tmp_path, revision)
+    with pytest.raises(PlanningEvidenceInspectionError, match="NON_REGULAR_FILE"):
+        reader("link", revision, 100)
+    with pytest.raises(PlanningEvidenceInspectionError, match="NON_REGULAR_FILE"):
+        reader.verify_absent("link", revision)
+
+
+def test_checkout_reader_uses_pinned_blob_not_changed_worktree(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text("original", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+    target.write_text("uncommitted replacement", encoding="utf-8")
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="COMPLETE_BLOB_SCAN", status_scan_bytes=50,
+    )
+
+    assert inspected.content == "original"

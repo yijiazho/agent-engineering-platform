@@ -714,3 +714,8 @@ a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
+
+The checkout-bound implementation reads `revision:path` through Git rather
+than trusting mutable worktree bytes. It verifies exact-path absence against the
+same tree and classifies symlinks or other non-regular Git entries instead of
+manufacturing empty-preimage evidence for them.

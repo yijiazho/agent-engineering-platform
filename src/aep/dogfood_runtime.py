@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import codecs
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -60,9 +61,6 @@ from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 from aep.workflow_execution import WorkflowExecutionCreator
 from aep.workflow_resolver import resolve_workflow_for_event
 from aep.workflow_scheduler import TaskExecutionResult, WorkflowScheduler
-
-
-_STATUS_LINE = re.compile(r"\*\*Status:\*\*\s*(?P<value>.+?)\s*")
 
 
 class DogfoodReconciliationError(RuntimeError):
@@ -646,59 +644,88 @@ def _pinned_workspace_reader(
             if (relative.is_absolute() or ".." in relative.parts
                     or relative.parts[0].casefold() == ".git"):
                 raise ValueError("planning-evidence path is unsafe")
-            target = (root / relative).resolve()
-            try:
-                target.relative_to(root)
-            except ValueError as error:
-                raise ValueError("planning-evidence path escapes the execution checkout") from error
-            if not target.exists():
+            entry = self._entry(path, revision)
+            if entry is None:
                 raise PlanningEvidenceInspectionError(
                     "TARGET_MISSING", path=path, applied_ceiling=max_bytes)
-            if not target.is_file():
+            mode, object_type = entry
+            if object_type != "blob" or mode not in {"100644", "100755"}:
                 raise PlanningEvidenceInspectionError(
                     "NON_REGULAR_FILE", path=path, applied_ceiling=max_bytes)
-            initial_stat = target.stat()
-            size = initial_stat.st_size
+            object_name = f"{revision}:{path}"
+            size_result = subprocess.run(
+                ["git", "-C", str(root), "cat-file", "-s", object_name],
+                capture_output=True, check=False,
+            )
+            if size_result.returncode != 0:
+                raise PlanningEvidenceInspectionError(
+                    "REVISION_MISMATCH", path=path, applied_ceiling=max_bytes)
+            size = int(size_result.stdout.decode("ascii").strip())
             if size > max_bytes:
                 raise PlanningEvidenceInspectionError(
                     "SIZE_LIMIT_EXCEEDED", path=path, blob_size=size,
                     applied_ceiling=max_bytes)
             digest = sha256()
             data = bytearray() if strategy == "COMPLETE_BLOB_SCAN" else None
-            status_fields: list[tuple[str, int]] = []
+            status_prefix = bytearray()
             inspected = 0
-            with target.open("rb") as stream:
-                for line_number, line in enumerate(stream, 1):
-                    inspected += len(line)
+            decoder = codecs.getincrementaldecoder("utf-8")()
+            process = subprocess.Popen(
+                ["git", "-C", str(root), "cat-file", "blob", object_name],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            assert process.stdout is not None
+            with process.stdout as stream:
+                while chunk := stream.read(64 * 1024):
+                    inspected += len(chunk)
                     if inspected > max_bytes:
                         raise PlanningEvidenceInspectionError(
                             "SIZE_LIMIT_EXCEEDED", path=path, blob_size=inspected,
                             applied_ceiling=max_bytes, strategy=strategy)
-                    digest.update(line)
-                    if b"\x00" in line:
+                    digest.update(chunk)
+                    if b"\x00" in chunk:
                         raise PlanningEvidenceInspectionError(
                             "BINARY_CONTENT", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy)
-                    if data is not None:
-                        data.extend(line)
-                        continue
                     try:
-                        decoded_line = line.decode("utf-8")
+                        decoder.decode(chunk, final=False)
                     except UnicodeDecodeError as error:
                         raise PlanningEvidenceInspectionError(
                             "INVALID_UTF8", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy) from error
-                    if inspected <= status_scan_bytes:
-                        match = _STATUS_LINE.fullmatch(decoded_line.rstrip("\r\n"))
-                        if match:
-                            status_fields.append((match.group("value"), line_number))
-            final_stat = target.stat()
-            if (inspected != size or final_stat.st_size != initial_stat.st_size
-                    or final_stat.st_mtime_ns != initial_stat.st_mtime_ns):
+                    if data is not None:
+                        data.extend(chunk)
+                    elif len(status_prefix) < status_scan_bytes:
+                        remaining = status_scan_bytes - len(status_prefix)
+                        status_prefix.extend(chunk[:remaining])
+            try:
+                decoder.decode(b"", final=True)
+            except UnicodeDecodeError as error:
+                raise PlanningEvidenceInspectionError(
+                    "INVALID_UTF8", path=path, blob_size=size,
+                    applied_ceiling=max_bytes, strategy=strategy) from error
+            assert process.stderr is not None
+            stderr = process.stderr.read()
+            return_code = process.wait()
+            if return_code != 0:
+                raise PlanningEvidenceInspectionError(
+                    "REVISION_MISMATCH", path=path, blob_size=inspected,
+                    applied_ceiling=max_bytes, strategy=strategy)
+            if inspected != size:
                 raise PlanningEvidenceInspectionError(
                     "CONCURRENT_SIZE_DRIFT", path=path, blob_size=inspected,
                     applied_ceiling=max_bytes)
             raw = bytes(data) if data is not None else b""
+            status_fields: list[tuple[str, int]] = []
+            if data is None:
+                prefix_text = bytes(status_prefix).decode("utf-8", errors="ignore")
+                status_fields = [
+                    (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)
+                    for match in re.finditer(
+                        r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$",
+                        prefix_text, re.MULTILINE,
+                    )
+                ]
             try:
                 content = raw.decode("utf-8") if data is not None else ""
             except UnicodeDecodeError as error:
@@ -709,6 +736,32 @@ def _pinned_workspace_reader(
                 content=content, blob_size=size, blob_sha256=digest.hexdigest(),
                 inspected_bytes=inspected, status_fields=tuple(status_fields),
             )
+
+        def verify_absent(self, path: str, revision: str) -> None:
+            from aep.planning_evidence import PlanningEvidenceInspectionError
+            if revision != expected_revision:
+                raise ValueError("planning-evidence revision does not match the execution checkout")
+            entry = self._entry(path, revision)
+            if entry is not None:
+                raise PlanningEvidenceInspectionError(
+                    "NON_REGULAR_FILE", path=path)
+
+        @staticmethod
+        def _entry(path: str, revision: str) -> tuple[str, str] | None:
+            result = subprocess.run(
+                ["git", "-C", str(root), "ls-tree", "-z", revision, "--", path],
+                capture_output=True, check=False,
+            )
+            if result.returncode != 0:
+                from aep.planning_evidence import PlanningEvidenceInspectionError
+                raise PlanningEvidenceInspectionError("REVISION_MISMATCH", path=path)
+            if not result.stdout:
+                return None
+            header, returned_path = result.stdout[:-1].split(b"\t", 1)
+            mode, object_type, _object_id = header.decode("ascii").split(" ")
+            if returned_path.decode("utf-8") != path:
+                return None
+            return mode, object_type
 
     return PinnedWorkspaceReader()
 

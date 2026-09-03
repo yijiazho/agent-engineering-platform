@@ -154,6 +154,9 @@ class InspectionReader:
             status_fields=tuple(fields),
         )
 
+    def verify_absent(self, path, revision):
+        return None
+
 
 def test_planning_evidence_materializes_bounded_revision_bound_records() -> None:
     task_resource = task("plan", ["candidate-files", "planning-evidence"])
@@ -211,7 +214,7 @@ def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None
 
 
 def test_planning_evidence_requires_typed_inspection_reader() -> None:
-    with pytest.raises(TypeError, match="must implement inspect"):
+    with pytest.raises(TypeError, match="inspect and verify_absent"):
         ContextBuilder(
             repository_knowledge=knowledge_provider(),
             artifact_store=InMemoryGeneratedArtifactStore(),
