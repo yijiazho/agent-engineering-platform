@@ -295,6 +295,7 @@ class ContextBuilder:
             if isinstance(declarations, (str, bytes)) or not isinstance(declarations, Sequence) or not declarations:
                 raise RequiredContextError("planning-evidence requires Task.spec.planningPredicates")
             candidates_by_id: dict[str, KnowledgeResult] = {}
+            absent_exact_paths: set[str] = set()
             for declaration in declarations:
                 if not isinstance(declaration, Mapping):
                     raise RequiredContextError("planning predicate declarations must be objects")
@@ -307,10 +308,12 @@ class ContextBuilder:
                     scoped = self._repository_knowledge.lookup_file(
                         FileQuery(path=str(declaration["path"]))
                     )
-                    if len(scoped) != 1:
+                    if len(scoped) > 1:
                         raise RequiredContextError(
-                            f"planning-evidence exact target {declaration['path']!r} was not found uniquely"
+                            f"planning-evidence exact target {declaration['path']!r} was not unique"
                         )
+                    if not scoped:
+                        absent_exact_paths.add(str(declaration["path"]))
                 else:
                     scoped = self._repository_knowledge.search_candidate_files(
                         CandidateFileQuery(terms=(),
@@ -326,11 +329,18 @@ class ContextBuilder:
                     candidates_by_id[result.id] = result
             candidates = tuple(sorted(candidates_by_id.values(),
                 key=lambda item: item.provenance.source.path))
+            candidate_sources = [
+                (item.provenance.source.path, item.id) for item in candidates
+            ] + [
+                (path, f"absent:{repository_revision}:{path}")
+                for path in absent_exact_paths
+                if path not in {item.provenance.source.path for item in candidates}
+            ]
+            candidate_sources.sort(key=lambda item: (item[0].casefold(), item[0]))
             evidence_target = mandatory if "planning-evidence" in required else optional_candidates
             matched = 0
             seen_paths: set[str] = set()
-            for result in candidates:
-                path = result.provenance.source.path
+            for path, source_id in candidate_sources:
                 if path in seen_paths:
                     raise RequiredContextError(
                         f"planning-evidence candidate {path!r} is duplicated"
@@ -338,7 +348,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
-                max_bytes = 64 * 1024
+                max_bytes: int | None = None
                 for declaration in declarations:
                     if not isinstance(declaration, Mapping):
                         raise RequiredContextError("planning predicate declarations must be objects")
@@ -354,18 +364,22 @@ class ContextBuilder:
                     predicates.append(dict(predicate))
                     postconditions.append(dict(postcondition))
                     reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
-                    max_bytes = min(max_bytes, int(declaration.get("maxBytes", max_bytes)))
+                    declaration_limit = int(declaration.get("maxBytes", 64 * 1024))
+                    max_bytes = declaration_limit if max_bytes is None else min(max_bytes, declaration_limit)
                 if not predicates:
                     continue
+                assert max_bytes is not None
                 try:
-                    content = self._repository_file_reader(path, repository_revision, max_bytes)
+                    content = "" if path in absent_exact_paths else self._repository_file_reader(
+                        path, repository_revision, max_bytes
+                    )
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
-                        source_id=result.id, max_bytes=max_bytes)
+                        source_id=source_id, max_bytes=max_bytes)
                     postcondition_record = evaluate_path_predicates(
                         path=path, content=content,
                         repository_revision=repository_revision,
-                        predicates=postconditions, source_id=result.id,
+                        predicates=postconditions, source_id=source_id,
                         max_bytes=max_bytes,
                     )
                 except (OSError, UnicodeError, ValueError) as error:

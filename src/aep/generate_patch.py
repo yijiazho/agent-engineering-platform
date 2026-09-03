@@ -173,6 +173,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 _verify_plan_evidence_targets(
                     plan, str(workflow["repositoryRevision"]), editable_targets
                 )
+                insertion_no_change_paths = tuple(
+                    path for path in no_change_paths
+                    if any(item["path"] == path for item in required_insertions)
+                )
+                if insertion_no_change_paths:
+                    _verify_no_change_targets(
+                        insertion_no_change_paths, required_insertions, editable_targets
+                    )
             else:
                 _verify_no_change_targets(
                     no_change_paths, required_insertions, editable_targets

@@ -578,6 +578,26 @@ def test_evidence_bound_no_change_fails_when_required_insertion_is_missing(
     assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
 
 
+def test_planning_time_no_change_fails_when_required_insertion_is_missing(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, _artifacts, _workspace, model = setup_handler(
+        tmp_path,
+        {"changes": [], "dispositions": [
+            {"path": "src/app.py", "disposition": "NO_CHANGE"}
+        ]},
+        evidence_bound=True,
+        planning_time_no_change=True,
+        evidence_required_insertions=[{"path": "src/app.py", "value": "required marker"}],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "not deterministically satisfied" in result.message
+    assert model.requests == []
+
+
 def test_evidence_bound_required_change_cannot_be_omitted(tmp_path: Path) -> None:
     store, handler, task, _artifacts, _workspace, _model = setup_handler(
         tmp_path,
@@ -731,6 +751,7 @@ def setup_handler(
     evidence_bound: bool = False,
     evidence_required_insertions: list[dict[str, str]] | None = None,
     evidence_deletion: bool = False,
+    planning_time_no_change: bool = False,
     postcondition_kind: str = "TEXT_PRESENT",
     postcondition_value: str = "value = 1",
 ):
@@ -764,6 +785,7 @@ def setup_handler(
             evidence_plan(planning_record,
                 required_insertions=evidence_required_insertions,
                 deletion_authorized=evidence_deletion,
+                planning_time_no_change=planning_time_no_change,
             ) if planning_record is not None else implementation_plan(
                 intended_files or ["src/app.py"],
                 no_change_files=no_change_files,
@@ -1075,13 +1097,14 @@ def implementation_plan(
 def evidence_plan(
     record: dict, *, required_insertions: list[dict[str, str]] | None = None,
     deletion_authorized: bool = False,
+    planning_time_no_change: bool = False,
 ) -> dict:
     return {
         **implementation_plan(["src/app.py"], required_insertions=required_insertions),
         "deletionAuthorizedFiles": ["src/app.py"] if deletion_authorized else [],
         "authorizedPaths": ["src/app.py"],
-        "requiredChangePaths": ["src/app.py"],
-        "verifiedNoChangePaths": [],
+        "requiredChangePaths": [] if planning_time_no_change else ["src/app.py"],
+        "verifiedNoChangePaths": ["src/app.py"] if planning_time_no_change else [],
         "unsupportedPaths": [],
         "pathEvidence": [record["selectionId"]],
     }

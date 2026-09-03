@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -212,6 +213,58 @@ def test_planning_evidence_prefix_fails_when_complete_scope_exceeds_bound() -> N
             workflow_execution=workflow_execution(), event=event(),
             created_at=CREATED_AT,
         )
+
+
+def test_planning_evidence_authorizes_an_exact_absent_creation_target() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "src/new_module.py",
+        "predicate": {"kind": "TEXT_ABSENT", "value": "created = True"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "created = True"},
+        "selectionReason": "requested file creation",
+        "maxBytes": 4096,
+    }]
+    reads = []
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=lambda *args: reads.append(args) or "unexpected",
+    ).build(
+        task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(),
+        created_at=CREATED_AT,
+    )
+
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert reads == []
+    assert evidence["path"] == "src/new_module.py"
+    assert evidence["preimageSha256"] == sha256(b"").hexdigest()
+    assert evidence["sourceProvenance"]["sourceId"].startswith("absent:")
+    assert evidence["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_planning_evidence_honors_declared_byte_limit_above_default() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "marker"},
+        "postcondition": {"kind": "TEXT_ABSENT", "value": "marker"},
+        "selectionReason": "large bounded file",
+        "maxBytes": 100_000,
+    }]
+    limits = []
+    content = "marker" + "x" * 70_000
+    ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=lambda _path, _revision, limit: limits.append(limit) or content,
+    ).build(
+        task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(),
+        created_at=CREATED_AT,
+    )
+    assert limits == [100_000]
 
 
 def test_planning_predicates_are_derived_from_prior_issue_analysis() -> None:

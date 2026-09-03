@@ -642,7 +642,9 @@ omission is not a disposition; `NO_CHANGE` requires the requested postcondition,
 not merely the planning precondition, to be proven by the exact target. Any
 path-bound required insertion must also be present in that exact preimage and
 is recorded in the reconciliation proof before the path can leave the effective
-required set. A
+required set. Planning-time no-change paths with required insertions receive
+the same fresh editable-target verification before model invocation; they do
+not bypass the insertion check merely because they require no reconciliation. A
 `CHANGE` disposition likewise evaluates every postcondition against the
 proposed generated content and records its output digest before mutation.
 Deletion is represented as an explicit absent-file post-state with a null output

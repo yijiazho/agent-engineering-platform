@@ -651,7 +651,9 @@ Implemented foundations currently include:
   primitives bind path decisions to a repository revision and content digest.
   The trusted Context Builder evaluates bounded predicates derived by the
   evaluated issue analysis; exact paths bypass relevance ranking and bounded
-  prefixes fail rather than truncate. BuildImplementationPlan publishes only
+  prefixes fail rather than truncate. Exact absent paths carry revision-bound
+  empty-preimage evidence for planned file creation, and declared byte bounds
+  are honored per path. BuildImplementationPlan publishes only
   evidence-classified path sets, and
   GeneratePatch persists reconciliation before applying effective dispositions;
   late no-change proves exact required insertions, while authorized deletes use

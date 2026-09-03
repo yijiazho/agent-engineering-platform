@@ -690,7 +690,12 @@ unsupported. Planner-returned evidence must match the independently trusted
 record byte-for-byte by selection identity; its shape alone is insufficient.
 Exact paths are looked up directly. Prefix scopes are enumerated independently
 of relevance ranking and carry a mandatory `maxPaths`; exceeding it fails
-closed instead of silently truncating. Multiple predicates use conjunction:
+closed instead of silently truncating. An exact path absent from the bound
+repository snapshot produces content-addressed empty-preimage evidence, allowing
+a `TEXT_ABSENT` precondition to authorize a planned creation without inventing
+an existing repository result. Each path is read using the minimum `maxBytes`
+declared by its applicable predicates, including supported bounds above the
+64 KiB default. Multiple predicates use conjunction:
 all preconditions must match for a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
