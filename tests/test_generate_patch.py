@@ -74,6 +74,20 @@ CHANGE_SCHEMA = {
 }
 
 EVIDENCE_CHANGE_SCHEMA = json.loads(json.dumps(CHANGE_SCHEMA))
+EVIDENCE_CHANGE_SCHEMA["properties"]["changes"]["items"] = {
+    "anyOf": [
+        EVIDENCE_CHANGE_SCHEMA["properties"]["changes"]["items"],
+        {
+            "type": "object", "additionalProperties": False,
+            "required": ["operation", "path", "preimageSha256"],
+            "properties": {
+                "operation": {"const": "delete"},
+                "path": {"type": "string", "minLength": 1},
+                "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            },
+        },
+    ]
+}
 EVIDENCE_CHANGE_SCHEMA["required"].append("dispositions")
 EVIDENCE_CHANGE_SCHEMA["properties"]["dispositions"] = {
     "type": "array",
@@ -545,6 +559,25 @@ def test_evidence_bound_no_change_fails_when_postcondition_is_unsatisfied(
     assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
 
 
+def test_evidence_bound_no_change_fails_when_required_insertion_is_missing(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [], "dispositions": [
+            {"path": "src/app.py", "disposition": "NO_CHANGE"}
+        ]},
+        evidence_bound=True,
+        evidence_required_insertions=[{"path": "src/app.py", "value": "required marker"}],
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert "lacks a required insertion" in result.message
+    assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
+
+
 def test_evidence_bound_required_change_cannot_be_omitted(tmp_path: Path) -> None:
     store, handler, task, _artifacts, _workspace, _model = setup_handler(
         tmp_path,
@@ -596,6 +629,27 @@ def test_evidence_bound_change_persists_passing_generated_content_proof(
     assert disposition["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
     assert disposition["outputSha256"] == sha256(b"value = 2\n").hexdigest()
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
+
+
+def test_evidence_bound_authorized_deletion_proves_absent_post_state(tmp_path: Path) -> None:
+    store, handler, task, _artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "operation": "delete"}],
+         "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}]},
+        evidence_bound=True,
+        evidence_deletion=True,
+        postcondition_kind="TEXT_ABSENT",
+        postcondition_value="value = 1",
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    reconciliation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    disposition = reconciliation["evidence"]["pathDispositions"][0]
+    assert disposition["postState"] == "ABSENT"
+    assert disposition["outputSha256"] is None
+    assert not (workspace / "src/app.py").exists()
 
 
 def test_mode_drift_is_rejected_by_compare_write(tmp_path: Path) -> None:
@@ -675,6 +729,9 @@ def setup_handler(
     no_change_files: list[str] | None = None,
     required_insertions: list[dict[str, str]] | None = None,
     evidence_bound: bool = False,
+    evidence_required_insertions: list[dict[str, str]] | None = None,
+    evidence_deletion: bool = False,
+    postcondition_kind: str = "TEXT_PRESENT",
     postcondition_value: str = "value = 1",
 ):
     workspace, evaluation_workspace, revision = repositories(tmp_path)
@@ -691,7 +748,7 @@ def setup_handler(
         )
         planning_record = finalize_planning_evidence(
             planning_record,
-            postconditions=[{"kind": "TEXT_PRESENT", "value": postcondition_value}],
+            postconditions=[{"kind": postcondition_kind, "value": postcondition_value}],
             selection_reasons=["fixture predicate"],
         )
         context_id = "contextpackage-111111111111"
@@ -704,7 +761,10 @@ def setup_handler(
     if publish_plan:
         artifact_store.publish(
             plan_metadata(revision),
-            evidence_plan(planning_record) if planning_record is not None else implementation_plan(
+            evidence_plan(planning_record,
+                required_insertions=evidence_required_insertions,
+                deletion_authorized=evidence_deletion,
+            ) if planning_record is not None else implementation_plan(
                 intended_files or ["src/app.py"],
                 no_change_files=no_change_files,
                 required_insertions=required_insertions,
@@ -1012,9 +1072,13 @@ def implementation_plan(
     }
 
 
-def evidence_plan(record: dict) -> dict:
+def evidence_plan(
+    record: dict, *, required_insertions: list[dict[str, str]] | None = None,
+    deletion_authorized: bool = False,
+) -> dict:
     return {
-        **implementation_plan(["src/app.py"]),
+        **implementation_plan(["src/app.py"], required_insertions=required_insertions),
+        "deletionAuthorizedFiles": ["src/app.py"] if deletion_authorized else [],
         "authorizedPaths": ["src/app.py"],
         "requiredChangePaths": ["src/app.py"],
         "verifiedNoChangePaths": [],

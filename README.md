@@ -653,7 +653,9 @@ Implemented foundations currently include:
   evaluated issue analysis; exact paths bypass relevance ranking and bounded
   prefixes fail rather than truncate. BuildImplementationPlan publishes only
   evidence-classified path sets, and
-  GeneratePatch persists reconciliation before applying effective dispositions.
+  GeneratePatch persists reconciliation before applying effective dispositions;
+  late no-change proves exact required insertions, while authorized deletes use
+  an explicit absent-file post-state.
   Patch, acceptance, and publication gates consume both patch and reconciliation
   EvaluationResults.
 * Authenticated, repository-bound GitHub issue webhook ingress with shared-store

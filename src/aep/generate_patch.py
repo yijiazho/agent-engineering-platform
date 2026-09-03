@@ -269,6 +269,17 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                             item["path"]: item["content"] for item in changes
                             if item["operation"] == "write"
                         },
+                        deleted_paths=tuple(
+                            item["path"] for item in changes
+                            if item["operation"] == "delete"
+                        ),
+                        required_insertions_by_path={
+                            path: tuple(
+                                item["value"] for item in required_insertions
+                                if item["path"] == path
+                            )
+                            for path in required_change_paths
+                        },
                     )
                 except PlanningEvidenceError as error:
                     raise GeneratePatchContractError(str(error)) from error

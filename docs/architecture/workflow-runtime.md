@@ -639,7 +639,14 @@ and effective sets, per-path target digests, reason, revision, and evaluator
 identity. Only after that persistence succeeds may the effective sets influence
 patch completeness or downstream gates. A generator
 omission is not a disposition; `NO_CHANGE` requires the requested postcondition,
-not merely the planning precondition, to be proven by the exact target. A
+not merely the planning precondition, to be proven by the exact target. Any
+path-bound required insertion must also be present in that exact preimage and
+is recorded in the reconciliation proof before the path can leave the effective
+required set. A
 `CHANGE` disposition likewise evaluates every postcondition against the
-proposed generated content and records its output digest before mutation. The
+proposed generated content and records its output digest before mutation.
+Deletion is represented as an explicit absent-file post-state with a null output
+digest and is accepted only for a generated delete whose declared postconditions
+are deterministic `TEXT_ABSENT` predicates; it is never treated as a write with
+missing content. The
 AEP-051 omission checks remain in force for every effective required path.

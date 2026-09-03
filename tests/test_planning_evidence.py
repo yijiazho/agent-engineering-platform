@@ -169,6 +169,43 @@ def test_reconciliation_keeps_required_change_and_rejects_stale_target() -> None
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
 
 
+def test_no_change_requires_exact_required_insertions_to_be_present() -> None:
+    content = "existing text\n"
+    target = {"path": "docs/task.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {}}
+    common = dict(plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["docs/task.md"], targets=[target],
+        dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
+        postconditions_by_path={"docs/task.md": ({"kind": "TEXT_PRESENT", "value": "existing text"},)},
+        evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+    with pytest.raises(PlanningEvidenceError, match="lacks a required insertion"):
+        reconcile_dispositions(**common,
+            required_insertions_by_path={"docs/task.md": ("new required text",)})
+    result = reconcile_dispositions(**common,
+        required_insertions_by_path={"docs/task.md": ("existing text",)})
+    assert result["pathDispositions"][0]["requiredInsertionProof"] == [
+        {"value": "existing text", "result": "MATCH"}
+    ]
+
+
+def test_reconciliation_proves_an_authorized_deleted_post_state() -> None:
+    content = "obsolete text\n"
+    target = {"path": "docs/task.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {}}
+    result = reconcile_dispositions(plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["docs/task.md"], targets=[target],
+        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}],
+        postconditions_by_path={"docs/task.md": ({"kind": "TEXT_ABSENT", "value": "obsolete text"},)},
+        deleted_paths=["docs/task.md"],
+        evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+    disposition = result["pathDispositions"][0]
+    assert disposition["postState"] == "ABSENT"
+    assert disposition["outputSha256"] is None
+    assert disposition["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
+
+
 def test_reconciliation_targets_exactly_cover_original_required_paths() -> None:
     content = "**Status:** In Progress\n"
     target = {"path": "docs/task.md", "content": content, "preimageSha256": sha256(content.encode()).hexdigest(),
