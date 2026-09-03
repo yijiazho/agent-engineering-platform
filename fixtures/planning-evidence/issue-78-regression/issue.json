@@ -1,0 +1,15 @@
+{
+  "id": "event-issue-78-derived",
+  "source": "github",
+  "type": "github.issue.created",
+  "receivedAt": "2026-08-31T12:00:00Z",
+  "deduplicationKey": "github:delivery:issue-78-derived",
+  "repository": {"id": 78, "full_name": "aep/fixture"},
+  "sender": {"id": 780, "login": "fixture-user"},
+  "issue": {
+    "id": 7801,
+    "number": 7801,
+    "title": "Complete tasks whose manual testing is finished",
+    "body": "Update only task documents currently marked In Progress to Completed and synchronize docs/execution-plan.md. Historical completed MTP tasks must remain unchanged."
+  }
+}

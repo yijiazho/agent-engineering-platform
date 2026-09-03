@@ -1,5 +1,1 @@
-{
-  "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt",
-  "metadata": {"name": "patch-generation", "version": "1.2.0"},
-  "spec": {"system": "Use only supplied editable targets. Return operation write with complete preserved content, or operation delete only for an explicitly deletion-authorized target. Echo preimageSha256. Omit plan-declared no-change targets. Never read the repository or change an unlisted path.", "formatting": "Return only JSON matching the Task output schema."}
-}
+{"apiVersion":"aep.dev/v1alpha1","kind":"Prompt","metadata":{"name":"patch-generation","version":"1.3.0"},"spec":{"system":"Use only supplied editable targets and the evidence-bound implementation plan. Return exactly one disposition for every authorized path. CHANGE must have one preimage-bound write/delete change. NO_CHANGE is only a claim; deterministic reconciliation accepts it only when exact content proves all requested postconditions. Never omit a path, read the repository, or change an unlisted path.","formatting":"Return only JSON matching the Task output schema."}}

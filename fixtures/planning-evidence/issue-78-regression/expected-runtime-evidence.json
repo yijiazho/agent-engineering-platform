@@ -1,0 +1,17 @@
+{
+  "contextElementType": "planning-evidence",
+  "requiredFields": [
+    "path",
+    "repositoryRevision",
+    "preimageSha256",
+    "sourceProvenance",
+    "predicateResults",
+    "postconditions",
+    "postconditionResults",
+    "selectionReasons",
+    "selectionId"
+  ],
+  "forbiddenFields": ["content", "prompt", "providerMessage", "headers"],
+  "planSets": ["authorizedPaths", "requiredChangePaths", "verifiedNoChangePaths", "unsupportedPaths"],
+  "reconciliationEvaluationType": "reconciliation"
+}

@@ -173,6 +173,14 @@ A Task does not orchestrate execution and does not contain reasoning logic.
 
 Instead, it specifies the contract for a unit of work.
 
+Issue analysis may declare bounded `planningPredicates` for exact paths or path
+prefixes under a planning Task's `PRIOR_ISSUE_ANALYSIS` contract. Each
+declaration supplies a deterministic precondition, required postcondition,
+selection reason, byte limit, and path-count bound. The trusted Context Builder,
+not the Agent, enumerates that complete bounded scope and evaluates it at the
+WorkflowExecution revision. Unsupported semantic predicates or intermediate
+states remain explicit and cannot authorize a mutation.
+
 Example:
 
 ```yaml

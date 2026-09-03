@@ -10,7 +10,7 @@
     "Tool": 5,
     "KnowledgeBase": 1,
     "Policy": 5,
-    "Evaluation": 6
+    "Evaluation": 7
   },
   "taskOrder": [
     "analyze-issue",
@@ -22,18 +22,21 @@
   ],
   "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
   "resourceVersions": {
-    "workflow": "1.15.0",
-    "buildImplementationPlanTask": "1.7.0",
-    "plannerAgent": "1.7.0",
-    "implementationPlanningPrompt": "1.6.0",
-    "implementationPlanEvaluation": "1.5.0",
-    "generatePatchTask": "1.12.0",
-    "codeGeneratorAgent": "1.12.0",
+    "workflow": "1.17.0",
+    "buildImplementationPlanTask": "1.8.0",
+    "plannerAgent": "1.8.0",
+    "implementationPlanningPrompt": "1.7.0",
+    "implementationPlanEvaluation": "1.6.0",
+    "generatePatchTask": "1.13.0",
+    "codeGeneratorAgent": "1.13.0",
     "filesystemTool": "1.7.0",
     "createPullRequestTask": "1.2.0",
     "publicationEvidencePolicy": "1.1.0",
     "model": "1.1.0",
-    "analyzeIssueTask": "1.2.0"
+    "analyzeIssueTask": "1.3.0",
+    "issueAnalyzerAgent": "1.2.0",
+    "issueAnalysisPrompt": "1.1.0",
+    "issueAnalysisEvaluation": "1.1.0"
   },
   "publicationCapabilities": ["git.push", "github.create_pr"],
   "forbiddenCapabilities": ["repository.retrieve", "secret.read", "github.merge_pr", "deployment.create"],

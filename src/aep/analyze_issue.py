@@ -171,13 +171,16 @@ class AnalyzeIssueTaskHandler:
                     retry_not_before=failure.get("retryNotBefore"),
                 )
 
+            authoritative_output = self._authoritative_output(
+                invocation["output"], task_execution, workflow, context_package
+            )
             artifact_id = self._runtime_id("generatedartifact", str(task_execution["id"]))
             evaluation_result = self._run_schema_evaluation(
                 task_execution=task_execution,
                 workflow=workflow,
                 evaluation=evaluation,
                 invocation_id=invocation_id,
-                content=invocation["output"],
+                content=authoritative_output,
             )
             evaluation_id = str(evaluation_result["id"])
             if evaluation_result["outcome"] != "PASS":
@@ -210,7 +213,7 @@ class AnalyzeIssueTaskHandler:
                     "mediaType": "application/json",
                     "evaluationResultIds": [evaluation_id],
                 },
-                invocation["output"],
+                authoritative_output,
             )
             self._attach(
                 task_execution["id"],
@@ -230,6 +233,13 @@ class AnalyzeIssueTaskHandler:
             ValueError,
         ) as error:
             return TaskExecutionResult.failure(FailureClass.CONFIGURATION, str(error))
+
+    def _authoritative_output(
+        self, output: Any, task_execution: JsonMapping, workflow: JsonMapping,
+        context_package: JsonMapping,
+    ) -> Any:
+        """Return deterministic post-model output; subclasses may narrow it."""
+        return output
 
     def _validate_inputs(
         self, task: Resource, task_execution: RuntimeObject

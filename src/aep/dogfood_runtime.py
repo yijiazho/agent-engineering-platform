@@ -227,6 +227,9 @@ class DogfoodWorkflowRunner:
             repository_knowledge=knowledge,
             artifact_store=self._artifacts,
             runtime_store=self._store,
+            repository_file_reader=_pinned_workspace_reader(
+                checkout.workspace_path, revision
+            ),
         )
         git_logs = FilesystemGitCommandLogStore(self._state_root / "git-logs")
         git_sandbox = SubprocessGitSandbox(self._state_root / "disabled-git-hooks")
@@ -613,6 +616,30 @@ def _reconciliation_revision(
             "existing WorkflowExecution has no repositoryRevision"
         )
     return revision
+
+
+def _pinned_workspace_reader(
+    workspace: Path, expected_revision: str
+) -> Callable[[str, str, int], str]:
+    root = workspace.resolve()
+
+    def read(path: str, revision: str, max_bytes: int) -> str:
+        if revision != expected_revision:
+            raise ValueError("planning-evidence revision does not match the execution checkout")
+        relative = Path(path)
+        if relative.is_absolute() or ".." in relative.parts or relative.parts[0].casefold() == ".git":
+            raise ValueError("planning-evidence path is unsafe")
+        target = (root / relative).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as error:
+            raise ValueError("planning-evidence path escapes the execution checkout") from error
+        data = target.read_bytes()
+        if len(data) > max_bytes:
+            raise ValueError("planning-evidence target exceeds its byte limit")
+        return data.decode("utf-8")
+
+    return read
 
 
 def _workflow_execution_id(event_id: str, workflow: Resource) -> str:

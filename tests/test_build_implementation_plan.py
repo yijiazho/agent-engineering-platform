@@ -1,10 +1,16 @@
 import json
 from pathlib import Path
 
-from aep.build_implementation_plan import BuildImplementationPlanTaskHandler
+import pytest
+
+from aep.build_implementation_plan import (
+    BuildImplementationPlanContractError,
+    BuildImplementationPlanTaskHandler,
+)
 from aep.context_builder import ContextBuilder
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.model_invocation import FakeModelAdapter, ModelResponse, ModelUsage
+from aep.planning_evidence import evaluate_path_predicates, finalize_planning_evidence
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
     RepositoryFile,
@@ -89,6 +95,72 @@ VALID_PLAN = {
     }],
     "unsupportedAcceptanceCriteria": ["Persist an evaluated plan."],
 }
+
+
+def test_authoritative_plan_is_derived_from_trusted_exact_path_evidence() -> None:
+    _store, handler, _task, _adapter = setup_handler(VALID_PLAN)
+    record = evaluate_path_predicates(
+        path="src/aep/build_implementation_plan.py", content="Status: ready\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "Status: ready"}],
+        source_id="file:planner",
+    )
+    record = finalize_planning_evidence(
+        record, postconditions=[{"kind": "TEXT_PRESENT", "value": "Status: done"}],
+        selection_reasons=["declared status transition"],
+    )
+    context = {"elements": [{"type": "planning-evidence", "content": record}],
+        "selection": {"requiredContext": ["planning-evidence"]}}
+
+    result = handler._authoritative_output(
+        VALID_PLAN, task_execution(), workflow_execution(), context
+    )
+
+    assert result["authorizedPaths"] == VALID_PLAN["intendedFiles"]
+    assert result["requiredChangePaths"] == VALID_PLAN["intendedFiles"]
+    assert result["verifiedNoChangePaths"] == []
+    assert result["unsupportedPaths"] == []
+    assert result["pathEvidence"] == [record["selectionId"]]
+
+
+def test_authoritative_plan_rejects_ranked_path_without_trusted_evidence() -> None:
+    _store, handler, _task, _adapter = setup_handler(VALID_PLAN)
+
+    with pytest.raises(BuildImplementationPlanContractError, match="trusted planning evidence"):
+        handler._authoritative_output(
+            VALID_PLAN, task_execution(), workflow_execution(),
+            {"elements": [], "selection": {"requiredContext": ["planning-evidence"]}}
+        )
+
+
+def test_authoritative_plan_does_not_treat_unknown_intermediate_state_as_no_change() -> None:
+    _store, handler, _task, _adapter = setup_handler(VALID_PLAN)
+    path = "src/aep/build_implementation_plan.py"
+    content = "**Status:** Blocked\n"
+    record = evaluate_path_predicates(
+        path=path, content=content, repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+        source_id="file:planner",
+    )
+    post = evaluate_path_predicates(
+        path=path, content=content, repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+        source_id="file:planner",
+    )
+    record = finalize_planning_evidence(
+        record, postconditions=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+        postcondition_results=post["predicateResults"],
+        selection_reasons=["status transition"],
+    )
+    context = {"elements": [{"type": "planning-evidence", "content": record}],
+        "selection": {"requiredContext": ["planning-evidence"]}}
+
+    result = handler._authoritative_output(
+        VALID_PLAN, task_execution(), workflow_execution(), context
+    )
+
+    assert result["verifiedNoChangePaths"] == []
+    assert result["unsupportedPaths"] == [path]
 
 
 def test_success_consumes_analysis_and_persists_evaluated_plan() -> None:

@@ -240,7 +240,7 @@
                 "additionalProperties": false,
                 "required": ["type", "content", "provenance"],
                 "properties": {
-                  "type": { "type": "string", "enum": ["repository", "knowledge", "artifact", "editable-target", "event", "policy", "task"] },
+                  "type": { "type": "string", "enum": ["repository", "knowledge", "artifact", "editable-target", "planning-evidence", "event", "policy", "task"] },
                   "content": {},
                   "provenance": { "$ref": "#/$defs/provenance" },
                   "tokenCount": { "type": "integer", "minimum": 0 },

@@ -1,0 +1,16 @@
+{
+  "boundedPathCount": 8,
+  "requiredChangePaths": [
+    "docs/execution-plan.md",
+    "docs/tasks/AEP-045-optimize-context-token-efficiency.md",
+    "docs/tasks/AEP-051-bind-generated-files-to-editable-preimages.md"
+  ],
+  "verifiedNoChangePaths": [
+    "docs/tasks/AEP-005-normalize-github-issue-created-event.md",
+    "docs/tasks/AEP-021-implement-filesystem-tool.md",
+    "docs/tasks/AEP-029-implement-analyzeissue-task-handler.md",
+    "docs/tasks/AEP-033-implement-evaluateacceptance-task-handler.md",
+    "docs/tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md"
+  ],
+  "unsupportedPaths": []
+}

@@ -633,12 +633,22 @@ the provider-neutral Resource.
 
 The reconciliation contract distinguishes authorized, required-change,
 verified-no-change, and unsupported paths, with exactly one disposition per
-authorized path. Before enabling it in GeneratePatch, the runtime must preserve
-the original artifact and durably attach a content-addressed reconciliation
-record containing original and effective sets, per-path target digests, reason,
-revision, and evaluator identity. Only after that persistence succeeds may the
-effective sets influence patch completeness or downstream gates. A generator
+authorized path. GeneratePatch preserves the original artifact and durably
+attaches a content-addressed reconciliation EvaluationResult containing original
+and effective sets, per-path target digests, reason, revision, and evaluator
+identity. Only after that persistence succeeds may the effective sets influence
+patch completeness or downstream gates. A generator
 omission is not a disposition; `NO_CHANGE` requires the requested postcondition,
-not merely the planning precondition, to be proven by the exact target. Until
-the complete versioned path is installed, AEP-051 omission checks remain in
-force.
+not merely the planning precondition, to be proven by the exact target. Any
+path-bound required insertion must also be present in that exact preimage and
+is recorded in the reconciliation proof before the path can leave the effective
+required set. Planning-time no-change paths with required insertions receive
+the same fresh editable-target verification before model invocation; they do
+not bypass the insertion check merely because they require no reconciliation. A
+`CHANGE` disposition likewise evaluates every postcondition against the
+proposed generated content and records its output digest before mutation.
+Deletion is represented as an explicit absent-file post-state with a null output
+digest and is accepted only for a generated delete whose declared postconditions
+are deterministic `TEXT_ABSENT` predicates; it is never treated as a write with
+missing content. The
+AEP-051 omission checks remain in force for every effective required path.

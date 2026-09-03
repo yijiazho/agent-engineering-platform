@@ -1,6 +1,6 @@
 # AEP-053: Bind Planning Decisions To Exact Repository Evidence
 
-**Status:** Not Started
+**Status:** In Progress
 
 ## Context
 

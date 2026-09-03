@@ -66,6 +66,25 @@ def evaluate_path_predicates(
     return record
 
 
+def finalize_planning_evidence(
+    record: Mapping[str, Any], *, postconditions: Sequence[Mapping[str, Any]],
+    selection_reasons: Sequence[str], postcondition_results: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Bind downstream criteria and selection reasons into the evidence identity."""
+    if not postconditions or not selection_reasons:
+        raise PlanningEvidenceError(
+            "planning evidence requires postconditions and selection reasons"
+        )
+    result = _plain(record)
+    result.pop("selectionId", None)
+    result["postconditions"] = [dict(item) for item in postconditions]
+    if postcondition_results is not None:
+        result["postconditionResults"] = [dict(item) for item in postcondition_results]
+    result["selectionReasons"] = list(selection_reasons)
+    result["selectionId"] = "planselection-" + sha256(_canonical(result)).hexdigest()[:20]
+    return result
+
+
 def validate_plan_path_contract(
     plan: Mapping[str, Any],
     repository_revision: str,
@@ -119,11 +138,23 @@ def validate_plan_path_contract(
         has_unsupported = "UNSUPPORTED" in states
         all_match = bool(states) and all(state == "MATCH" for state in states)
         conjunction_failed = bool(states) and not has_unsupported and not all_match
+        postcondition_results = item.get("postconditionResults")
+        postcondition_states = [
+            result.get("result") for result in postcondition_results
+            if isinstance(result, Mapping)
+        ] if isinstance(postcondition_results, Sequence) else []
+        postconditions_match = bool(postcondition_states) and all(
+            state == "MATCH" for state in postcondition_states
+        )
         if path in required and not all_match:
             raise PlanningEvidenceError(f"required-change path {path!r} does not satisfy its planning predicates")
-        if path in no_change and not conjunction_failed:
-            raise PlanningEvidenceError(f"no-change path {path!r} still satisfies a required-change predicate")
-        if path in unsupported and not has_unsupported:
+        if path in no_change and (not conjunction_failed or not postconditions_match):
+            raise PlanningEvidenceError(
+                f"no-change path {path!r} lacks satisfied planning-time postconditions"
+            )
+        if path in unsupported and not (
+            has_unsupported or (conjunction_failed and not postconditions_match)
+        ):
             raise PlanningEvidenceError(f"unsupported path {path!r} lacks unsupported evidence")
 
 
@@ -131,6 +162,9 @@ def reconcile_dispositions(
     *, plan_id: str, repository_revision: str, original_required_paths: Sequence[str],
     targets: Sequence[Mapping[str, Any]], dispositions: Sequence[Mapping[str, Any]],
     postconditions_by_path: Mapping[str, Sequence[Mapping[str, Any]]], evaluator_ref: Mapping[str, str],
+    proposed_contents_by_path: Mapping[str, str] | None = None,
+    deleted_paths: Sequence[str] = (),
+    required_insertions_by_path: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Create immutable reconciliation evidence from freshly verified targets."""
     target_map = {item.get("path"): item for item in targets}
@@ -144,6 +178,9 @@ def reconcile_dispositions(
     disposition_map = {item.get("path"): item for item in dispositions}
     if len(disposition_map) != len(dispositions) or set(disposition_map) != set(target_map):
         raise PlanningEvidenceError("every editable target requires one terminal disposition")
+    deleted = set(deleted_paths)
+    if len(deleted) != len(deleted_paths) or not deleted.issubset(original_paths):
+        raise PlanningEvidenceError("deleted paths must be unique original required paths")
     effective, no_change, records = [], [], []
     for path in sorted(target_map, key=lambda value: (str(value).casefold(), str(value))):
         target, disposition = target_map[path], disposition_map[path]
@@ -155,18 +192,64 @@ def reconcile_dispositions(
             raise PlanningEvidenceError(f"editable target {path!r} has stale content evidence")
         state = disposition.get("disposition")
         proof = None
+        insertion_proof: list[dict[str, Any]] = []
         if state == "CHANGE":
+            proposed = (proposed_contents_by_path or {}).get(path)
+            if path in deleted:
+                postconditions = postconditions_by_path.get(path, ())
+                if not postconditions or any(
+                    item.get("kind") != "TEXT_ABSENT"
+                    for item in postconditions
+                ):
+                    raise PlanningEvidenceError(
+                        f"DELETE for {path!r} requires TEXT_ABSENT postconditions"
+                    )
+                proof = {
+                    "path": path,
+                    "repositoryRevision": repository_revision,
+                    "sourceProvenance": {"sourceId": "generated-delete"},
+                    "postState": "ABSENT",
+                    "predicateResults": [
+                        {"predicate": dict(item), "result": "MATCH",
+                         "selectedEvidence": {"kind": "PATH_ABSENCE"}}
+                        for item in postconditions
+                    ],
+                }
+            elif not isinstance(proposed, str):
+                raise PlanningEvidenceError(
+                    f"CHANGE for {path!r} lacks proposed content evidence"
+                )
+            else:
+                proof = evaluate_path_predicates(
+                    path=path, content=proposed, repository_revision=repository_revision,
+                    predicates=postconditions_by_path.get(path, ()),
+                    source_id="generated-change",
+                )
+            if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
+                raise PlanningEvidenceError(
+                    f"CHANGE for {path!r} has an unsatisfied or unsupported postcondition"
+                )
             effective.append(path)
         elif state == "NO_CHANGE":
             proof = evaluate_path_predicates(path=path, content=content, repository_revision=repository_revision,
                 predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")))
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
+            for value in (required_insertions_by_path or {}).get(path, ()):
+                matched = isinstance(value, str) and bool(value) and value in content
+                insertion_proof.append({"value": value, "result": "MATCH" if matched else "NO_MATCH"})
+            if any(item["result"] != "MATCH" for item in insertion_proof):
+                raise PlanningEvidenceError(
+                    f"NO_CHANGE for {path!r} lacks a required insertion"
+                )
             no_change.append(path)
         else:
             raise PlanningEvidenceError(f"disposition for {path!r} must be CHANGE or NO_CHANGE")
+        output = None if path in deleted else (proposed_contents_by_path or {}).get(path, content)
         records.append({"path": path, "disposition": state, "targetSha256": digest,
-            "postconditionProof": proof})
+            "outputSha256": None if output is None else sha256(output.encode()).hexdigest(),
+            "postState": "ABSENT" if path in deleted else "PRESENT",
+            "postconditionProof": proof, "requiredInsertionProof": insertion_proof})
     record = {"planArtifactId": plan_id, "repositoryRevision": repository_revision,
         "originalRequiredPaths": sorted(original_required_paths), "effectiveRequiredPaths": effective,
         "verifiedNoChangePaths": no_change, "pathDispositions": records,
@@ -176,7 +259,15 @@ def reconcile_dispositions(
 
 
 def _canonical(value: Mapping[str, Any]) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(_plain(value), sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [_plain(item) for item in value]
+    return value
 
 
 def _paths(value: Any, field: str, required: bool = False) -> tuple[str, ...]:

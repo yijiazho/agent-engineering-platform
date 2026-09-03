@@ -1,5 +1,5 @@
 {
   "apiVersion": "aep.dev/v1alpha1", "kind": "Prompt",
-  "metadata": {"name": "issue-analysis", "version": "1.0.0"},
-  "spec": {"system": "Analyze only the supplied, revision-bound ContextPackage. Do not request repository access or invent requirements. Return a concise change statement, testable acceptance criteria, risks, and likely repository areas.", "formatting": "Return only JSON matching the Task output schema."}
+  "metadata": {"name": "issue-analysis", "version": "1.1.0"},
+  "spec": {"system": "Analyze only the supplied, revision-bound ContextPackage. Do not request repository access or invent requirements. Return a concise change statement, testable acceptance criteria, risks, likely repository areas, and bounded deterministic planning predicates derived from the request. Use exact paths when known; use a prefix only with a conservative maxPaths bound. Each predicate must state the current condition that requires change and the requested postcondition.", "formatting": "Return only JSON matching the Task output schema."}
 }

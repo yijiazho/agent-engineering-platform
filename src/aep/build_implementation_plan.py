@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from aep.analyze_issue import AnalyzeIssueContractError, AnalyzeIssueTaskHandler
+from aep.planning_evidence import PlanningEvidenceError, validate_plan_path_contract
 
 
 class BuildImplementationPlanContractError(AnalyzeIssueContractError):
@@ -22,6 +23,76 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
     artifact_type = "IMPLEMENTATION_PLAN"
     artifact_actor = "build-implementation-plan-task-handler"
     runtime_id_namespace = "build-implementation-plan"
+
+    def _authoritative_output(
+        self, output: Any, task_execution: Mapping[str, Any], workflow: Mapping[str, Any],
+        context_package: Mapping[str, Any],
+    ) -> Any:
+        if not isinstance(output, Mapping):
+            return output
+        intended = output.get("intendedFiles")
+        if isinstance(intended, (str, bytes)) or not isinstance(intended, Sequence):
+            return output
+        evidence = {
+            item.get("content", {}).get("path"): item.get("content")
+            for item in context_package.get("elements", ())
+            if isinstance(item, Mapping) and item.get("type") == "planning-evidence"
+            and isinstance(item.get("content"), Mapping)
+        }
+        selection = context_package.get("selection", {})
+        required_context = selection.get("requiredContext", ()) if isinstance(selection, Mapping) else ()
+        evidence_required = "planning-evidence" in required_context
+        if not evidence and evidence_required:
+            raise BuildImplementationPlanContractError(
+                "authoritative plan requires trusted planning evidence"
+            )
+        if not evidence:
+            return output
+        proposed = sorted({str(path) for path in intended})
+        missing = [path for path in proposed if path not in evidence]
+        if missing:
+            raise BuildImplementationPlanContractError(
+                f"planned paths lack trusted planning evidence: {missing!r}"
+            )
+        # The model may propose a useful subset, but it cannot omit an exact
+        # bounded target whose Task-declared predicate was evaluated. The
+        # trusted evidence set is the authoritative authorization universe.
+        authorized = sorted(evidence)
+        required, no_change, unsupported = [], [], []
+        selected = []
+        for path in authorized:
+            record = evidence[path]
+            states = [item.get("result") for item in record.get("predicateResults", ())]
+            if "UNSUPPORTED" in states:
+                unsupported.append(path)
+            elif states and all(state == "MATCH" for state in states):
+                required.append(path)
+            elif all(
+                item.get("result") == "MATCH"
+                for item in record.get("postconditionResults", ())
+            ) and record.get("postconditionResults"):
+                no_change.append(path)
+            else:
+                unsupported.append(path)
+            selected.append(record)
+        canonical = dict(output)
+        canonical.update({
+            "authorizedPaths": authorized,
+            "requiredChangePaths": required,
+            "verifiedNoChangePaths": no_change,
+            "unsupportedPaths": unsupported,
+            "pathEvidence": selected,
+            # Backward-compatible aliases consumed by the current patch boundary.
+            "intendedFiles": authorized,
+            "noChangeFiles": no_change,
+        })
+        try:
+            validate_plan_path_contract(canonical, str(workflow["repositoryRevision"]),
+                trusted_path_evidence=selected)
+        except PlanningEvidenceError as error:
+            raise BuildImplementationPlanContractError(str(error)) from error
+        canonical["pathEvidence"] = [item["selectionId"] for item in selected]
+        return canonical
 
     def _run_schema_evaluation(self, *, content: Any, **kwargs: Any):
         self._validate_acceptance_criteria_accounting(
