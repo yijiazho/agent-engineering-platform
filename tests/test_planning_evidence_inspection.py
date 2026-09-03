@@ -149,3 +149,18 @@ def test_checkout_reader_uses_pinned_blob_not_changed_worktree(tmp_path: Path) -
     )
 
     assert inspected.content == "original"
+
+
+def test_absence_probe_distinguishes_ignored_regular_blob(tmp_path: Path) -> None:
+    target = tmp_path / "generated" / "task.md"
+    target.parent.mkdir()
+    target.write_text("tracked but inventory-ignored", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+    reader = _pinned_workspace_reader(tmp_path, revision)
+
+    assert reader.verify_absent("generated/task.md", revision) is False
+    inspected = reader.inspect(
+        "generated/task.md", revision, max_bytes=100,
+        strategy="COMPLETE_BLOB_SCAN", status_scan_bytes=50,
+    )
+    assert inspected.content == "tracked but inventory-ignored"

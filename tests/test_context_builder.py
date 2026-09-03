@@ -161,7 +161,7 @@ class InspectionReader:
         )
 
     def verify_absent(self, path, revision):
-        return None
+        return True
 
 
 def test_planning_evidence_materializes_bounded_revision_bound_records() -> None:
@@ -322,6 +322,33 @@ def test_planning_evidence_authorizes_an_exact_absent_creation_target() -> None:
     assert evidence["preimageSha256"] == sha256(b"").hexdigest()
     assert evidence["sourceProvenance"]["sourceId"].startswith("absent:")
     assert evidence["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_planning_evidence_inspects_regular_exact_target_omitted_from_inventory() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "generated/task.md",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "tracked"},
+        "postcondition": {"kind": "TEXT_ABSENT", "value": "tracked"},
+        "selectionReason": "exact ignored target",
+    }]
+    reader = InspectionReader(lambda *_: "tracked")
+    reader.verify_absent = lambda *_: False
+
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=reader,
+    ).build(
+        task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(),
+        created_at=CREATED_AT,
+    )
+
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert evidence["predicateResults"][0]["result"] == "MATCH"
+    assert evidence["preimageSha256"] == sha256(b"tracked").hexdigest()
 
 
 def test_planning_evidence_records_but_does_not_enforce_declared_byte_hint() -> None:

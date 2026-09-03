@@ -741,15 +741,19 @@ def _pinned_workspace_reader(
                 inspected_bytes=inspected, status_fields=tuple(status_fields),
             )
 
-        def verify_absent(self, path: str, revision: str) -> None:
+        def verify_absent(self, path: str, revision: str) -> bool:
             from aep.planning_evidence import PlanningEvidenceInspectionError
             if revision != expected_revision:
                 raise PlanningEvidenceInspectionError(
                     "REVISION_MISMATCH", path=path)
             entry = self._entry(path, revision)
-            if entry is not None:
+            if entry is None:
+                return True
+            mode, object_type = entry
+            if object_type != "blob" or mode not in {"100644", "100755"}:
                 raise PlanningEvidenceInspectionError(
                     "NON_REGULAR_FILE", path=path)
+            return False
 
         @staticmethod
         def _entry(path: str, revision: str) -> tuple[str, str] | None:

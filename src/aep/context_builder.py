@@ -39,7 +39,7 @@ class RepositoryPlanningEvidenceReader(Protocol):
     def inspect(self, path: str, revision: str, *, max_bytes: int,
                 strategy: str, status_scan_bytes: int) -> Any: ...
 
-    def verify_absent(self, path: str, revision: str) -> None: ...
+    def verify_absent(self, path: str, revision: str) -> bool: ...
 
 SUPPORTED_CONTEXT: Final = frozenset(
     {
@@ -419,11 +419,16 @@ class ContextBuilder:
                     raise failure
                 try:
                     if path in absent_exact_paths:
-                        self._repository_file_reader.verify_absent(
+                        confirmed_absent = self._repository_file_reader.verify_absent(
                             path, repository_revision
                         )
+                    else:
+                        confirmed_absent = False
+                    if confirmed_absent:
                         content = ""
-                        blob_size, blob_digest, inspected_bytes, status_fields = 0, sha256(b"").hexdigest(), 0, ()
+                        blob_size, blob_digest, inspected_bytes, status_fields = (
+                            0, sha256(b"").hexdigest(), 0, ()
+                        )
                     else:
                         inspected = self._repository_file_reader.inspect(
                             path, repository_revision, max_bytes=applied_ceiling,

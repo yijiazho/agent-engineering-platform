@@ -718,4 +718,6 @@ Agents receive immutable evidence and never query the repository provider.
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the
 same tree and classifies symlinks or other non-regular Git entries instead of
-manufacturing empty-preimage evidence for them.
+manufacturing empty-preimage evidence for them. The probe distinguishes absent,
+regular, and non-regular entries: regular exact targets omitted by inventory
+filters are inspected from Git normally.
