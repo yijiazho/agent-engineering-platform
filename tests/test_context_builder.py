@@ -120,6 +120,12 @@ def task(name: str, required_context: list[str]) -> dict:
                 "version": "1.0.0",
             }
         ]
+    if "planning-evidence" in required_context:
+        resource["spec"]["planningEvidenceInspection"] = {
+            "maxFileBytes": 256 * 1024,
+            "maxTotalBytes": 1024 * 1024,
+            "statusFieldScanBytes": 64 * 1024,
+        }
     if "policies" in required_context:
         resource["spec"]["policies"] = [
             {

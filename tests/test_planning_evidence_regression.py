@@ -82,6 +82,10 @@ def test_issue_78_regression_uses_exact_status_evidence_not_relevance(tmp_path: 
             "outputs": {"type": "object"},
             "requiredContext": ["candidate-files", "planning-evidence"],
             "inputContextTokenBudget": 32000,
+            "planningEvidenceInspection": {
+                "maxFileBytes": 262144, "maxTotalBytes": 1048576,
+                "statusFieldScanBytes": 65536,
+            },
             "planningPredicates": declarations,
         },
     }

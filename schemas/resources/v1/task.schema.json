@@ -17,6 +17,15 @@
         {
           "if": { "required": ["agentRef"] },
           "then": { "required": ["inputContextTokenBudget"] }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "properties": { "requiredContext": { "contains": { "const": "planning-evidence" } } }, "required": ["requiredContext"] },
+              { "properties": { "optionalContext": { "contains": { "const": "planning-evidence" } } }, "required": ["optionalContext"] }
+            ]
+          },
+          "then": { "required": ["planningEvidenceInspection"] }
         }
       ],
       "properties": {

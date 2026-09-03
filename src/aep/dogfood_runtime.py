@@ -718,7 +718,10 @@ def _pinned_workspace_reader(
             raw = bytes(data) if data is not None else b""
             status_fields: list[tuple[str, int]] = []
             if data is None:
-                prefix_text = bytes(status_prefix).decode("utf-8", errors="ignore")
+                prefix = bytes(status_prefix)
+                if size > len(prefix) and not prefix.endswith((b"\n", b"\r")):
+                    prefix = prefix.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in prefix else b""
+                prefix_text = prefix.decode("utf-8")
                 status_fields = [
                     (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)
                     for match in re.finditer(

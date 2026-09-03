@@ -384,10 +384,18 @@ class ContextBuilder:
                         declared_max_bytes = hint if declared_max_bytes is None else min(declared_max_bytes, hint)
                 if not predicates:
                     continue
-                inspection = task_spec.get("planningEvidenceInspection", {})
-                trusted_ceiling = int(inspection.get("maxFileBytes", DEFAULT_PLANNING_FILE_CEILING))
-                total_ceiling = int(inspection.get("maxTotalBytes", DEFAULT_PLANNING_TOTAL_CEILING))
-                status_ceiling = int(inspection.get("statusFieldScanBytes", DEFAULT_STATUS_SCAN_CEILING))
+                inspection = task_spec.get("planningEvidenceInspection")
+                if not isinstance(inspection, Mapping) or not all(
+                    key in inspection for key in (
+                        "maxFileBytes", "maxTotalBytes", "statusFieldScanBytes"
+                    )
+                ):
+                    raise RequiredContextError(
+                        "planning-evidence requires explicit Task inspection limits"
+                    )
+                trusted_ceiling = int(inspection["maxFileBytes"])
+                total_ceiling = int(inspection["maxTotalBytes"])
+                status_ceiling = int(inspection["statusFieldScanBytes"])
                 kinds = {str(item.get("kind")) for item in (*predicates, *postconditions)}
                 strategy = "STRUCTURED_STATUS_FIELD_SCAN" if kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
                 applied_ceiling = trusted_ceiling
