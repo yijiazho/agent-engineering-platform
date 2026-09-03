@@ -11,7 +11,7 @@ from math import ceil
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any, Callable, Final
+from typing import Any, Final, Protocol
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
@@ -33,6 +33,11 @@ from aep.runtime_store import RuntimeObjectStore
 
 
 JsonMapping = Mapping[str, Any]
+
+
+class RepositoryPlanningEvidenceReader(Protocol):
+    def inspect(self, path: str, revision: str, *, max_bytes: int,
+                strategy: str, status_scan_bytes: int) -> Any: ...
 
 SUPPORTED_CONTEXT: Final = frozenset(
     {
@@ -95,7 +100,7 @@ class ContextBuilder:
         artifact_store: GeneratedArtifactStore,
         runtime_store: RuntimeObjectStore | None = None,
         lifecycle_logger: StructuredLifecycleLogger | None = None,
-        repository_file_reader: Callable[[str, str, int], str] | None = None,
+        repository_file_reader: RepositoryPlanningEvidenceReader | None = None,
     ) -> None:
         if not isinstance(repository_knowledge, RepositoryKnowledgeProvider):
             raise TypeError("repository_knowledge must implement RepositoryKnowledgeProvider")
@@ -105,8 +110,10 @@ class ContextBuilder:
         self._artifact_store = artifact_store
         self._runtime_store = runtime_store
         self._lifecycle_logger = lifecycle_logger
-        if repository_file_reader is not None and not callable(repository_file_reader):
-            raise TypeError("repository_file_reader must be callable")
+        if repository_file_reader is not None and not callable(
+            getattr(repository_file_reader, "inspect", None)
+        ):
+            raise TypeError("repository_file_reader must implement inspect")
         self._repository_file_reader = repository_file_reader
 
     def build(
@@ -386,14 +393,23 @@ class ContextBuilder:
                 )
                 applied_ceiling = min(applied_ceiling, total_ceiling - inspected_so_far)
                 if applied_ceiling <= 0:
-                    raise RequiredContextError(
+                    failure = RequiredContextError(
                         f"planning-evidence target {path!r} failed closed: AGGREGATE_SIZE_LIMIT_EXCEEDED"
                     )
+                    failure.metadata = {
+                        "reason": "AGGREGATE_SIZE_LIMIT_EXCEEDED", "path": path,
+                        "declaredMaxBytesHint": declared_max_bytes,
+                        "blobSize": None, "appliedTrustedCeiling": total_ceiling,
+                        "predicateType": "+".join(sorted(kinds)),
+                        "inspectionStrategy": strategy,
+                        "evaluationComplete": False,
+                    }
+                    raise failure
                 try:
                     if path in absent_exact_paths:
                         content = ""
                         blob_size, blob_digest, inspected_bytes, status_fields = 0, sha256(b"").hexdigest(), 0, ()
-                    elif hasattr(self._repository_file_reader, "inspect"):
+                    else:
                         inspected = self._repository_file_reader.inspect(
                             path, repository_revision, max_bytes=applied_ceiling,
                             strategy=strategy, status_scan_bytes=status_ceiling,
@@ -401,11 +417,6 @@ class ContextBuilder:
                         content = inspected.content
                         blob_size, blob_digest = inspected.blob_size, inspected.blob_sha256
                         inspected_bytes, status_fields = inspected.inspected_bytes, inspected.status_fields
-                    else:
-                        content = self._repository_file_reader(path, repository_revision, applied_ceiling)
-                        blob_size = len(content.encode("utf-8"))
-                        blob_digest = sha256(content.encode("utf-8")).hexdigest()
-                        inspected_bytes, status_fields = blob_size, None
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
                         source_id=source_id, max_bytes=applied_ceiling,

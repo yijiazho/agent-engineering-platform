@@ -701,8 +701,16 @@ allocation. `STATUS_EQUALS` uses structured-field evidence; text predicates
 require a proven-complete scan, so an incomplete prefix cannot prove absence or
 emit `NO_MATCH`. Evidence binds revision, path, complete size, and SHA-256 while
 serializing no source text. Inspected source bytes do not count as model tokens;
-only serialized body-free evidence does. Multiple predicates use conjunction:
-all preconditions must match for a required change. Planning-time no-change is
+only serialized body-free evidence does.
+
+Every repository reader used for planning evidence implements the typed
+inspection interface; legacy whole-file callables are rejected. Structured
+status matching stops at the cumulative `statusFieldScanBytes` offset while the
+reader continues streaming only to validate UTF-8 and compute complete blob
+identity. Complete scans recheck their ceiling before every buffer extension,
+and aggregate-limit failures carry the same safe structured metadata as reader
+failures. Multiple predicates use conjunction: all preconditions must match for
+a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.

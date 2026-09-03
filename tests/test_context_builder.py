@@ -13,6 +13,7 @@ from aep.context_builder import (
 )
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.observability import StructuredLifecycleLogger
+from aep.planning_evidence import PlanningEvidenceInspection
 from aep.repository_knowledge import (
     CandidateFileQuery,
     DependencyManifest,
@@ -130,6 +131,30 @@ def task(name: str, required_context: list[str]) -> dict:
     return resource
 
 
+class InspectionReader:
+    def __init__(self, callback):
+        self._callback = callback
+
+    def inspect(self, path, revision, *, max_bytes, strategy, status_scan_bytes):
+        content = self._callback(path, revision, max_bytes)
+        encoded = content.encode("utf-8")
+        fields = []
+        offset = 0
+        if strategy == "STRUCTURED_STATUS_FIELD_SCAN":
+            for line_number, line in enumerate(content.splitlines(keepends=True), 1):
+                offset += len(line.encode("utf-8"))
+                if offset > status_scan_bytes:
+                    break
+                if line.startswith("**Status:**"):
+                    fields.append((line.removeprefix("**Status:**").strip(), line_number))
+            content = ""
+        return PlanningEvidenceInspection(
+            content=content, blob_size=len(encoded),
+            blob_sha256=sha256(encoded).hexdigest(), inspected_bytes=len(encoded),
+            status_fields=tuple(fields),
+        )
+
+
 def test_planning_evidence_materializes_bounded_revision_bound_records() -> None:
     task_resource = task("plan", ["candidate-files", "planning-evidence"])
     task_resource["spec"]["objective"] = "Update README status after manual testing."
@@ -149,7 +174,7 @@ def test_planning_evidence_materializes_bounded_revision_bound_records() -> None
     package = ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=read,
+        repository_file_reader=InspectionReader(read),
     ).build(task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
 
@@ -176,12 +201,55 @@ def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None
     }]
     builder = ContextBuilder(repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda *_: (_ for _ in ()).throw(OSError("secret body")))
+        repository_file_reader=InspectionReader(
+            lambda *_: (_ for _ in ()).throw(OSError("secret body"))))
     with pytest.raises(RequiredContextError) as captured:
         builder.build(task=task_resource, task_execution=task_execution(task_resource),
             workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
     assert "OSERROR" in str(captured.value)
     assert "secret body" not in str(captured.value)
+
+
+def test_planning_evidence_requires_typed_inspection_reader() -> None:
+    with pytest.raises(TypeError, match="must implement inspect"):
+        ContextBuilder(
+            repository_knowledge=knowledge_provider(),
+            artifact_store=InMemoryGeneratedArtifactStore(),
+            repository_file_reader=lambda *_: "content",
+        )
+
+
+def test_aggregate_limit_failure_carries_safe_inspection_metadata() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningEvidenceInspection"] = {
+        "maxFileBytes": 100, "maxTotalBytes": 4, "statusFieldScanBytes": 50,
+    }
+    task_resource["spec"]["planningPredicates"] = [
+        {"path": path, "maxBytes": 2,
+         "predicate": {"kind": "TEXT_PRESENT", "value": "x"},
+         "postcondition": {"kind": "TEXT_ABSENT", "value": "x"},
+         "selectionReason": "aggregate test"}
+        for path in ("pyproject.toml", "README.md")
+    ]
+    builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(lambda *_: "xxxx"),
+    )
+
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    assert captured.value.metadata == {
+        "reason": "AGGREGATE_SIZE_LIMIT_EXCEEDED", "path": "README.md",
+        "declaredMaxBytesHint": 2, "blobSize": None,
+        "appliedTrustedCeiling": 4, "predicateType": "TEXT_ABSENT+TEXT_PRESENT",
+        "inspectionStrategy": "COMPLETE_BLOB_SCAN", "evaluationComplete": False,
+    }
 
 
 def test_planning_evidence_prefix_fails_when_complete_scope_exceeds_bound() -> None:
@@ -209,7 +277,7 @@ def test_planning_evidence_prefix_fails_when_complete_scope_exceeds_bound() -> N
         ContextBuilder(
             repository_knowledge=provider,
             artifact_store=InMemoryGeneratedArtifactStore(),
-            repository_file_reader=lambda *_: "Status",
+            repository_file_reader=InspectionReader(lambda *_: "Status"),
         ).build(
             task=task_resource, task_execution=task_execution(task_resource),
             workflow_execution=workflow_execution(), event=event(),
@@ -230,7 +298,8 @@ def test_planning_evidence_authorizes_an_exact_absent_creation_target() -> None:
     package = ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda *args: reads.append(args) or "unexpected",
+        repository_file_reader=InspectionReader(
+            lambda *args: reads.append(args) or "unexpected"),
     ).build(
         task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(),
@@ -260,7 +329,8 @@ def test_planning_evidence_records_but_does_not_enforce_declared_byte_hint() -> 
     ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda _path, _revision, limit: limits.append(limit) or content,
+        repository_file_reader=InspectionReader(
+            lambda _path, _revision, limit: limits.append(limit) or content),
     ).build(
         task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(),
@@ -286,7 +356,8 @@ def test_planning_evidence_uses_trusted_task_ceilings_not_model_hint() -> None:
     package = ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda _path, _revision, limit: limits.append(limit) or content,
+        repository_file_reader=InspectionReader(
+            lambda _path, _revision, limit: limits.append(limit) or content),
     ).build(task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
     evidence = next(item["content"] for item in package["elements"]

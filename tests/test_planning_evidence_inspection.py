@@ -43,6 +43,22 @@ def test_status_scanner_streams_large_blob_without_materializing_body(tmp_path: 
     assert inspected.status_fields == (("In Progress", 1),)
 
 
+def test_status_scanner_stops_matching_at_cumulative_search_bound(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(
+        "**Status:** In Progress\n" + "short line\n" * 20
+        + "**Status:** Completed\n", encoding="utf-8",
+    )
+
+    inspected = _pinned_workspace_reader(tmp_path, REVISION).inspect(
+        "task.md", REVISION, max_bytes=10_000,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=64,
+    )
+
+    assert inspected.inspected_bytes == target.stat().st_size
+    assert inspected.status_fields == (("In Progress", 1),)
+
+
 @pytest.mark.parametrize(
     ("setup", "reason"),
     [

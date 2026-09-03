@@ -5,6 +5,7 @@ from pathlib import Path
 
 from aep.build_implementation_plan import BuildImplementationPlanTaskHandler
 from aep.context_builder import ContextBuilder
+from aep.dogfood_runtime import _pinned_workspace_reader
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
@@ -77,7 +78,7 @@ def test_issue_78_regression_uses_exact_status_evidence_not_relevance() -> None:
     package = ContextBuilder(
         repository_knowledge=provider,
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda path, revision, limit: _read(path, revision, limit),
+        repository_file_reader=_pinned_workspace_reader(FIXTURE, REVISION),
     ).build(
         task=task, task_execution=execution, workflow_execution=workflow,
         event=issue, created_at=CREATED_AT,

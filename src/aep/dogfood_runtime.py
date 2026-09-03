@@ -625,7 +625,7 @@ def _reconciliation_revision(
 
 def _pinned_workspace_reader(
     workspace: Path, expected_revision: str
-) -> Callable[[str, str, int], str]:
+) -> Any:
     root = workspace.resolve()
 
     class PinnedWorkspaceReader:
@@ -670,6 +670,10 @@ def _pinned_workspace_reader(
             with target.open("rb") as stream:
                 for line_number, line in enumerate(stream, 1):
                     inspected += len(line)
+                    if inspected > max_bytes:
+                        raise PlanningEvidenceInspectionError(
+                            "SIZE_LIMIT_EXCEEDED", path=path, blob_size=inspected,
+                            applied_ceiling=max_bytes, strategy=strategy)
                     digest.update(line)
                     if b"\x00" in line:
                         raise PlanningEvidenceInspectionError(
@@ -678,20 +682,16 @@ def _pinned_workspace_reader(
                     if data is not None:
                         data.extend(line)
                         continue
-                    if len(line) > status_scan_bytes:
-                        raise PlanningEvidenceInspectionError(
-                            "STATUS_FIELD_SCAN_LIMIT_EXCEEDED", path=path,
-                            blob_size=size, applied_ceiling=status_scan_bytes,
-                            strategy=strategy)
                     try:
                         decoded_line = line.decode("utf-8")
                     except UnicodeDecodeError as error:
                         raise PlanningEvidenceInspectionError(
                             "INVALID_UTF8", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy) from error
-                    match = _STATUS_LINE.fullmatch(decoded_line.rstrip("\r\n"))
-                    if match:
-                        status_fields.append((match.group("value"), line_number))
+                    if inspected <= status_scan_bytes:
+                        match = _STATUS_LINE.fullmatch(decoded_line.rstrip("\r\n"))
+                        if match:
+                            status_fields.append((match.group("value"), line_number))
             final_stat = target.stat()
             if (inspected != size or final_stat.st_size != initial_stat.st_size
                     or final_stat.st_mtime_ns != initial_stat.st_mtime_ns):
