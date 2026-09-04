@@ -219,6 +219,31 @@ def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None
     assert "secret body" not in str(captured.value)
 
 
+def test_planning_evidence_preserves_completed_status_scan_metadata() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md",
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "Declared transition",
+    }]
+    builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(lambda *_: "# No status field\n"),
+    )
+
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    assert captured.value.metadata["reason"] == "STATUS_FIELD_MISSING"
+    assert captured.value.metadata["evaluationComplete"] is True
+
+
 def test_planning_evidence_requires_typed_inspection_reader() -> None:
     with pytest.raises(TypeError, match="inspect and verify_absent"):
         ContextBuilder(

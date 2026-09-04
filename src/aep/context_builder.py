@@ -468,7 +468,9 @@ class ContextBuilder:
                         "appliedTrustedCeiling": applied_ceiling,
                         "predicateType": "+".join(sorted(kinds)),
                         "inspectionStrategy": strategy,
-                        "evaluationComplete": False,
+                        "evaluationComplete": getattr(error, "metadata", {}).get(
+                            "evaluationComplete", False
+                        ),
                     }
                     raise failure from error
                 record = finalize_planning_evidence(

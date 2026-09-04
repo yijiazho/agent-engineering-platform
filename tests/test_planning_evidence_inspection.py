@@ -112,6 +112,8 @@ def test_checkout_reader_rejects_revision_and_unsafe_path(tmp_path: Path) -> Non
         reader("target", "0" * 40, 100)
     with pytest.raises(PlanningEvidenceInspectionError, match="UNSAFE_PATH"):
         reader("../target", revision, 100)
+    with pytest.raises(PlanningEvidenceInspectionError, match="UNSAFE_PATH"):
+        reader.verify_absent("../target", revision)
 
 
 def test_checkout_reader_rejects_non_regular_git_entry(tmp_path: Path) -> None:
