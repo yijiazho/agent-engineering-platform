@@ -135,27 +135,53 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             for item in plan.get("requiredInsertions", ())
             if isinstance(item, Mapping)
         }
+        bound_by_criterion: dict[str, list[tuple[Any, Any]]] = {}
         for item in classifications:
             disposition = item.get("classification")
             criterion = item.get("criterion")
+            plural = item.get("requiredInsertions")
+            if plural is None and item.get("requiredInsertion") is not None:
+                plural = [item["requiredInsertion"]]
+            if plural is None:
+                plural = []
+            if not isinstance(plural, Sequence) or isinstance(plural, (str, bytes)):
+                raise BuildImplementationPlanContractError(
+                    "required-insertion bindings must be an array"
+                )
+            bindings = []
+            for binding in plural:
+                if not isinstance(binding, Mapping):
+                    raise BuildImplementationPlanContractError(
+                        "each required-insertion classification must bind its own insertion evidence"
+                    )
+                key = (binding.get("path"), binding.get("value"))
+                if key in bindings:
+                    raise BuildImplementationPlanContractError(
+                        "required-insertion bindings must be unique"
+                    )
+                if key not in insertions:
+                    raise BuildImplementationPlanContractError(
+                        "each required-insertion classification must bind its own insertion evidence"
+                    )
+                bindings.append(key)
+            bound_by_criterion[str(criterion)] = bindings
             if disposition == "UNSUPPORTED" and criterion not in unsupported:
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"
                 )
-            if disposition == "UNSUPPORTED" and item.get("requiredInsertion") is not None:
+            if disposition == "UNSUPPORTED" and bindings:
                 raise BuildImplementationPlanContractError(
-                    "unsupported criterion classification must set requiredInsertion to null"
+                    "unsupported criterion classification must have no insertion bindings"
                 )
-            if disposition == "REQUIRED_INSERTION" and (
-                not isinstance(item.get("requiredInsertion"), Mapping)
-                or (
-                    item["requiredInsertion"].get("path"),
-                    item["requiredInsertion"].get("value"),
-                ) not in insertions
-            ):
+            if disposition == "REQUIRED_INSERTION" and not bindings:
                 raise BuildImplementationPlanContractError(
-                    "each required-insertion classification must bind its own insertion evidence"
+                    "each required-insertion classification must bind at least one insertion"
                 )
+        bound = {value for values in bound_by_criterion.values() for value in values}
+        if bound != insertions:
+            raise BuildImplementationPlanContractError(
+                "every required insertion must have deterministic criterion ownership"
+            )
 
     def _context_arguments(
         self, task_execution: Mapping[str, Any], workflow: Mapping[str, Any]

@@ -33,6 +33,53 @@ class PlanningEvidenceInspectionError(PlanningEvidenceError):
 _STATUS = re.compile(r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE)
 
 
+def _structured_status_fields(content: str) -> list[tuple[str, int]]:
+    """Return only the document's leading, structured Status field.
+
+    A later literal mention is narrative, not metadata.  The field must occur
+    before the first substantive body line (blank lines and a title are fine).
+    """
+    fields = []
+    for match in _STATUS.finditer(content):
+        prefix = content[:match.start()]
+        lines = prefix.splitlines()
+        substantive = [line for line in lines if line.strip() and not line.startswith("#")
+                       and not _STATUS.match(line)]
+        if substantive:
+            continue
+        fields.append((match.group("value"), content.count("\n", 0, match.start()) + 1))
+    return fields
+
+
+def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str]:
+    kind = region.get("kind")
+    name = region.get("name")
+    if not isinstance(kind, str) or not isinstance(name, str) or not name:
+        raise PlanningEvidenceInspectionError("REGION_SELECTOR_MALFORMED", path="", evaluation_complete=False)
+    if kind == "MARKDOWN_SECTION":
+        pattern = re.compile(rf"(?m)^(?P<heading>#+)\s+{re.escape(name)}\s*$")
+        matches = list(pattern.finditer(content))
+        if not matches:
+            raise PlanningEvidenceInspectionError("REGION_MISSING", path="", evaluation_complete=False)
+        if len(matches) != 1:
+            raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
+        match = matches[0]
+        level = len(match.group("heading"))
+        end_match = re.search(rf"(?m)^#{{1,{level}}}\s+.+$", content[match.end():])
+        end = match.end() + end_match.start() if end_match else len(content)
+        return match.start(), end, f"markdown-section:{name}:line-{content.count(chr(10), 0, match.start()) + 1}"
+    if kind == "MARKDOWN_FENCE":
+        pattern = re.compile(rf"(?ms)^```[^\n]*\b{re.escape(name)}\b[^\n]*\n.*?^```\s*$")
+        matches = list(pattern.finditer(content))
+        if not matches:
+            raise PlanningEvidenceInspectionError("REGION_MISSING", path="", evaluation_complete=False)
+        if len(matches) != 1:
+            raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
+        match = matches[0]
+        return match.start(), match.end(), f"markdown-fence:{name}:line-{content.count(chr(10), 0, match.start()) + 1}"
+    raise PlanningEvidenceInspectionError("REGION_UNSUPPORTED", path="", evaluation_complete=False)
+
+
 @dataclass(frozen=True, slots=True)
 class PlanningEvidenceInspection:
     """Immutable blob identity plus only the source needed for evaluation."""
@@ -53,6 +100,7 @@ def evaluate_path_predicates(
     status_fields: Sequence[tuple[str, int]] | None = None,
     inspected_bytes: int | None = None,
     status_scan_bytes: int | None = None,
+    region: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate bounded syntactic predicates and return body-free evidence."""
     _path(path)
@@ -68,14 +116,20 @@ def evaluate_path_predicates(
         raise PlanningEvidenceError(f"planning-evidence target {path!r} exceeds its byte limit")
     if not predicates:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} has no predicates")
+    region_identity = None
+    scoped_content = content
+    if region is not None:
+        try:
+            start, end, region_identity = _region_span(content, region)
+        except PlanningEvidenceInspectionError as error:
+            error.metadata["path"] = path
+            raise
+        scoped_content = content[start:end]
     results = []
     for predicate in predicates:
         kind, expected = predicate.get("kind"), predicate.get("value")
         if kind == "STATUS_EQUALS":
-            fields = list(status_fields) if status_fields is not None else [
-                (match.group("value"), content.count("\n", 0, match.start()) + 1)
-                for match in _STATUS.finditer(content)
-            ]
+            fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)
             if not fields:
                 raise PlanningEvidenceInspectionError(
                     "STATUS_FIELD_MISSING", path=path, blob_size=complete_size,
@@ -94,7 +148,7 @@ def evaluate_path_predicates(
         elif kind in {"TEXT_PRESENT", "TEXT_ABSENT"}:
             if not isinstance(expected, str) or not expected:
                 raise PlanningEvidenceError("text predicates require a non-empty value")
-            positions = [match.start() for match in re.finditer(re.escape(expected), content)]
+            positions = [match.start() for match in re.finditer(re.escape(expected), scoped_content)]
             actual = bool(positions)
             satisfied = actual if kind == "TEXT_PRESENT" else not actual
             selected = {"kind": "TEXT_MATCH", "occurrences": len(positions)}
@@ -121,6 +175,13 @@ def evaluate_path_predicates(
             "declaredMaxBytesHint": declared_max_bytes,
             "strategy": inspection_strategy, "evaluationComplete": True,
             "statusFieldScanBytes": status_scan_bytes,
+            "region": None if region is None else {
+                "kind": region.get("kind"), "name": region.get("name"),
+                "identity": region_identity, "matchCount": sum(
+                    int(item.get("selectedEvidence", {}).get("occurrences", 0))
+                    for item in results if isinstance(item, Mapping)
+                ), "evaluationComplete": True,
+            },
         },
     }
     record["selectionId"] = "planselection-" + sha256(

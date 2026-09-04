@@ -717,6 +717,17 @@ valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
 
+`STATUS_EQUALS` binds only the unique leading structured Status field; narrative,
+example, and historical mentions are not status evidence. Planning predicates
+may also declare a uniquely selected `MARKDOWN_SECTION` or `MARKDOWN_FENCE` by
+name. Missing, duplicate, malformed, or unsupported regions fail closed, and
+all matching and insertion evidence is evaluated only inside that region. The
+body-free record retains its region identity, match count, completeness, and
+selection identity. A single acceptance criterion binds zero, one, or many
+canonical `{path, value}` entries through `requiredInsertions`; shared entries
+are deduplicated and owned deterministically by lexical criterion order, while
+unsupported criteria bind none.
+
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the
 same tree and classifies symlinks or other non-regular Git entries instead of

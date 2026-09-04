@@ -723,13 +723,18 @@ def _pinned_workspace_reader(
                 if size > len(prefix) and not prefix.endswith((b"\n", b"\r")):
                     prefix = prefix.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in prefix else b""
                 prefix_text = prefix.decode("utf-8")
-                status_fields = [
-                    (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)
-                    for match in re.finditer(
-                        r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$",
-                        prefix_text, re.MULTILINE,
+                status_pattern = re.compile(
+                    r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE
+                )
+                status_fields = []
+                for match in status_pattern.finditer(prefix_text):
+                    before = prefix_text[:match.start()].splitlines()
+                    if any(line.strip() and not line.startswith("#") and
+                           not re.match(r"^\*\*Status:\*\*", line) for line in before):
+                        continue
+                    status_fields.append(
+                        (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)
                     )
-                ]
             try:
                 content = raw.decode("utf-8") if data is not None else ""
             except UnicodeDecodeError as error:
