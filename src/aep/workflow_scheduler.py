@@ -18,6 +18,35 @@ from aep.task_execution import InvalidTaskTransitionError
 from aep.workflow_execution import _runtime_validator
 
 
+_FAILURE_DETAIL_FIELDS = frozenset({
+    "reason", "path", "declaredMaxBytesHint", "blobSize",
+    "appliedTrustedCeiling", "predicateType", "inspectionStrategy",
+    "evaluationComplete",
+})
+
+
+def _validate_failure_details(details: Mapping[str, Any]) -> None:
+    unexpected = set(details) - _FAILURE_DETAIL_FIELDS
+    if unexpected:
+        raise ValueError("failure details contain unapproved fields")
+    for field in ("reason", "path", "predicateType", "inspectionStrategy"):
+        value = details.get(field)
+        if value is not None and (
+            not isinstance(value, str) or not value or len(value) > 4096
+        ):
+            raise ValueError(f"failure details {field} must be bounded text or null")
+    for field in ("declaredMaxBytesHint", "blobSize", "appliedTrustedCeiling"):
+        value = details.get(field)
+        if value is not None and (
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+        ):
+            raise ValueError(f"failure details {field} must be a non-negative integer or null")
+    if "evaluationComplete" in details and not isinstance(
+        details["evaluationComplete"], bool
+    ):
+        raise ValueError("failure details evaluationComplete must be boolean")
+
+
 class InvalidSchedulerInputError(ValueError):
     """Raised when scheduler inputs do not identify one valid execution plan."""
 
@@ -71,6 +100,8 @@ class TaskExecutionResult:
             raise ValueError("failed Task result requires classification and message")
         if self.details is not None and not isinstance(self.details, Mapping):
             raise ValueError("failure details must be an object")
+        if self.details is not None:
+            _validate_failure_details(self.details)
         if self.retry_not_before is not None and (
             self.failure_class is not FailureClass.RECOVERABLE
             or not is_rfc3339_timestamp(self.retry_not_before)

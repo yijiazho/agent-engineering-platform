@@ -721,3 +721,9 @@ same tree and classifies symlinks or other non-regular Git entries instead of
 manufacturing empty-preimage evidence for them. The probe distinguishes absent,
 regular, and non-regular entries: regular exact targets omitted by inventory
 filters are inspected from Git normally.
+When that probe discovers an inventory-omitted regular target, its evidence
+replaces the provisional absence identifier with revision-, path-, and
+blob-digest-bound Git provenance. Persisted TaskExecution inspection failures
+accept only the bounded diagnostic fields defined by the runtime schema;
+executor-supplied bodies or arbitrary detail keys are rejected before durable
+evidence is written.

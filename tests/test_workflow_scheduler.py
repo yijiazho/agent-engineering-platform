@@ -160,6 +160,20 @@ def test_failure_persists_safe_structured_details() -> None:
     assert result.task_executions[0]["failure"]["details"] == details
 
 
+def test_failure_rejects_unapproved_structured_details() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    executor = FakeExecutor({"analyze": [TaskExecutionResult.failure(
+        FailureClass.CONFIGURATION, "unsafe diagnostic",
+        details={"providerResponse": "secret"},
+    )]})
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    failure = result.task_executions[0]["failure"]
+    assert failure["message"] == "Task executor failed: ValueError"
+    assert "details" not in failure
+
+
 def test_reconciliation_is_idempotent_after_success() -> None:
     store, plan, execution = scheduler_inputs([node("analyze")])
     executor = FakeExecutor()

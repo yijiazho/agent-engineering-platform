@@ -437,6 +437,10 @@ class ContextBuilder:
                         content = inspected.content
                         blob_size, blob_digest = inspected.blob_size, inspected.blob_sha256
                         inspected_bytes, status_fields = inspected.inspected_bytes, inspected.status_fields
+                        if source_id.startswith("absent:"):
+                            source_id = (
+                                f"git-blob:{repository_revision}:{path}:{blob_digest}"
+                            )
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
                         source_id=source_id, max_bytes=applied_ceiling,

@@ -373,6 +373,9 @@ def test_planning_evidence_inspects_regular_exact_target_omitted_from_inventory(
     evidence = next(item["content"] for item in package["elements"]
         if item["type"] == "planning-evidence")
     assert evidence["predicateResults"][0]["result"] == "MATCH"
+    assert evidence["sourceProvenance"]["sourceId"].startswith(
+        f"git-blob:{REVISION}:generated/task.md:"
+    )
     assert evidence["preimageSha256"] == sha256(b"tracked").hexdigest()
 
 

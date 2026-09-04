@@ -94,7 +94,19 @@
           "$ref": "#/$defs/timestamp"
         },
         "details": {
-          "type": "object"
+          "type": "object",
+          "additionalProperties": false,
+          "maxProperties": 8,
+          "properties": {
+            "reason": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+            "declaredMaxBytesHint": {"type": ["integer", "null"], "minimum": 0},
+            "blobSize": {"type": ["integer", "null"], "minimum": 0},
+            "appliedTrustedCeiling": {"type": ["integer", "null"], "minimum": 0},
+            "predicateType": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096},
+            "inspectionStrategy": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096},
+            "evaluationComplete": {"type": "boolean"}
+          }
         }
       }
     },
