@@ -8,7 +8,7 @@ from functools import cache
 from hashlib import sha256
 import json
 from math import ceil
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from types import MappingProxyType
 from typing import Any, Final, Protocol
@@ -313,6 +313,26 @@ class ContextBuilder:
             for declaration in declarations:
                 if not isinstance(declaration, Mapping):
                     raise RequiredContextError("planning predicate declarations must be objects")
+                declared_path = declaration.get(
+                    "path", declaration.get("pathPrefix")
+                )
+                if not isinstance(declared_path, str) or not _planning_path_is_safe(
+                    declared_path
+                ):
+                    failure = RequiredContextError(
+                        "planning-evidence declaration failed closed: UNSAFE_PATH"
+                    )
+                    failure.metadata = {
+                        "reason": "UNSAFE_PATH",
+                        "path": _diagnostic_path(str(declared_path)),
+                        "declaredMaxBytesHint": declaration.get("maxBytes"),
+                        "blobSize": None,
+                        "appliedTrustedCeiling": None,
+                        "predicateType": None,
+                        "inspectionStrategy": None,
+                        "evaluationComplete": False,
+                    }
+                    raise failure
                 if "pathPrefix" in declaration and "maxPaths" not in declaration:
                     raise RequiredContextError(
                         "planning-evidence prefix declarations require maxPaths"
@@ -447,7 +467,9 @@ class ContextBuilder:
                         source_id=source_id, max_bytes=applied_ceiling,
                         blob_size=blob_size, blob_sha256=blob_digest,
                         declared_max_bytes=declared_max_bytes,
-                        inspection_strategy=strategy, status_fields=status_fields,
+                        inspection_strategy=strategy,
+                        status_fields=(status_fields if strategy ==
+                            "STRUCTURED_STATUS_FIELD_SCAN" else None),
                         inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling)
                     postcondition_record = evaluate_path_predicates(
                         path=path, content=content,
@@ -455,7 +477,9 @@ class ContextBuilder:
                         predicates=postconditions, source_id=source_id,
                         max_bytes=applied_ceiling, blob_size=blob_size,
                         blob_sha256=blob_digest, declared_max_bytes=declared_max_bytes,
-                        inspection_strategy=strategy, status_fields=status_fields,
+                        inspection_strategy=strategy,
+                        status_fields=(status_fields if strategy ==
+                            "STRUCTURED_STATUS_FIELD_SCAN" else None),
                         inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
                     )
                 except (OSError, UnicodeError, ValueError) as error:
@@ -841,6 +865,19 @@ def _diagnostic_path(path: str) -> str:
     if len(path) <= 4096:
         return path
     return "sha256:" + sha256(path.encode("utf-8")).hexdigest()
+
+
+def _planning_path_is_safe(path: str) -> bool:
+    converted = path.strip().replace("\\", "/")
+    if not converted or converted.startswith("/") or PureWindowsPath(path).drive:
+        return False
+    relative = PurePosixPath(converted.strip("/"))
+    return (
+        str(relative) not in ("", ".")
+        and not relative.is_absolute()
+        and ".." not in relative.parts
+        and relative.parts[0].casefold() != ".git"
+    )
 
 
 def _resource_data(resource: Resource | JsonMapping, *, expected_kind: str) -> dict[str, Any]:

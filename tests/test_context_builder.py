@@ -200,6 +200,60 @@ def test_planning_evidence_materializes_bounded_revision_bound_records() -> None
     assert package["tokenCount"] <= package["tokenBudget"]
 
 
+def test_complete_scan_derives_status_field_from_retained_content() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md",
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "ready"},
+        "selectionReason": "Mixed predicate transition",
+    }]
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(
+            lambda *_: "**Status:** In Progress\nready\n"
+        ),
+    ).build(
+        task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(),
+        created_at=CREATED_AT,
+    )
+
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert evidence["inspection"]["strategy"] == "COMPLETE_BLOB_SCAN"
+    assert evidence["predicateResults"][0]["result"] == "MATCH"
+
+
+@pytest.mark.parametrize("scope", ["path", "pathPrefix"])
+def test_planning_evidence_classifies_unsafe_path_before_lookup(scope: str) -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    declaration = {
+        scope: "../target",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "old"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "new"},
+        "selectionReason": "Unsafe declaration",
+    }
+    if scope == "pathPrefix":
+        declaration["maxPaths"] = 1
+    task_resource["spec"]["planningPredicates"] = [declaration]
+
+    with pytest.raises(RequiredContextError) as captured:
+        ContextBuilder(
+            repository_knowledge=knowledge_provider(),
+            artifact_store=InMemoryGeneratedArtifactStore(),
+            repository_file_reader=InspectionReader(lambda *_: "unexpected"),
+        ).build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    assert captured.value.metadata["reason"] == "UNSAFE_PATH"
+    assert captured.value.metadata["path"] == "../target"
+
+
 def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None:
     task_resource = task("plan", ["candidate-files", "planning-evidence"])
     task_resource["spec"]["objective"] = "Update README status."

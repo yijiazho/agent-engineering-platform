@@ -708,7 +708,9 @@ inspection interface; legacy whole-file callables are rejected. Structured
 status matching stops at the cumulative `statusFieldScanBytes` offset while the
 reader continues streaming only to validate UTF-8 and compute complete blob
 identity. Complete scans recheck their ceiling before every buffer extension,
-and aggregate-limit failures carry the same safe structured metadata as reader
+derive structured fields from their retained complete content when predicates
+are mixed, and reject unsafe exact or prefix paths before repository lookup.
+Aggregate-limit failures carry the same safe structured metadata as reader
 failures. Multiple predicates use conjunction: all preconditions must match for
 a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
