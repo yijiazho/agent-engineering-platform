@@ -13,6 +13,7 @@ from aep.context_builder import (
 )
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.observability import StructuredLifecycleLogger
+from aep.planning_evidence import PlanningEvidenceInspection
 from aep.repository_knowledge import (
     CandidateFileQuery,
     DependencyManifest,
@@ -119,6 +120,12 @@ def task(name: str, required_context: list[str]) -> dict:
                 "version": "1.0.0",
             }
         ]
+    if "planning-evidence" in required_context:
+        resource["spec"]["planningEvidenceInspection"] = {
+            "maxFileBytes": 256 * 1024,
+            "maxTotalBytes": 1024 * 1024,
+            "statusFieldScanBytes": 64 * 1024,
+        }
     if "policies" in required_context:
         resource["spec"]["policies"] = [
             {
@@ -128,6 +135,33 @@ def task(name: str, required_context: list[str]) -> dict:
             }
         ]
     return resource
+
+
+class InspectionReader:
+    def __init__(self, callback):
+        self._callback = callback
+
+    def inspect(self, path, revision, *, max_bytes, strategy, status_scan_bytes):
+        content = self._callback(path, revision, max_bytes)
+        encoded = content.encode("utf-8")
+        fields = []
+        offset = 0
+        if strategy == "STRUCTURED_STATUS_FIELD_SCAN":
+            for line_number, line in enumerate(content.splitlines(keepends=True), 1):
+                offset += len(line.encode("utf-8"))
+                if offset > status_scan_bytes:
+                    break
+                if line.startswith("**Status:**"):
+                    fields.append((line.removeprefix("**Status:**").strip(), line_number))
+            content = ""
+        return PlanningEvidenceInspection(
+            content=content, blob_size=len(encoded),
+            blob_sha256=sha256(encoded).hexdigest(), inspected_bytes=len(encoded),
+            status_fields=tuple(fields),
+        )
+
+    def verify_absent(self, path, revision):
+        return True
 
 
 def test_planning_evidence_materializes_bounded_revision_bound_records() -> None:
@@ -149,19 +183,75 @@ def test_planning_evidence_materializes_bounded_revision_bound_records() -> None
     package = ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=read,
+        repository_file_reader=InspectionReader(read),
     ).build(task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
 
     evidence = [item for item in package["elements"] if item["type"] == "planning-evidence"]
-    assert calls == [("README.md", REVISION, 1024)]
+    assert calls == [("README.md", REVISION, 256 * 1024)]
     assert len(evidence) == 1
     assert evidence[0]["content"]["predicateResults"][0]["result"] == "MATCH"
     assert [dict(item) for item in evidence[0]["content"]["postconditions"]] == [
         {"kind": "STATUS_EQUALS", "value": "Completed"}
     ]
     assert "# README" not in repr(evidence)
+    assert evidence[0]["content"]["inspection"]["declaredMaxBytesHint"] == 1024
+    assert evidence[0]["content"]["inspection"]["strategy"] == "STRUCTURED_STATUS_FIELD_SCAN"
     assert package["tokenCount"] <= package["tokenBudget"]
+
+
+def test_complete_scan_derives_status_field_from_retained_content() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md",
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "ready"},
+        "selectionReason": "Mixed predicate transition",
+    }]
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(
+            lambda *_: "**Status:** In Progress\nready\n"
+        ),
+    ).build(
+        task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(),
+        created_at=CREATED_AT,
+    )
+
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert evidence["inspection"]["strategy"] == "COMPLETE_BLOB_SCAN"
+    assert evidence["predicateResults"][0]["result"] == "MATCH"
+
+
+@pytest.mark.parametrize("scope", ["path", "pathPrefix"])
+def test_planning_evidence_classifies_unsafe_path_before_lookup(scope: str) -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    declaration = {
+        scope: "../target",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "old"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "new"},
+        "selectionReason": "Unsafe declaration",
+    }
+    if scope == "pathPrefix":
+        declaration["maxPaths"] = 1
+    task_resource["spec"]["planningPredicates"] = [declaration]
+
+    with pytest.raises(RequiredContextError) as captured:
+        ContextBuilder(
+            repository_knowledge=knowledge_provider(),
+            artifact_store=InMemoryGeneratedArtifactStore(),
+            repository_file_reader=InspectionReader(lambda *_: "unexpected"),
+        ).build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    assert captured.value.metadata["reason"] == "UNSAFE_PATH"
+    assert captured.value.metadata["path"] == "../target"
 
 
 def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None:
@@ -174,12 +264,107 @@ def test_planning_evidence_reader_failure_is_redacted_and_fails_closed() -> None
     }]
     builder = ContextBuilder(repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda *_: (_ for _ in ()).throw(OSError("secret body")))
+        repository_file_reader=InspectionReader(
+            lambda *_: (_ for _ in ()).throw(OSError("secret body"))))
     with pytest.raises(RequiredContextError) as captured:
         builder.build(task=task_resource, task_execution=task_execution(task_resource),
             workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
-    assert "OSError" in str(captured.value)
+    assert "OSERROR" in str(captured.value)
     assert "secret body" not in str(captured.value)
+
+
+def test_planning_evidence_preserves_completed_status_scan_metadata() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md",
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "Declared transition",
+    }]
+    builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(lambda *_: "# No status field\n"),
+    )
+
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    assert captured.value.metadata["reason"] == "STATUS_FIELD_MISSING"
+    assert captured.value.metadata["evaluationComplete"] is True
+
+
+def test_planning_evidence_bounds_persisted_diagnostic_path() -> None:
+    long_path = "x" * 4097
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": long_path,
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "Declared transition",
+    }]
+    builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(lambda *_: "unexpected"),
+    )
+
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    diagnostic_path = captured.value.metadata["path"]
+    assert diagnostic_path == "sha256:" + sha256(long_path.encode()).hexdigest()
+    assert len(diagnostic_path) < 4096
+
+
+def test_planning_evidence_requires_typed_inspection_reader() -> None:
+    with pytest.raises(TypeError, match="inspect and verify_absent"):
+        ContextBuilder(
+            repository_knowledge=knowledge_provider(),
+            artifact_store=InMemoryGeneratedArtifactStore(),
+            repository_file_reader=lambda *_: "content",
+        )
+
+
+def test_aggregate_limit_failure_carries_safe_inspection_metadata() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningEvidenceInspection"] = {
+        "maxFileBytes": 100, "maxTotalBytes": 4, "statusFieldScanBytes": 50,
+    }
+    task_resource["spec"]["planningPredicates"] = [
+        {"path": path, "maxBytes": 2,
+         "predicate": {"kind": "TEXT_PRESENT", "value": "x"},
+         "postcondition": {"kind": "TEXT_ABSENT", "value": "x"},
+         "selectionReason": "aggregate test"}
+        for path in ("pyproject.toml", "README.md")
+    ]
+    builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(lambda *_: "xxxx"),
+    )
+
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    assert captured.value.metadata == {
+        "reason": "AGGREGATE_SIZE_LIMIT_EXCEEDED", "path": "README.md",
+        "declaredMaxBytesHint": 2, "blobSize": None,
+        "appliedTrustedCeiling": 4, "predicateType": "TEXT_ABSENT+TEXT_PRESENT",
+        "inspectionStrategy": "COMPLETE_BLOB_SCAN", "evaluationComplete": False,
+    }
 
 
 def test_planning_evidence_prefix_fails_when_complete_scope_exceeds_bound() -> None:
@@ -207,7 +392,7 @@ def test_planning_evidence_prefix_fails_when_complete_scope_exceeds_bound() -> N
         ContextBuilder(
             repository_knowledge=provider,
             artifact_store=InMemoryGeneratedArtifactStore(),
-            repository_file_reader=lambda *_: "Status",
+            repository_file_reader=InspectionReader(lambda *_: "Status"),
         ).build(
             task=task_resource, task_execution=task_execution(task_resource),
             workflow_execution=workflow_execution(), event=event(),
@@ -228,7 +413,8 @@ def test_planning_evidence_authorizes_an_exact_absent_creation_target() -> None:
     package = ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda *args: reads.append(args) or "unexpected",
+        repository_file_reader=InspectionReader(
+            lambda *args: reads.append(args) or "unexpected"),
     ).build(
         task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(),
@@ -244,7 +430,37 @@ def test_planning_evidence_authorizes_an_exact_absent_creation_target() -> None:
     assert evidence["predicateResults"][0]["result"] == "MATCH"
 
 
-def test_planning_evidence_honors_declared_byte_limit_above_default() -> None:
+def test_planning_evidence_inspects_regular_exact_target_omitted_from_inventory() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "generated/task.md",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "tracked"},
+        "postcondition": {"kind": "TEXT_ABSENT", "value": "tracked"},
+        "selectionReason": "exact ignored target",
+    }]
+    reader = InspectionReader(lambda *_: "tracked")
+    reader.verify_absent = lambda *_: False
+
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=reader,
+    ).build(
+        task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(),
+        created_at=CREATED_AT,
+    )
+
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert evidence["predicateResults"][0]["result"] == "MATCH"
+    assert evidence["sourceProvenance"]["sourceId"].startswith(
+        f"git-blob:{REVISION}:generated/task.md:"
+    )
+    assert evidence["preimageSha256"] == sha256(b"tracked").hexdigest()
+
+
+def test_planning_evidence_records_but_does_not_enforce_declared_byte_hint() -> None:
     task_resource = task("plan", ["planning-evidence"])
     task_resource["spec"]["planningPredicates"] = [{
         "path": "README.md",
@@ -258,13 +474,43 @@ def test_planning_evidence_honors_declared_byte_limit_above_default() -> None:
     ContextBuilder(
         repository_knowledge=knowledge_provider(),
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda _path, _revision, limit: limits.append(limit) or content,
+        repository_file_reader=InspectionReader(
+            lambda _path, _revision, limit: limits.append(limit) or content),
     ).build(
         task=task_resource, task_execution=task_execution(task_resource),
         workflow_execution=workflow_execution(), event=event(),
         created_at=CREATED_AT,
     )
-    assert limits == [100_000]
+    assert limits == [256 * 1024]
+
+
+def test_planning_evidence_uses_trusted_task_ceilings_not_model_hint() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningEvidenceInspection"] = {
+        "maxFileBytes": 20_000, "maxTotalBytes": 30_000,
+        "statusFieldScanBytes": 18_000,
+    }
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": "README.md", "maxBytes": 16_384,
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "historical model estimate",
+    }]
+    limits = []
+    content = "**Status:** In Progress\n" + "x" * (17_595 - 24)
+    package = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(
+            lambda _path, _revision, limit: limits.append(limit) or content),
+    ).build(task=task_resource, task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(), event=event(), created_at=CREATED_AT)
+    evidence = next(item["content"] for item in package["elements"]
+        if item["type"] == "planning-evidence")
+    assert len(content.encode()) == 17_595
+    assert limits == [20_000]
+    assert evidence["inspection"]["declaredMaxBytesHint"] == 16_384
+    assert evidence["inspection"]["blobSize"] == 17_595
 
 
 def test_planning_predicates_are_derived_from_prior_issue_analysis() -> None:

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 from aep.build_implementation_plan import BuildImplementationPlanTaskHandler
 from aep.context_builder import ContextBuilder
+from aep.dogfood_runtime import _pinned_workspace_reader
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
@@ -20,7 +23,18 @@ REVISION = "679a0c6f4eb04483aa917faae018a3037d3e82f9"
 CREATED_AT = "2026-08-31T12:00:00Z"
 
 
-def test_issue_78_regression_uses_exact_status_evidence_not_relevance() -> None:
+def test_issue_78_regression_uses_exact_status_evidence_not_relevance(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    shutil.copytree(FIXTURE, checkout)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run(["git", "-C", str(checkout), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "config", "user.name", "AEP Test"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "commit", "-qm", "fixture"], check=True)
+    revision = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        capture_output=True, check=True, text=True,
+    ).stdout.strip()
     paths = sorted(
         path.relative_to(FIXTURE).as_posix()
         for path in (FIXTURE / "docs").rglob("*.md")
@@ -29,7 +43,7 @@ def test_issue_78_regression_uses_exact_status_evidence_not_relevance() -> None:
         RepositoryFile(
             path=path, language="Markdown", is_documentation=True,
             provenance=SourceProvenance(
-                source_path=path, repository_revision=REVISION,
+                source_path=path, repository_revision=revision,
                 scanned_at=CREATED_AT, scanner_version="fixture-scanner/1.0.0",
             ),
         )
@@ -37,7 +51,7 @@ def test_issue_78_regression_uses_exact_status_evidence_not_relevance() -> None:
     )
     provider = InMemoryRepositoryKnowledgeProvider(RepositoryKnowledgeSnapshot(
         api_version="aep.dev/repository-knowledge/v1",
-        snapshot_version="issue-78-fixture-v1", repository_revision=REVISION,
+        snapshot_version="issue-78-fixture-v1", repository_revision=revision,
         created_at=CREATED_AT, scanner_version="fixture-scanner/1.0.0",
         files=files, documentation=files, dependency_manifests=(),
         test_command_hints=(),
@@ -68,16 +82,20 @@ def test_issue_78_regression_uses_exact_status_evidence_not_relevance() -> None:
             "outputs": {"type": "object"},
             "requiredContext": ["candidate-files", "planning-evidence"],
             "inputContextTokenBudget": 32000,
+            "planningEvidenceInspection": {
+                "maxFileBytes": 262144, "maxTotalBytes": 1048576,
+                "statusFieldScanBytes": 65536,
+            },
             "planningPredicates": declarations,
         },
     }
-    execution = _task_execution()
-    workflow = _workflow_execution()
+    execution = _task_execution(revision)
+    workflow = _workflow_execution(revision)
     issue = json.loads((FIXTURE / "issue.json").read_text(encoding="utf-8"))
     package = ContextBuilder(
         repository_knowledge=provider,
         artifact_store=InMemoryGeneratedArtifactStore(),
-        repository_file_reader=lambda path, revision, limit: _read(path, revision, limit),
+        repository_file_reader=_pinned_workspace_reader(checkout, revision),
     ).build(
         task=task, task_execution=execution, workflow_execution=workflow,
         event=issue, created_at=CREATED_AT,
@@ -128,30 +146,30 @@ def _read(path: str, revision: str, limit: int) -> str:
     return content
 
 
-def _workflow_execution() -> dict:
+def _workflow_execution(revision: str = REVISION) -> dict:
     return {
         "apiVersion": "aep.dev/v1alpha1", "kind": "WorkflowExecution",
         "id": "workflowexecution-787878787878", "traceId": "trace-issue-78-regression",
         "createdAt": CREATED_AT, "updatedAt": CREATED_AT,
-        "provenance": {"actor": "fixture", "repositoryRevision": REVISION,
+            "provenance": {"actor": "fixture", "repositoryRevision": revision,
             "resourceRefs": []},
         "workflowRef": {"kind": "Workflow", "name": "issue-to-pr", "version": "1.16.0"},
         "eventId": "event-issue-78-derived",
         "eventRef": {"kind": "Event", "name": "github-issue-created", "version": "1.0.0"},
-        "repositoryRevision": REVISION, "knowledgeGraphVersion": "issue-78-fixture-v1",
+        "repositoryRevision": revision, "knowledgeGraphVersion": "issue-78-fixture-v1",
         "status": "RUNNING", "startedAt": CREATED_AT,
         "taskExecutionIds": ["taskexecution-787878787878"],
     }
 
 
-def _task_execution() -> dict:
+def _task_execution(revision: str = REVISION) -> dict:
     return {
         "apiVersion": "aep.dev/v1alpha1", "kind": "TaskExecution",
         "id": "taskexecution-787878787878", "traceId": "trace-issue-78-regression",
         "createdAt": CREATED_AT, "updatedAt": CREATED_AT,
         "provenance": {"actor": "fixture",
             "workflowExecutionId": "workflowexecution-787878787878",
-            "repositoryRevision": REVISION,
+            "repositoryRevision": revision,
             "resourceRefs": [{"kind": "Task", "name": "build-implementation-plan", "version": "1.8.0"}]},
         "workflowExecutionId": "workflowexecution-787878787878",
         "taskRef": {"kind": "Task", "name": "build-implementation-plan", "version": "1.8.0"},

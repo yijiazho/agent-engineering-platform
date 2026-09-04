@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import PurePosixPath
@@ -14,13 +15,44 @@ class PlanningEvidenceError(ValueError):
     """Raised when planning evidence is incomplete, stale, or contradictory."""
 
 
+class PlanningEvidenceInspectionError(PlanningEvidenceError):
+    """Safe, stable failure raised while inspecting an immutable source blob."""
+
+    def __init__(self, reason: str, *, path: str, blob_size: int | None = None,
+                 applied_ceiling: int | None = None, predicate_type: str | None = None,
+                 strategy: str | None = None, evaluation_complete: bool = False) -> None:
+        self.reason = reason
+        self.metadata = {
+            "reason": reason, "path": path, "blobSize": blob_size,
+            "appliedTrustedCeiling": applied_ceiling, "predicateType": predicate_type,
+            "inspectionStrategy": strategy, "evaluationComplete": evaluation_complete,
+        }
+        super().__init__(reason)
+
+
 _STATUS = re.compile(r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE)
+
+
+@dataclass(frozen=True, slots=True)
+class PlanningEvidenceInspection:
+    """Immutable blob identity plus only the source needed for evaluation."""
+
+    content: str
+    blob_size: int
+    blob_sha256: str
+    inspected_bytes: int
+    status_fields: tuple[tuple[str, int], ...] = ()
 
 
 def evaluate_path_predicates(
     *, path: str, content: str, repository_revision: str,
     predicates: Sequence[Mapping[str, Any]], source_id: str,
-    max_bytes: int = 64 * 1024,
+    max_bytes: int = 64 * 1024, blob_size: int | None = None,
+    blob_sha256: str | None = None, declared_max_bytes: int | None = None,
+    inspection_strategy: str = "COMPLETE_BLOB_SCAN",
+    status_fields: Sequence[tuple[str, int]] | None = None,
+    inspected_bytes: int | None = None,
+    status_scan_bytes: int | None = None,
 ) -> dict[str, Any]:
     """Evaluate bounded syntactic predicates and return body-free evidence."""
     _path(path)
@@ -29,6 +61,9 @@ def evaluate_path_predicates(
     if not isinstance(content, str) or "\x00" in content:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} is not UTF-8 text")
     encoded = content.encode("utf-8")
+    digest = sha256(encoded).hexdigest()
+    complete_size = len(encoded) if blob_size is None else blob_size
+    complete_digest = digest if blob_sha256 is None else blob_sha256
     if len(encoded) > max_bytes:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} exceeds its byte limit")
     if not predicates:
@@ -37,12 +72,25 @@ def evaluate_path_predicates(
     for predicate in predicates:
         kind, expected = predicate.get("kind"), predicate.get("value")
         if kind == "STATUS_EQUALS":
-            matches = list(_STATUS.finditer(content))
-            if len(matches) != 1:
-                raise PlanningEvidenceError(f"planning-evidence target {path!r} has an ambiguous status field")
-            actual = matches[0].group("value")
+            fields = list(status_fields) if status_fields is not None else [
+                (match.group("value"), content.count("\n", 0, match.start()) + 1)
+                for match in _STATUS.finditer(content)
+            ]
+            if not fields:
+                raise PlanningEvidenceInspectionError(
+                    "STATUS_FIELD_MISSING", path=path, blob_size=complete_size,
+                    applied_ceiling=max_bytes, predicate_type=kind,
+                    strategy=inspection_strategy, evaluation_complete=True,
+                )
+            if len(fields) > 1:
+                raise PlanningEvidenceInspectionError(
+                    "STATUS_FIELD_AMBIGUOUS", path=path, blob_size=complete_size,
+                    applied_ceiling=max_bytes, predicate_type=kind,
+                    strategy=inspection_strategy, evaluation_complete=True,
+                )
+            actual, line = fields[0]
             satisfied = actual == expected
-            selected = {"kind": "STRUCTURED_FIELD", "field": "Status", "line": content.count("\n", 0, matches[0].start()) + 1}
+            selected = {"kind": "STRUCTURED_FIELD", "field": "Status", "line": line}
         elif kind in {"TEXT_PRESENT", "TEXT_ABSENT"}:
             if not isinstance(expected, str) or not expected:
                 raise PlanningEvidenceError("text predicates require a non-empty value")
@@ -54,11 +102,26 @@ def evaluate_path_predicates(
             results.append({"predicate": dict(predicate), "result": "UNSUPPORTED", "selectedEvidence": None})
             continue
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
-    digest = sha256(encoded).hexdigest()
+    partial_status_scan = inspection_strategy == "STRUCTURED_STATUS_FIELD_SCAN" and status_fields is not None
+    if (not partial_status_scan and complete_size != len(encoded)) or (
+        not partial_status_scan and complete_digest != digest
+    ):
+        raise PlanningEvidenceInspectionError(
+            "BLOB_IDENTITY_MISMATCH", path=path, blob_size=complete_size,
+            applied_ceiling=max_bytes, strategy=inspection_strategy,
+        )
     record = {
         "path": path, "repositoryRevision": repository_revision,
-        "preimageSha256": digest, "sourceProvenance": {"sourceId": source_id},
+        "preimageSha256": complete_digest, "sourceProvenance": {"sourceId": source_id},
         "predicateResults": results,
+        "inspection": {
+            "blobSize": complete_size,
+            "inspectedBytes": len(encoded) if inspected_bytes is None else inspected_bytes,
+            "appliedTrustedCeiling": max_bytes,
+            "declaredMaxBytesHint": declared_max_bytes,
+            "strategy": inspection_strategy, "evaluationComplete": True,
+            "statusFieldScanBytes": status_scan_bytes,
+        },
     }
     record["selectionId"] = "planselection-" + sha256(
         json.dumps(record, sort_keys=True, separators=(",", ":")).encode()

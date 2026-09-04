@@ -17,6 +17,15 @@
         {
           "if": { "required": ["agentRef"] },
           "then": { "required": ["inputContextTokenBudget"] }
+        },
+        {
+          "if": {
+            "anyOf": [
+              { "properties": { "requiredContext": { "contains": { "const": "planning-evidence" } } }, "required": ["requiredContext"] },
+              { "properties": { "optionalContext": { "contains": { "const": "planning-evidence" } } }, "required": ["optionalContext"] }
+            ]
+          },
+          "then": { "required": ["planningEvidenceInspection"] }
         }
       ],
       "properties": {
@@ -65,6 +74,16 @@
         "planningPredicateSource": {
           "type": "string",
           "enum": ["PRIOR_ISSUE_ANALYSIS"]
+        },
+        "planningEvidenceInspection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxFileBytes", "maxTotalBytes", "statusFieldScanBytes"],
+          "properties": {
+            "maxFileBytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+            "maxTotalBytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+            "statusFieldScanBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+          }
         },
         "knowledgeBases": { "$ref": "./resource-definitions.schema.json#/$defs/knowledgeBaseRefList" },
         "evaluations": { "$ref": "./resource-definitions.schema.json#/$defs/evaluationRefList" },

@@ -164,6 +164,7 @@ class TaskExecutionLifecycle:
         message: str,
         timestamp: str,
         retry_not_before: str | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> RuntimeObject:
         if not message:
             raise ValueError("failure message must not be empty")
@@ -181,6 +182,8 @@ class TaskExecutionLifecycle:
                     "retry_not_before requires a recoverable failure and RFC3339 timestamp"
                 )
             failure["retryNotBefore"] = retry_not_before
+        if details is not None:
+            failure["details"] = deepcopy(dict(details))
         return self._transition(
             execution_id,
             TaskStatus.FAILED,

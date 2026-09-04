@@ -67,3 +67,4 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-051: Bind Patch Generation To Editable Target Context](tasks/AEP-051-bind-patch-generation-to-editable-target-context.md)
 * [AEP-052: Validate Strict Provider Output Schemas](tasks/AEP-052-validate-strict-provider-output-schemas.md)
 * [AEP-053: Bind Planning Decisions To Exact Repository Evidence](tasks/AEP-053-bind-planning-decisions-to-exact-repository-evidence.md)
+* [AEP-054: Derive Planning Evidence Read Budgets](tasks/AEP-054-derive-planning-evidence-read-budgets.md)

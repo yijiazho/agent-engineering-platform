@@ -693,10 +693,40 @@ of relevance ranking and carry a mandatory `maxPaths`; exceeding it fails
 closed instead of silently truncating. An exact path absent from the bound
 repository snapshot produces content-addressed empty-preimage evidence, allowing
 a `TEXT_ABSENT` precondition to authorize a planned creation without inventing
-an existing repository result. Each path is read using the minimum `maxBytes`
-declared by its applicable predicates, including supported bounds above the
-64 KiB default. Multiple predicates use conjunction:
-all preconditions must match for a required change. Planning-time no-change is
+an existing repository result. Historical declaration `maxBytes` values are
+diagnostic hints and never enforce runtime safety. The versioned Task's
+`planningEvidenceInspection` supplies per-file, aggregate, and structured-status
+scan ceilings. The reader preflights file kind and immutable size before body
+allocation. `STATUS_EQUALS` uses structured-field evidence; text predicates
+require a proven-complete scan, so an incomplete prefix cannot prove absence or
+emit `NO_MATCH`. Evidence binds revision, path, complete size, and SHA-256 while
+serializing no source text. Inspected source bytes do not count as model tokens;
+only serialized body-free evidence does.
+
+Every repository reader used for planning evidence implements the typed
+inspection interface; legacy whole-file callables are rejected. Structured
+status matching stops at the cumulative `statusFieldScanBytes` offset while the
+reader continues streaming only to validate UTF-8 and compute complete blob
+identity. Complete scans recheck their ceiling before every buffer extension,
+derive structured fields from their retained complete content when predicates
+are mixed, and reject unsafe exact or prefix paths before repository lookup.
+Aggregate-limit failures carry the same safe structured metadata as reader
+failures. Multiple predicates use conjunction: all preconditions must match for
+a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
+
+The checkout-bound implementation reads `revision:path` through Git rather
+than trusting mutable worktree bytes. It verifies exact-path absence against the
+same tree and classifies symlinks or other non-regular Git entries instead of
+manufacturing empty-preimage evidence for them. The probe distinguishes absent,
+regular, and non-regular entries: regular exact targets omitted by inventory
+filters are inspected from Git normally.
+When that probe discovers an inventory-omitted regular target, its evidence
+replaces the provisional absence identifier with revision-, path-, and
+blob-digest-bound Git provenance. Persisted TaskExecution inspection failures
+accept only the bounded diagnostic fields defined by the runtime schema;
+executor-supplied bodies or arbitrary detail keys are rejected before durable
+evidence is written. Paths exceeding the diagnostic text bound are represented
+by a deterministic SHA-256 identifier before failure metadata is attached.

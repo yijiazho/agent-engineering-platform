@@ -22,8 +22,8 @@
   ],
   "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
   "resourceVersions": {
-    "workflow": "1.17.0",
-    "buildImplementationPlanTask": "1.8.0",
+    "workflow": "1.18.0",
+    "buildImplementationPlanTask": "1.9.0",
     "plannerAgent": "1.8.0",
     "implementationPlanningPrompt": "1.7.0",
     "implementationPlanEvaluation": "1.6.0",

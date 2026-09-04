@@ -8,10 +8,10 @@ from functools import cache
 from hashlib import sha256
 import json
 from math import ceil
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 from types import MappingProxyType
-from typing import Any, Callable, Final
+from typing import Any, Final, Protocol
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
@@ -33,6 +33,13 @@ from aep.runtime_store import RuntimeObjectStore
 
 
 JsonMapping = Mapping[str, Any]
+
+
+class RepositoryPlanningEvidenceReader(Protocol):
+    def inspect(self, path: str, revision: str, *, max_bytes: int,
+                strategy: str, status_scan_bytes: int) -> Any: ...
+
+    def verify_absent(self, path: str, revision: str) -> bool: ...
 
 SUPPORTED_CONTEXT: Final = frozenset(
     {
@@ -56,6 +63,9 @@ REPOSITORY_INVENTORY_LIMIT: Final = 20
 CANDIDATE_FILE_LIMIT: Final = 20
 DOCUMENTATION_LIMIT: Final = 8
 KNOWLEDGE_SOURCE_LIMIT: Final = 8
+DEFAULT_PLANNING_FILE_CEILING: Final = 256 * 1024
+DEFAULT_PLANNING_TOTAL_CEILING: Final = 1024 * 1024
+DEFAULT_STATUS_SCAN_CEILING: Final = 64 * 1024
 
 
 class ContextBuilderError(Exception):
@@ -92,7 +102,7 @@ class ContextBuilder:
         artifact_store: GeneratedArtifactStore,
         runtime_store: RuntimeObjectStore | None = None,
         lifecycle_logger: StructuredLifecycleLogger | None = None,
-        repository_file_reader: Callable[[str, str, int], str] | None = None,
+        repository_file_reader: RepositoryPlanningEvidenceReader | None = None,
     ) -> None:
         if not isinstance(repository_knowledge, RepositoryKnowledgeProvider):
             raise TypeError("repository_knowledge must implement RepositoryKnowledgeProvider")
@@ -102,8 +112,12 @@ class ContextBuilder:
         self._artifact_store = artifact_store
         self._runtime_store = runtime_store
         self._lifecycle_logger = lifecycle_logger
-        if repository_file_reader is not None and not callable(repository_file_reader):
-            raise TypeError("repository_file_reader must be callable")
+        if repository_file_reader is not None and not all(callable(
+            getattr(repository_file_reader, method, None)
+        ) for method in ("inspect", "verify_absent")):
+            raise TypeError(
+                "repository_file_reader must implement inspect and verify_absent"
+            )
         self._repository_file_reader = repository_file_reader
 
     def build(
@@ -299,6 +313,26 @@ class ContextBuilder:
             for declaration in declarations:
                 if not isinstance(declaration, Mapping):
                     raise RequiredContextError("planning predicate declarations must be objects")
+                declared_path = declaration.get(
+                    "path", declaration.get("pathPrefix")
+                )
+                if not isinstance(declared_path, str) or not _planning_path_is_safe(
+                    declared_path
+                ):
+                    failure = RequiredContextError(
+                        "planning-evidence declaration failed closed: UNSAFE_PATH"
+                    )
+                    failure.metadata = {
+                        "reason": "UNSAFE_PATH",
+                        "path": _diagnostic_path(str(declared_path)),
+                        "declaredMaxBytesHint": declaration.get("maxBytes"),
+                        "blobSize": None,
+                        "appliedTrustedCeiling": None,
+                        "predicateType": None,
+                        "inspectionStrategy": None,
+                        "evaluationComplete": False,
+                    }
+                    raise failure
                 if "pathPrefix" in declaration and "maxPaths" not in declaration:
                     raise RequiredContextError(
                         "planning-evidence prefix declarations require maxPaths"
@@ -348,7 +382,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
-                max_bytes: int | None = None
+                declared_max_bytes: int | None = None
                 for declaration in declarations:
                     if not isinstance(declaration, Mapping):
                         raise RequiredContextError("planning predicate declarations must be objects")
@@ -364,26 +398,110 @@ class ContextBuilder:
                     predicates.append(dict(predicate))
                     postconditions.append(dict(postcondition))
                     reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
-                    declaration_limit = int(declaration.get("maxBytes", 64 * 1024))
-                    max_bytes = declaration_limit if max_bytes is None else min(max_bytes, declaration_limit)
+                    hint = declaration.get("maxBytes")
+                    if hint is not None:
+                        hint = int(hint)
+                        declared_max_bytes = hint if declared_max_bytes is None else min(declared_max_bytes, hint)
                 if not predicates:
                     continue
-                assert max_bytes is not None
-                try:
-                    content = "" if path in absent_exact_paths else self._repository_file_reader(
-                        path, repository_revision, max_bytes
+                inspection = task_spec.get("planningEvidenceInspection")
+                if not isinstance(inspection, Mapping) or not all(
+                    key in inspection for key in (
+                        "maxFileBytes", "maxTotalBytes", "statusFieldScanBytes"
                     )
+                ):
+                    raise RequiredContextError(
+                        "planning-evidence requires explicit Task inspection limits"
+                    )
+                trusted_ceiling = int(inspection["maxFileBytes"])
+                total_ceiling = int(inspection["maxTotalBytes"])
+                status_ceiling = int(inspection["statusFieldScanBytes"])
+                kinds = {str(item.get("kind")) for item in (*predicates, *postconditions)}
+                strategy = "STRUCTURED_STATUS_FIELD_SCAN" if kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
+                applied_ceiling = trusted_ceiling
+                inspected_so_far = sum(
+                    int(item[1]["content"].get("inspection", {}).get("inspectedBytes", 0))
+                    for item in evidence_target if item[0] == "planning-evidence"
+                )
+                applied_ceiling = min(applied_ceiling, total_ceiling - inspected_so_far)
+                if applied_ceiling <= 0:
+                    failure = RequiredContextError(
+                        f"planning-evidence target {path!r} failed closed: AGGREGATE_SIZE_LIMIT_EXCEEDED"
+                    )
+                    failure.metadata = {
+                        "reason": "AGGREGATE_SIZE_LIMIT_EXCEEDED",
+                        "path": _diagnostic_path(path),
+                        "declaredMaxBytesHint": declared_max_bytes,
+                        "blobSize": None, "appliedTrustedCeiling": total_ceiling,
+                        "predicateType": "+".join(sorted(kinds)),
+                        "inspectionStrategy": strategy,
+                        "evaluationComplete": False,
+                    }
+                    raise failure
+                try:
+                    if path in absent_exact_paths:
+                        confirmed_absent = self._repository_file_reader.verify_absent(
+                            path, repository_revision
+                        )
+                    else:
+                        confirmed_absent = False
+                    if confirmed_absent:
+                        content = ""
+                        blob_size, blob_digest, inspected_bytes, status_fields = (
+                            0, sha256(b"").hexdigest(), 0, ()
+                        )
+                    else:
+                        inspected = self._repository_file_reader.inspect(
+                            path, repository_revision, max_bytes=applied_ceiling,
+                            strategy=strategy, status_scan_bytes=status_ceiling,
+                        )
+                        content = inspected.content
+                        blob_size, blob_digest = inspected.blob_size, inspected.blob_sha256
+                        inspected_bytes, status_fields = inspected.inspected_bytes, inspected.status_fields
+                        if source_id.startswith("absent:"):
+                            source_id = (
+                                f"git-blob:{repository_revision}:{path}:{blob_digest}"
+                            )
                     record = evaluate_path_predicates(path=path, content=content,
                         repository_revision=repository_revision, predicates=predicates,
-                        source_id=source_id, max_bytes=max_bytes)
+                        source_id=source_id, max_bytes=applied_ceiling,
+                        blob_size=blob_size, blob_sha256=blob_digest,
+                        declared_max_bytes=declared_max_bytes,
+                        inspection_strategy=strategy,
+                        status_fields=(status_fields if strategy ==
+                            "STRUCTURED_STATUS_FIELD_SCAN" else None),
+                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling)
                     postcondition_record = evaluate_path_predicates(
                         path=path, content=content,
                         repository_revision=repository_revision,
                         predicates=postconditions, source_id=source_id,
-                        max_bytes=max_bytes,
+                        max_bytes=applied_ceiling, blob_size=blob_size,
+                        blob_sha256=blob_digest, declared_max_bytes=declared_max_bytes,
+                        inspection_strategy=strategy,
+                        status_fields=(status_fields if strategy ==
+                            "STRUCTURED_STATUS_FIELD_SCAN" else None),
+                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
                     )
                 except (OSError, UnicodeError, ValueError) as error:
-                    raise RequiredContextError(f"planning-evidence target {path!r} failed closed: {type(error).__name__}") from error
+                    reason = getattr(error, "reason", None) or {
+                        FileNotFoundError: "TARGET_MISSING", UnicodeDecodeError: "INVALID_UTF8",
+                        IsADirectoryError: "NON_REGULAR_FILE",
+                    }.get(type(error), type(error).__name__.upper())
+                    failure = RequiredContextError(
+                        f"planning-evidence target {path!r} failed closed: {reason}"
+                    )
+                    failure.metadata = {
+                        "reason": reason, "path": _diagnostic_path(path),
+                        "declaredMaxBytesHint": declared_max_bytes,
+                        "blobSize": getattr(error, "metadata", {}).get("blobSize"),
+                        "appliedTrustedCeiling": applied_ceiling,
+                        "predicateType": "+".join(sorted(kinds)),
+                        "inspectionStrategy": strategy,
+                        "evaluationComplete": getattr(error, "metadata", {}).get(
+                            "evaluationComplete", False
+                        ),
+                    }
+                    raise failure from error
                 record = finalize_planning_evidence(
                     record, postconditions=postconditions, selection_reasons=reasons,
                     postcondition_results=postcondition_record["predicateResults"],
@@ -740,6 +858,26 @@ class ContextBuilder:
             for result in selected:
                 results[result.id] = result
         return tuple(results[key] for key in sorted(results))
+
+
+def _diagnostic_path(path: str) -> str:
+    """Keep persisted path diagnostics within the runtime evidence bound."""
+    if len(path) <= 4096:
+        return path
+    return "sha256:" + sha256(path.encode("utf-8")).hexdigest()
+
+
+def _planning_path_is_safe(path: str) -> bool:
+    converted = path.strip().replace("\\", "/")
+    if not converted or converted.startswith("/") or PureWindowsPath(path).drive:
+        return False
+    relative = PurePosixPath(converted.strip("/"))
+    return (
+        str(relative) not in ("", ".")
+        and not relative.is_absolute()
+        and ".." not in relative.parts
+        and relative.parts[0].casefold() != ".git"
+    )
 
 
 def _resource_data(resource: Resource | JsonMapping, *, expected_kind: str) -> dict[str, Any]:

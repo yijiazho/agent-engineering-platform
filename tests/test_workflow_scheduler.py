@@ -143,6 +143,37 @@ def test_permanent_failure_blocks_dependents_and_does_not_retry() -> None:
     }
 
 
+def test_failure_persists_safe_structured_details() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    details = {
+        "reason": "SIZE_LIMIT_EXCEEDED", "path": "docs/task.md",
+        "blobSize": 300_000, "appliedTrustedCeiling": 262_144,
+        "evaluationComplete": False,
+    }
+    executor = FakeExecutor({"analyze": [TaskExecutionResult.failure(
+        FailureClass.CONFIGURATION, "planning evidence inspection failed",
+        details=details,
+    )]})
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    assert result.task_executions[0]["failure"]["details"] == details
+
+
+def test_failure_rejects_unapproved_structured_details() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    executor = FakeExecutor({"analyze": [TaskExecutionResult.failure(
+        FailureClass.CONFIGURATION, "unsafe diagnostic",
+        details={"providerResponse": "secret"},
+    )]})
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    failure = result.task_executions[0]["failure"]
+    assert failure["message"] == "Task executor failed: ValueError"
+    assert "details" not in failure
+
+
 def test_reconciliation_is_idempotent_after_success() -> None:
     store, plan, execution = scheduler_inputs([node("analyze")])
     executor = FakeExecutor()
