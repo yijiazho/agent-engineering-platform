@@ -244,6 +244,33 @@ def test_planning_evidence_preserves_completed_status_scan_metadata() -> None:
     assert captured.value.metadata["evaluationComplete"] is True
 
 
+def test_planning_evidence_bounds_persisted_diagnostic_path() -> None:
+    long_path = "x" * 4097
+    task_resource = task("plan", ["planning-evidence"])
+    task_resource["spec"]["planningPredicates"] = [{
+        "path": long_path,
+        "predicate": {"kind": "STATUS_EQUALS", "value": "In Progress"},
+        "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        "selectionReason": "Declared transition",
+    }]
+    builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=InMemoryGeneratedArtifactStore(),
+        repository_file_reader=InspectionReader(lambda *_: "unexpected"),
+    )
+
+    with pytest.raises(RequiredContextError) as captured:
+        builder.build(
+            task=task_resource, task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(), event=event(),
+            created_at=CREATED_AT,
+        )
+
+    diagnostic_path = captured.value.metadata["path"]
+    assert diagnostic_path == "sha256:" + sha256(long_path.encode()).hexdigest()
+    assert len(diagnostic_path) < 4096
+
+
 def test_planning_evidence_requires_typed_inspection_reader() -> None:
     with pytest.raises(TypeError, match="inspect and verify_absent"):
         ContextBuilder(

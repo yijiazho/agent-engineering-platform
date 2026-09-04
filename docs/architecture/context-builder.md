@@ -726,4 +726,5 @@ replaces the provisional absence identifier with revision-, path-, and
 blob-digest-bound Git provenance. Persisted TaskExecution inspection failures
 accept only the bounded diagnostic fields defined by the runtime schema;
 executor-supplied bodies or arbitrary detail keys are rejected before durable
-evidence is written.
+evidence is written. Paths exceeding the diagnostic text bound are represented
+by a deterministic SHA-256 identifier before failure metadata is attached.

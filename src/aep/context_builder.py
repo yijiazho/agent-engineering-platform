@@ -409,7 +409,8 @@ class ContextBuilder:
                         f"planning-evidence target {path!r} failed closed: AGGREGATE_SIZE_LIMIT_EXCEEDED"
                     )
                     failure.metadata = {
-                        "reason": "AGGREGATE_SIZE_LIMIT_EXCEEDED", "path": path,
+                        "reason": "AGGREGATE_SIZE_LIMIT_EXCEEDED",
+                        "path": _diagnostic_path(path),
                         "declaredMaxBytesHint": declared_max_bytes,
                         "blobSize": None, "appliedTrustedCeiling": total_ceiling,
                         "predicateType": "+".join(sorted(kinds)),
@@ -466,7 +467,7 @@ class ContextBuilder:
                         f"planning-evidence target {path!r} failed closed: {reason}"
                     )
                     failure.metadata = {
-                        "reason": reason, "path": path,
+                        "reason": reason, "path": _diagnostic_path(path),
                         "declaredMaxBytesHint": declared_max_bytes,
                         "blobSize": getattr(error, "metadata", {}).get("blobSize"),
                         "appliedTrustedCeiling": applied_ceiling,
@@ -833,6 +834,13 @@ class ContextBuilder:
             for result in selected:
                 results[result.id] = result
         return tuple(results[key] for key in sorted(results))
+
+
+def _diagnostic_path(path: str) -> str:
+    """Keep persisted path diagnostics within the runtime evidence bound."""
+    if len(path) <= 4096:
+        return path
+    return "sha256:" + sha256(path.encode("utf-8")).hexdigest()
 
 
 def _resource_data(resource: Resource | JsonMapping, *, expected_kind: str) -> dict[str, Any]:
