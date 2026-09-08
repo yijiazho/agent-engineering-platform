@@ -177,7 +177,20 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "each required-insertion classification must bind at least one insertion"
                 )
-        bound = {value for values in bound_by_criterion.values() for value in values}
+        owners: dict[tuple[Any, Any], list[str]] = {}
+        for criterion, values in bound_by_criterion.items():
+            for value in values:
+                owners.setdefault(value, []).append(criterion)
+        repeated = {
+            value: sorted(criteria)
+            for value, criteria in owners.items()
+            if len(criteria) > 1
+        }
+        if repeated:
+            raise BuildImplementationPlanContractError(
+                "each required insertion must have exactly one lexical criterion owner"
+            )
+        bound = set(owners)
         if bound != insertions:
             raise BuildImplementationPlanContractError(
                 "every required insertion must have deterministic criterion ownership"

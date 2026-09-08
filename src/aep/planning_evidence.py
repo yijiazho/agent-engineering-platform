@@ -51,7 +51,7 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     return fields
 
 
-def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str]:
+def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str, int]:
     kind = region.get("kind")
     name = region.get("name")
     if not isinstance(kind, str) or not isinstance(name, str) or not name:
@@ -67,7 +67,9 @@ def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str
         level = len(match.group("heading"))
         end_match = re.search(rf"(?m)^#{{1,{level}}}\s+.+$", content[match.end():])
         end = match.end() + end_match.start() if end_match else len(content)
-        return match.start(), end, f"markdown-section:{name}:line-{content.count(chr(10), 0, match.start()) + 1}"
+        return (match.start(), end,
+                f"markdown-section:{name}:line-{content.count(chr(10), 0, match.start()) + 1}",
+                len(matches))
     if kind == "MARKDOWN_FENCE":
         pattern = re.compile(rf"(?ms)^```[^\n]*\b{re.escape(name)}\b[^\n]*\n.*?^```\s*$")
         matches = list(pattern.finditer(content))
@@ -76,7 +78,9 @@ def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str
         if len(matches) != 1:
             raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
         match = matches[0]
-        return match.start(), match.end(), f"markdown-fence:{name}:line-{content.count(chr(10), 0, match.start()) + 1}"
+        return (match.start(), match.end(),
+                f"markdown-fence:{name}:line-{content.count(chr(10), 0, match.start()) + 1}",
+                len(matches))
     raise PlanningEvidenceInspectionError("REGION_UNSUPPORTED", path="", evaluation_complete=False)
 
 
@@ -117,10 +121,11 @@ def evaluate_path_predicates(
     if not predicates:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} has no predicates")
     region_identity = None
+    region_match_count = 0
     scoped_content = content
     if region is not None:
         try:
-            start, end, region_identity = _region_span(content, region)
+            start, end, region_identity, region_match_count = _region_span(content, region)
         except PlanningEvidenceInspectionError as error:
             error.metadata["path"] = path
             raise
@@ -177,10 +182,8 @@ def evaluate_path_predicates(
             "statusFieldScanBytes": status_scan_bytes,
             "region": None if region is None else {
                 "kind": region.get("kind"), "name": region.get("name"),
-                "identity": region_identity, "matchCount": sum(
-                    int(item.get("selectedEvidence", {}).get("occurrences", 0))
-                    for item in results if isinstance(item, Mapping)
-                ), "evaluationComplete": True,
+                "identity": region_identity, "matchCount": region_match_count,
+                "evaluationComplete": True,
             },
         },
     }

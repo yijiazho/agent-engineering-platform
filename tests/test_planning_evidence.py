@@ -67,6 +67,20 @@ def test_predicates_cover_text_absence_and_unsupported_semantics_deterministical
     assert first["selectionId"] == second["selectionId"]
 
 
+def test_region_match_count_records_selector_cardinality_not_text_occurrences() -> None:
+    record = evaluate_path_predicates(
+        path="README.md",
+        content="# Repository Layout\n\n```text\ndeploy/\ndeploy/local/\n```\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "deploy/"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert record["inspection"]["region"]["matchCount"] == 1
+    assert record["predicateResults"][0]["selectedEvidence"]["occurrences"] == 2
+
+
 @pytest.mark.parametrize(("content", "reason"), [
     ("**Status:** In Progress\n**Status:** Completed\n", "STATUS_FIELD_AMBIGUOUS"),
     ("no status", "STATUS_FIELD_MISSING"),

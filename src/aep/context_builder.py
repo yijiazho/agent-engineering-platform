@@ -382,7 +382,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
-                regions = []
+                regions: list[Mapping[str, Any] | None] = []
                 declared_max_bytes: int | None = None
                 for declaration in declarations:
                     if not isinstance(declaration, Mapping):
@@ -399,8 +399,14 @@ class ContextBuilder:
                     predicates.append(dict(predicate))
                     postconditions.append(dict(postcondition))
                     reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
-                    if declaration.get("region") is not None:
-                        regions.append(declaration["region"])
+                    declared_region = declaration.get("region")
+                    if declared_region is not None and not isinstance(
+                        declared_region, Mapping
+                    ):
+                        raise RequiredContextError(
+                            f"planning-evidence target {path!r} has malformed region selector"
+                        )
+                    regions.append(declared_region)
                     hint = declaration.get("maxBytes")
                     if hint is not None:
                         hint = int(hint)

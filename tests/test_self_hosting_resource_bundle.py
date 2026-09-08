@@ -146,6 +146,16 @@ def test_context_and_agent_boundaries_are_explicit(
     assert classifications["properties"]["requiredInsertion"]["anyOf"][1] == {
         "type": "null"
     }
+    assert "requiredInsertions" in classifications["required"]
+    issue_analyzer = resources.get(ResourceRef(
+        "Agent", "issue-analyzer", EXPECTED["resourceVersions"]["issueAnalyzerAgent"]
+    ))
+    assert issue_analyzer is not None
+    predicate = issue_analyzer.data["spec"]["outputSchema"]["properties"][
+        "planningPredicates"
+    ]["items"]
+    assert "region" in predicate["required"]
+    assert predicate["properties"]["region"]["anyOf"][1] == {"type": "null"}
     for agent in resources.by_kind("Agent"):
         validate_openai_strict_schema(agent.data["spec"]["outputSchema"])
     for agent in agents.values():

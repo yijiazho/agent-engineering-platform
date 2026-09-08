@@ -264,6 +264,36 @@ def test_required_classification_must_bind_its_own_insertion() -> None:
     assert "bind its own insertion evidence" in result.message
 
 
+def test_shared_insertion_requires_one_lexical_criterion_owner() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({"acceptanceCriteria": ["A", "B"]}).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    insertion = {"path": "README.md", "value": "deploy/"}
+    plan = {
+        "requiredInsertions": [insertion],
+        "unsupportedAcceptanceCriteria": [],
+        "acceptanceCriteriaClassifications": [
+            {"criterion": criterion, "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [insertion]}
+            for criterion in ("A", "B")
+        ],
+    }
+
+    with pytest.raises(
+        BuildImplementationPlanContractError,
+        match="exactly one lexical criterion owner",
+    ):
+        handler._validate_acceptance_criteria_accounting(
+            {"dependencyTaskExecutionIds": ["analyze"]}, plan
+        )
+
+
 def test_invalid_non_object_output_is_rejected_without_artifact() -> None:
     store, handler, task, adapter = setup_handler(["not", "a", "plan"])
 

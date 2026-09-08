@@ -3,7 +3,7 @@
   "kind": "Evaluation",
   "metadata": {
     "name": "implementation-plan-schema",
-    "version": "1.6.0"
+    "version": "1.7.0"
   },
   "spec": {
     "type": "schema",
