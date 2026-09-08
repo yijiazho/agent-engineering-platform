@@ -110,8 +110,7 @@
             "required": [
               "criterion",
               "classification",
-              "requiredInsertions",
-              "requiredInsertion"
+              "requiredInsertions"
             ],
             "properties": {
               "criterion": {
@@ -136,15 +135,6 @@
                     "value": {"type": "string", "minLength": 1}
                   }
                 }
-              },
-              "requiredInsertion": {
-                "anyOf": [
-                  {"type": "object", "additionalProperties": false,
-                   "required": ["path", "value"],
-                   "properties": {"path": {"type": "string", "minLength": 1},
-                                  "value": {"type": "string", "minLength": 1}}},
-                  {"type": "null"}
-                ]
               }
             }
           }

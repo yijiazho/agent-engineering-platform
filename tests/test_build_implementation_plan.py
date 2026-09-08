@@ -314,6 +314,25 @@ def test_unsupported_list_must_exactly_match_classifications() -> None:
     assert "exactly match UNSUPPORTED classifications" in result.message
 
 
+def test_plural_binding_rejects_conflicting_legacy_singular_value() -> None:
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [{"path": "src/a.py", "value": "first"}]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [{"path": "src/a.py", "value": "first"}],
+        "requiredInsertion": {"path": "src/b.py", "value": "second"},
+    }]
+    store, handler, task, _adapter = setup_handler(output)
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.CONFIGURATION
+    assert "cannot conflict with legacy requiredInsertion" in result.message
+
+
 def test_invalid_non_object_output_is_rejected_without_artifact() -> None:
     store, handler, task, adapter = setup_handler(["not", "a", "plan"])
 

@@ -150,8 +150,13 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             disposition = item.get("classification")
             criterion = item.get("criterion")
             plural = item.get("requiredInsertions")
-            if plural is None and item.get("requiredInsertion") is not None:
-                plural = [item["requiredInsertion"]]
+            legacy = item.get("requiredInsertion")
+            if plural is not None and legacy is not None:
+                raise BuildImplementationPlanContractError(
+                    "plural requiredInsertions cannot conflict with legacy requiredInsertion"
+                )
+            if plural is None and legacy is not None:
+                plural = [legacy]
             if plural is None:
                 plural = []
             if not isinstance(plural, Sequence) or isinstance(plural, (str, bytes)):

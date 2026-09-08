@@ -142,11 +142,8 @@ def test_context_and_agent_boundaries_are_explicit(
     classifications = planner.data["spec"]["outputSchema"]["properties"][
         "acceptanceCriteriaClassifications"
     ]["items"]
-    assert "requiredInsertion" in classifications["required"]
-    assert classifications["properties"]["requiredInsertion"]["anyOf"][1] == {
-        "type": "null"
-    }
     assert "requiredInsertions" in classifications["required"]
+    assert "requiredInsertion" not in classifications["properties"]
     issue_analyzer = resources.get(ResourceRef(
         "Agent", "issue-analyzer", EXPECTED["resourceVersions"]["issueAnalyzerAgent"]
     ))

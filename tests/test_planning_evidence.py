@@ -81,6 +81,38 @@ def test_region_match_count_records_selector_cardinality_not_text_occurrences() 
     assert record["predicateResults"][0]["selectedEvidence"]["occurrences"] == 2
 
 
+def test_markdown_section_selector_ignores_headings_inside_fences() -> None:
+    content = (
+        "```markdown\n# Repository Layout\ndeploy/ example\n```\n\n"
+        "# Repository Layout\n\nsrc/\n"
+    )
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_ABSENT", "value": "deploy/"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["inspection"]["region"]["matchCount"] == 1
+
+
+def test_structured_status_is_evaluated_inside_the_selected_region() -> None:
+    content = (
+        "# Document\n\n**Status:** Completed\n\n"
+        "# Target\n\n**Status:** In Progress\n"
+    )
+    record = evaluate_path_predicates(
+        path="docs/task.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["predicateResults"][0]["selectedEvidence"]["line"] == 7
+
+
 @pytest.mark.parametrize(("content", "reason"), [
     ("**Status:** In Progress\n**Status:** Completed\n", "STATUS_FIELD_AMBIGUOUS"),
     ("no status", "STATUS_FIELD_MISSING"),

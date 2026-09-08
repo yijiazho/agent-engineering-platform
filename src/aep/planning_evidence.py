@@ -56,32 +56,64 @@ def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str
     name = region.get("name")
     if not isinstance(kind, str) or not isinstance(name, str) or not name:
         raise PlanningEvidenceInspectionError("REGION_SELECTOR_MALFORMED", path="", evaluation_complete=False)
+    headings, fences = _markdown_structure(content)
     if kind == "MARKDOWN_SECTION":
-        pattern = re.compile(rf"(?m)^(?P<heading>#+)\s+{re.escape(name)}\s*$")
-        matches = list(pattern.finditer(content))
+        matches = [item for item in headings if item[1] == name]
         if not matches:
             raise PlanningEvidenceInspectionError("REGION_MISSING", path="", evaluation_complete=False)
         if len(matches) != 1:
             raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
-        match = matches[0]
-        level = len(match.group("heading"))
-        end_match = re.search(rf"(?m)^#{{1,{level}}}\s+.+$", content[match.end():])
-        end = match.end() + end_match.start() if end_match else len(content)
-        return (match.start(), end,
-                f"markdown-section:{name}:line-{content.count(chr(10), 0, match.start()) + 1}",
+        start, _heading_name, level, line = matches[0]
+        end = next(
+            (offset for offset, _title, candidate_level, _line in headings
+             if offset > start and candidate_level <= level),
+            len(content),
+        )
+        return (start, end,
+                f"markdown-section:{name}:line-{line}",
                 len(matches))
     if kind == "MARKDOWN_FENCE":
-        pattern = re.compile(rf"(?ms)^```[^\n]*\b{re.escape(name)}\b[^\n]*\n.*?^```\s*$")
-        matches = list(pattern.finditer(content))
+        matches = [item for item in fences if name in item[2].split()]
         if not matches:
             raise PlanningEvidenceInspectionError("REGION_MISSING", path="", evaluation_complete=False)
         if len(matches) != 1:
             raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
-        match = matches[0]
-        return (match.start(), match.end(),
-                f"markdown-fence:{name}:line-{content.count(chr(10), 0, match.start()) + 1}",
+        start, end, _info, line = matches[0]
+        return (start, end,
+                f"markdown-fence:{name}:line-{line}",
                 len(matches))
     raise PlanningEvidenceInspectionError("REGION_UNSUPPORTED", path="", evaluation_complete=False)
+
+
+def _markdown_structure(
+    content: str,
+) -> tuple[list[tuple[int, str, int, int]], list[tuple[int, int, str, int]]]:
+    """Return headings outside fences and complete fenced regions."""
+    headings: list[tuple[int, str, int, int]] = []
+    fences: list[tuple[int, int, str, int]] = []
+    active: tuple[str, int, int, str, int] | None = None
+    offset = 0
+    for line_number, line in enumerate(content.splitlines(keepends=True), start=1):
+        text = line.rstrip("\r\n")
+        fence = re.match(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>[^`]*)$", text)
+        if active is not None:
+            marker_char, marker_length, start, info, start_line = active
+            if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}\s*$", text):
+                fences.append((start, offset + len(line), info, start_line))
+                active = None
+        elif fence:
+            marker = fence.group("marker")
+            active = (marker[0], len(marker), offset, fence.group("info").strip(), line_number)
+        else:
+            heading = re.match(r"^ {0,3}(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$", text)
+            if heading:
+                headings.append((offset, heading.group("title"), len(heading.group("marks")), line_number))
+        offset += len(line)
+    if active is not None:
+        raise PlanningEvidenceInspectionError(
+            "REGION_MALFORMED", path="", evaluation_complete=False
+        )
+    return headings, fences
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +166,14 @@ def evaluate_path_predicates(
     for predicate in predicates:
         kind, expected = predicate.get("kind"), predicate.get("value")
         if kind == "STATUS_EQUALS":
-            fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)
+            if region is not None:
+                base_line = content.count("\n", 0, start)
+                fields = [
+                    (value, line + base_line)
+                    for value, line in _structured_status_fields(scoped_content)
+                ]
+            else:
+                fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)
             if not fields:
                 raise PlanningEvidenceInspectionError(
                     "STATUS_FIELD_MISSING", path=path, blob_size=complete_size,

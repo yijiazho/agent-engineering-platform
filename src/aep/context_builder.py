@@ -431,7 +431,11 @@ class ContextBuilder:
                     raise RequiredContextError(
                         f"planning-evidence target {path!r} has inconsistent region selectors"
                     )
-                strategy = "STRUCTURED_STATUS_FIELD_SCAN" if kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
+                strategy = (
+                    "STRUCTURED_STATUS_FIELD_SCAN"
+                    if region is None and kinds <= {"STATUS_EQUALS"}
+                    else "COMPLETE_BLOB_SCAN"
+                )
                 applied_ceiling = trusted_ceiling
                 inspected_so_far = sum(
                     int(item[1]["content"].get("inspection", {}).get("inspectedBytes", 0))
