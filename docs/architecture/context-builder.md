@@ -717,8 +717,9 @@ valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
 
-`STATUS_EQUALS` binds only the unique leading structured Status field; narrative,
-example, and historical mentions are not status evidence. Planning predicates
+`STATUS_EQUALS` binds only the unique leading structured Status field. Blank
+lines and one initial level-one document title may precede it; later headings,
+narrative, example, and historical mentions are not status evidence. Planning predicates
 may also declare a uniquely selected `MARKDOWN_SECTION` or `MARKDOWN_FENCE` by
 name. Missing, duplicate, malformed, or unsupported regions fail closed, and
 all matching and insertion evidence is evaluated only inside that region. The
@@ -730,7 +731,10 @@ collection, and are owned deterministically by lexical criterion order, while
 unsupported criteria bind none. The evaluated issue analysis records the
 independent expected set for every criterion in `acceptanceCriterionInsertions`;
 planner validation requires each classification to match that set exactly, so
-aggregate coverage cannot hide reassigned or partial bindings.
+aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
+validates exact criterion-map coverage before publishing its artifact, and the
+Planner cross-field check runs inside invocation output validation before a
+successful AgentInvocation can be persisted.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the

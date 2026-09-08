@@ -40,6 +40,8 @@ PLAN_SCHEMA = {
         "risks",
         "implementationSteps",
         "acceptanceCriteriaClassifications",
+        "requiredInsertions",
+        "unsupportedAcceptanceCriteria",
     ],
     "properties": {
         "intendedFiles": {
@@ -70,9 +72,16 @@ PLAN_SCHEMA = {
             "items": {
                 "type": "object",
                 "required": ["criterion", "classification"],
+                "properties": {
+                    "criterion": {"type": "string"},
+                    "classification": {"type": "string"},
+                    "requiredInsertions": {"type": "array"},
+                    "requiredInsertion": {"type": "object"},
+                },
             },
             "minItems": 1,
         },
+        "requiredInsertions": {"type": "array"},
         "unsupportedAcceptanceCriteria": {
             "type": "array",
             "items": {"type": "string", "minLength": 1},
@@ -93,6 +102,7 @@ VALID_PLAN = {
         "criterion": "Persist an evaluated plan.",
         "classification": "UNSUPPORTED",
     }],
+    "requiredInsertions": [],
     "unsupportedAcceptanceCriteria": ["Persist an evaluated plan."],
 }
 
@@ -243,8 +253,8 @@ def test_plan_must_classify_every_analyzed_acceptance_criterion() -> None:
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
-    assert result.failure_class is FailureClass.CONFIGURATION
-    assert "classify every analyzed acceptance criterion" in result.message
+    assert result.failure_class is FailureClass.EVALUATION
+    assert "should be non-empty" in result.message
 
 
 def test_required_classification_must_bind_its_own_insertion() -> None:
@@ -335,6 +345,33 @@ def test_criterion_bindings_must_match_independent_analyzed_sets() -> None:
         )
 
 
+def test_partial_binding_fails_before_agent_invocation_success() -> None:
+    x = {"path": "README.md", "value": "x"}
+    y = {"path": "README.md", "value": "y"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [x, y]
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [x]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [x],
+    }]
+    store, handler, task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.failure_class is FailureClass.EVALUATION
+    execution = store.get(TASK_EXECUTION_ID)
+    invocation = store.get(execution["agentInvocationIds"][0])
+    assert invocation["status"] == "FAILED"
+    assert invocation["outputSchemaValidation"] == "FAILED"
+    assert "generatedArtifactIds" not in execution
+
+
 def test_unsupported_criterion_does_not_claim_analyzed_insertions() -> None:
     class AnalysisArtifacts:
         def list_by_task_execution(self, _task_execution_id):
@@ -382,7 +419,7 @@ def test_unsupported_list_must_exactly_match_classifications() -> None:
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
-    assert result.failure_class is FailureClass.CONFIGURATION
+    assert result.failure_class is FailureClass.EVALUATION
     assert "exactly match UNSUPPORTED classifications" in result.message
 
 
@@ -401,7 +438,7 @@ def test_plural_binding_rejects_conflicting_legacy_singular_value() -> None:
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
-    assert result.failure_class is FailureClass.CONFIGURATION
+    assert result.failure_class is FailureClass.EVALUATION
     assert "cannot conflict with legacy requiredInsertion" in result.message
 
 

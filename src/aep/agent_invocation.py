@@ -7,7 +7,7 @@ ContextPackage.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from functools import cache
 from hashlib import sha256
@@ -55,6 +55,7 @@ def invoke_agent(
     started_at: str,
     completed_at: str,
     lifecycle_logger: StructuredLifecycleLogger | None = None,
+    output_validator: Callable[[Any], Sequence[str]] | None = None,
 ) -> RuntimeObject:
     """Run one bounded model-backed reasoning unit and persist all evidence.
 
@@ -271,6 +272,8 @@ def invoke_agent(
         if serialization_error is not None
         else _output_errors(output, agent["outputSchema"])
     )
+    if not validation_errors and output_validator is not None:
+        validation_errors.extend(output_validator(output))
     validation = "FAILED" if validation_errors else "PASSED"
     model_changes: dict[str, Any] = {
         "tokenUsage": response.usage.as_record(),

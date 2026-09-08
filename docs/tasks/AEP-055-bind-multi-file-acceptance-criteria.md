@@ -269,9 +269,15 @@ text matching for structured status fields.
 * Planning evidence for structured status checks contains field identity, line
   location, revision, complete blob digest, inspection limits, and selection
   identity, but no selected line text or complete file body.
+* Only blank lines and one initial level-one document title may precede the
+  structured Status field; malformed fields and later section headings fail
+  closed in both complete-content and streamed checkout readers.
 * `requiredChangePaths`, `intendedFiles`, `noChangeFiles`, `unsupportedPaths`,
   `requiredInsertions`, and acceptance-criterion classifications reconcile to
   the same exact path set before an implementation-plan artifact is published.
+  AnalyzeIssue criterion-map accounting and Planner per-criterion binding
+  accounting fail during invocation output validation, before either
+  AgentInvocation can persist `SUCCEEDED`.
 * Execution-plan row and summary updates are either represented with
   deterministic evidence sufficient for later reconciliation or rejected with
   a specific unsupported classification that cannot be mistaken for success.

@@ -116,6 +116,7 @@ def test_structured_status_is_evaluated_inside_the_selected_region() -> None:
 @pytest.mark.parametrize(("content", "reason"), [
     ("**Status:** In Progress\n**Status:** Completed\n", "STATUS_FIELD_AMBIGUOUS"),
     ("**Status:**\n**Status:** Completed\n", "STATUS_FIELD_MISSING"),
+    ("# Task\n## Context\n**Status:** Completed\n", "STATUS_FIELD_MISSING"),
     ("no status", "STATUS_FIELD_MISSING"),
 ])
 def test_ambiguous_or_missing_structured_field_fails_closed(

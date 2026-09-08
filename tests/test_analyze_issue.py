@@ -36,6 +36,7 @@ ISSUE_ANALYSIS_SCHEMA = {
     "required": [
         "requestedChange",
         "acceptanceCriteria",
+        "acceptanceCriterionInsertions",
         "risks",
         "likelyRepositoryAreas",
     ],
@@ -44,6 +45,13 @@ ISSUE_ANALYSIS_SCHEMA = {
         "acceptanceCriteria": {
             "type": "array",
             "items": {"type": "string", "minLength": 1},
+        },
+        "acceptanceCriterionInsertions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["criterion", "requiredInsertions"],
+            },
         },
         "risks": {
             "type": "array",
@@ -60,6 +68,10 @@ ISSUE_ANALYSIS_SCHEMA = {
 VALID_ANALYSIS = {
     "requestedChange": "Implement deterministic issue analysis.",
     "acceptanceCriteria": ["Persist a typed issue analysis artifact."],
+    "acceptanceCriterionInsertions": [{
+        "criterion": "Persist a typed issue analysis artifact.",
+        "requiredInsertions": [],
+    }],
     "risks": ["Provider output may violate the schema."],
     "likelyRepositoryAreas": ["src/aep", "tests"],
 }
@@ -179,6 +191,26 @@ def test_invalid_model_output_is_an_evaluation_failure_without_artifact() -> Non
         error["path"] == "$.acceptanceCriteria"
         for error in evaluation["evidence"]["errors"]
     )
+
+
+def test_insertion_map_mismatch_fails_the_invocation_before_publication() -> None:
+    output = deepcopy(VALID_ANALYSIS)
+    output["acceptanceCriterionInsertions"] = [
+        {"criterion": "unknown", "requiredInsertions": []}
+    ]
+    store, handler, task, _adapter = setup_handler(
+        ModelResponse(output=output, usage=ModelUsage(10, 4), latency_ms=2)
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    execution = store.get(TASK_EXECUTION_ID)
+    invocation = store.get(execution["agentInvocationIds"][0])
+    assert invocation["status"] == "FAILED"
+    assert invocation["outputSchemaValidation"] == "FAILED"
+    assert "generatedArtifactIds" not in execution
 
 
 def test_missing_context_fails_configuration_before_model_invocation() -> None:

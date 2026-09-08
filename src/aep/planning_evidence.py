@@ -34,6 +34,7 @@ _STATUS = re.compile(
     r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$",
     re.MULTILINE,
 )
+_TITLE = re.compile(r"^ {0,3}#(?:\s+|$)")
 
 
 def _structured_status_fields(content: str) -> list[tuple[str, int]]:
@@ -46,13 +47,21 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     for match in _STATUS.finditer(content):
         prefix = content[:match.start()]
         lines = prefix.splitlines()
-        substantive = [
-            line for line in lines
-            if line.strip()
-            and not re.match(r"^ {0,3}#{1,6}(?:\s+|$)", line)
-            and not _STATUS.match(line)
-        ]
-        if substantive:
+        title_seen = False
+        status_seen = False
+        valid_prefix = True
+        for line in lines:
+            if not line.strip():
+                continue
+            if _STATUS.fullmatch(line):
+                status_seen = True
+                continue
+            if not title_seen and not status_seen and _TITLE.match(line):
+                title_seen = True
+                continue
+            valid_prefix = False
+            break
+        if not valid_prefix:
             continue
         fields.append((match.group("value"), content.count("\n", 0, match.start()) + 1))
     return fields

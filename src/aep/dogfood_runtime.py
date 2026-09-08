@@ -727,15 +727,25 @@ def _pinned_workspace_reader(
                     r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$",
                     re.MULTILINE,
                 )
+                title_pattern = re.compile(r"^ {0,3}#(?:\s+|$)")
                 status_fields = []
                 for match in status_pattern.finditer(prefix_text):
                     before = prefix_text[:match.start()].splitlines()
-                    if any(
-                        line.strip()
-                        and not re.match(r"^ {0,3}#{1,6}(?:\s+|$)", line)
-                        and not status_pattern.fullmatch(line)
-                        for line in before
-                    ):
+                    title_seen = False
+                    status_seen = False
+                    valid_prefix = True
+                    for line in before:
+                        if not line.strip():
+                            continue
+                        if status_pattern.fullmatch(line):
+                            status_seen = True
+                            continue
+                        if not title_seen and not status_seen and title_pattern.match(line):
+                            title_seen = True
+                            continue
+                        valid_prefix = False
+                        break
+                    if not valid_prefix:
                         continue
                     status_fields.append(
                         (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)

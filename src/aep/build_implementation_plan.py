@@ -94,11 +94,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         canonical["pathEvidence"] = [item["selectionId"] for item in selected]
         return canonical
 
-    def _run_schema_evaluation(self, *, content: Any, **kwargs: Any):
-        self._validate_acceptance_criteria_accounting(
-            kwargs["task_execution"], content
-        )
-        return super()._run_schema_evaluation(content=content, **kwargs)
+    def _invocation_output_errors(
+        self, task_execution: Mapping[str, Any], output: Any
+    ) -> list[str]:
+        try:
+            self._validate_acceptance_criteria_accounting(task_execution, output)
+        except BuildImplementationPlanContractError as error:
+            return [str(error)]
+        return []
 
     def _validate_acceptance_criteria_accounting(
         self, task_execution: Mapping[str, Any], plan: Any

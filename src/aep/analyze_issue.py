@@ -150,6 +150,9 @@ class AnalyzeIssueTaskHandler:
                 adapter=self._model_adapter,
                 started_at=started_at,
                 completed_at=self._timestamp(),
+                output_validator=lambda output: self._invocation_output_errors(
+                    task_execution, output
+                ),
             )
             self._attach(
                 task_execution["id"],
@@ -244,6 +247,18 @@ class AnalyzeIssueTaskHandler:
     ) -> Any:
         """Return deterministic post-model output; subclasses may narrow it."""
         return output
+
+    def _invocation_output_errors(
+        self, task_execution: JsonMapping, output: Any
+    ) -> list[str]:
+        del task_execution
+        if self.task_name != "analyze-issue":
+            return []
+        try:
+            _validate_acceptance_criterion_insertions(output)
+        except AnalyzeIssueContractError as error:
+            return [str(error)]
+        return []
 
     def _validate_inputs(
         self, task: Resource, task_execution: RuntimeObject
@@ -404,6 +419,33 @@ class AnalyzeIssueTaskHandler:
             f"{self.runtime_id_namespace}:{task_execution_id}:{prefix}".encode()
         ).hexdigest()[:24]
         return f"{prefix}-{digest}"
+
+
+def _validate_acceptance_criterion_insertions(output: Any) -> None:
+    if not isinstance(output, Mapping):
+        return
+    criteria = output.get("acceptanceCriteria", ())
+    records = output.get("acceptanceCriterionInsertions", ())
+    if (
+        isinstance(criteria, (str, bytes))
+        or not isinstance(criteria, Sequence)
+        or isinstance(records, (str, bytes))
+        or not isinstance(records, Sequence)
+    ):
+        raise AnalyzeIssueContractError(
+            "acceptanceCriterionInsertions must map every acceptance criterion exactly once"
+        )
+    mapped = [
+        record.get("criterion") for record in records if isinstance(record, Mapping)
+    ]
+    if (
+        len(mapped) != len(records)
+        or sorted(mapped) != sorted(criteria)
+        or len(mapped) != len(set(mapped))
+    ):
+        raise AnalyzeIssueContractError(
+            "acceptanceCriterionInsertions must map every acceptance criterion exactly once"
+        )
 
 
 def _required_ref(value: Any, expected_kind: str, field: str) -> ResourceRef:
