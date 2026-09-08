@@ -237,7 +237,8 @@ text matching for structured status fields.
 * Every `REQUIRED_INSERTION` classification binds at least one insertion and
   all bound insertions exist exactly in the canonical `requiredInsertions`
   collection; missing, unknown, duplicate, and partial bindings fail closed
-  with stable safe messages.
+  with stable safe messages. The evaluated issue analysis independently maps
+  each criterion to its complete expected insertion set before planning.
 * Every analyzed acceptance criterion is classified exactly once, every
   canonical required insertion has deterministic criterion ownership, and
   shared insertions remain bound to supported non-owner criteria while

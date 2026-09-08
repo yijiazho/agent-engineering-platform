@@ -116,6 +116,49 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             self._artifact_store.get_content(str(analyses[0]["id"])).decode("utf-8")
         )
         criteria = analysis.get("acceptanceCriteria", ())
+        expected_records = analysis.get("acceptanceCriterionInsertions", ())
+        if (
+            isinstance(expected_records, (str, bytes))
+            or not isinstance(expected_records, Sequence)
+        ):
+            raise BuildImplementationPlanContractError(
+                "issue analysis must provide per-criterion insertion requirements"
+            )
+        expected_by_criterion: dict[str, set[tuple[Any, Any]]] = {}
+        for record in expected_records:
+            if not isinstance(record, Mapping):
+                raise BuildImplementationPlanContractError(
+                    "issue analysis must provide per-criterion insertion requirements"
+                )
+            criterion = record.get("criterion")
+            values = record.get("requiredInsertions")
+            if (
+                not isinstance(criterion, str)
+                or not criterion
+                or criterion in expected_by_criterion
+                or isinstance(values, (str, bytes))
+                or not isinstance(values, Sequence)
+            ):
+                raise BuildImplementationPlanContractError(
+                    "issue analysis must provide per-criterion insertion requirements"
+                )
+            expected = []
+            for value in values:
+                if not isinstance(value, Mapping):
+                    raise BuildImplementationPlanContractError(
+                        "issue analysis must provide per-criterion insertion requirements"
+                    )
+                key = (value.get("path"), value.get("value"))
+                if any(not isinstance(part, str) or not part for part in key):
+                    raise BuildImplementationPlanContractError(
+                        "issue analysis must provide per-criterion insertion requirements"
+                    )
+                if key in expected:
+                    raise BuildImplementationPlanContractError(
+                        "issue analysis insertion requirements must be unique per criterion"
+                    )
+                expected.append(key)
+            expected_by_criterion[criterion] = set(expected)
         classifications = plan.get("acceptanceCriteriaClassifications", ())
         classified = [
             item.get("criterion") for item in classifications if isinstance(item, Mapping)
@@ -128,6 +171,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         ):
             raise BuildImplementationPlanContractError(
                 "implementation plan must classify every analyzed acceptance criterion exactly once"
+            )
+        if set(expected_by_criterion) != set(criteria):
+            raise BuildImplementationPlanContractError(
+                "issue analysis must map every acceptance criterion exactly once"
             )
         unsupported_values = plan.get("unsupportedAcceptanceCriteria", ())
         if (
@@ -180,6 +227,13 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                     )
                 bindings.append(key)
             bound_by_criterion[str(criterion)] = bindings
+            if (
+                disposition == "REQUIRED_INSERTION"
+                and set(bindings) != expected_by_criterion[str(criterion)]
+            ):
+                raise BuildImplementationPlanContractError(
+                    "criterion insertion bindings must exactly match analyzed requirements"
+                )
             if disposition == "UNSUPPORTED" and criterion not in unsupported:
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"

@@ -148,6 +148,9 @@ def test_context_and_agent_boundaries_are_explicit(
         "Agent", "issue-analyzer", EXPECTED["resourceVersions"]["issueAnalyzerAgent"]
     ))
     assert issue_analyzer is not None
+    assert "acceptanceCriterionInsertions" in issue_analyzer.data["spec"][
+        "outputSchema"
+    ]["required"]
     predicate = issue_analyzer.data["spec"]["outputSchema"]["properties"][
         "planningPredicates"
     ]["items"]
