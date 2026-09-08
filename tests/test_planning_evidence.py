@@ -208,6 +208,36 @@ def test_no_change_requires_exact_required_insertions_to_be_present() -> None:
     ]
 
 
+def test_reconciliation_keeps_insertions_inside_the_trusted_region() -> None:
+    content = (
+        "# Repository Layout\n\n```text\nsrc/\n```\n\n"
+        "# Other\n\ndeploy/ outside\n"
+    )
+    target = {
+        "path": "README.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {},
+    }
+    common = dict(
+        plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["README.md"], targets=[target],
+        dispositions=[{"path": "README.md", "disposition": "NO_CHANGE"}],
+        postconditions_by_path={
+            "README.md": ({"kind": "TEXT_PRESENT", "value": "src/"},)
+        },
+        required_insertions_by_path={"README.md": ("deploy/",)},
+        regions_by_path={"README.md": {
+            "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
+        }},
+        evaluator_ref={
+            "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+        },
+    )
+
+    with pytest.raises(PlanningEvidenceError, match="lacks a required insertion"):
+        reconcile_dispositions(**common)
+
+
 def test_reconciliation_proves_an_authorized_deleted_post_state() -> None:
     content = "obsolete text\n"
     target = {"path": "docs/task.md", "content": content,

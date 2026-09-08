@@ -292,6 +292,7 @@ def reconcile_dispositions(
     proposed_contents_by_path: Mapping[str, str] | None = None,
     deleted_paths: Sequence[str] = (),
     required_insertions_by_path: Mapping[str, Sequence[str]] | None = None,
+    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Create immutable reconciliation evidence from freshly verified targets."""
     target_map = {item.get("path"): item for item in targets}
@@ -318,6 +319,7 @@ def reconcile_dispositions(
         if digest != target.get("preimageSha256"):
             raise PlanningEvidenceError(f"editable target {path!r} has stale content evidence")
         state = disposition.get("disposition")
+        region = (regions_by_path or {}).get(path)
         proof = None
         insertion_proof: list[dict[str, Any]] = []
         if state == "CHANGE":
@@ -351,6 +353,7 @@ def reconcile_dispositions(
                     path=path, content=proposed, repository_revision=repository_revision,
                     predicates=postconditions_by_path.get(path, ()),
                     source_id="generated-change",
+                    region=region,
                 )
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(
@@ -359,20 +362,36 @@ def reconcile_dispositions(
             effective.append(path)
         elif state == "NO_CHANGE":
             proof = evaluate_path_predicates(path=path, content=content, repository_revision=repository_revision,
-                predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")))
+                predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")),
+                region=region)
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
-            for value in (required_insertions_by_path or {}).get(path, ()):
-                matched = isinstance(value, str) and bool(value) and value in content
-                insertion_proof.append({"value": value, "result": "MATCH" if matched else "NO_MATCH"})
-            if any(item["result"] != "MATCH" for item in insertion_proof):
-                raise PlanningEvidenceError(
-                    f"NO_CHANGE for {path!r} lacks a required insertion"
-                )
             no_change.append(path)
         else:
             raise PlanningEvidenceError(f"disposition for {path!r} must be CHANGE or NO_CHANGE")
         output = None if path in deleted else (proposed_contents_by_path or {}).get(path, content)
+        insertion_values = tuple((required_insertions_by_path or {}).get(path, ()))
+        if insertion_values:
+            if output is None:
+                raise PlanningEvidenceError(
+                    f"{state} for {path!r} lacks a required insertion"
+                )
+            insertion_record = evaluate_path_predicates(
+                path=path, content=output, repository_revision=repository_revision,
+                predicates=[{"kind": "TEXT_PRESENT", "value": value}
+                            for value in insertion_values],
+                source_id="generated-insertion-reconciliation", region=region,
+            )
+            insertion_proof = [
+                {"value": value, "result": result["result"]}
+                for value, result in zip(
+                    insertion_values, insertion_record["predicateResults"], strict=True
+                )
+            ]
+            if any(item["result"] != "MATCH" for item in insertion_proof):
+                raise PlanningEvidenceError(
+                    f"{state} for {path!r} lacks a required insertion"
+                )
         records.append({"path": path, "disposition": state, "targetSha256": digest,
             "outputSha256": None if output is None else sha256(output.encode()).hexdigest(),
             "postState": "ABSENT" if path in deleted else "PRESENT",

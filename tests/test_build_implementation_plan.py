@@ -294,6 +294,26 @@ def test_shared_insertion_requires_one_lexical_criterion_owner() -> None:
         )
 
 
+def test_unsupported_list_must_exactly_match_classifications() -> None:
+    output = dict(VALID_PLAN)
+    insertion = {"path": "src/a.py", "value": "first"}
+    output["requiredInsertions"] = [insertion]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [insertion],
+    }]
+    # The same criterion cannot remain in the unsupported list after the
+    # Planner classified it as implementable.
+    store, handler, task, _adapter = setup_handler(output)
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.CONFIGURATION
+    assert "exactly match UNSUPPORTED classifications" in result.message
+
+
 def test_invalid_non_object_output_is_rejected_without_artifact() -> None:
     store, handler, task, adapter = setup_handler(["not", "a", "plan"])
 

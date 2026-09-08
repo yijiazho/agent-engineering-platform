@@ -272,6 +272,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         targets=[item for item in editable_targets if item["path"] in required_change_paths],
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
+                        regions_by_path=_regions_by_path(plan),
                         evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
                         proposed_contents_by_path={
                             item["path"]: item["content"] for item in changes
@@ -1037,6 +1038,20 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
             values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
                 result[item["path"]] = tuple(value for value in values if isinstance(value, Mapping))
+    return result
+
+
+def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
+    result = {}
+    for item in plan.get("_trustedPathEvidence", ()):
+        if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
+            continue
+        inspection = item.get("inspection")
+        region = inspection.get("region") if isinstance(inspection, Mapping) else None
+        if isinstance(region, Mapping):
+            kind, name = region.get("kind"), region.get("name")
+            if isinstance(kind, str) and isinstance(name, str):
+                result[item["path"]] = {"kind": kind, "name": name}
     return result
 
 

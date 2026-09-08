@@ -129,7 +129,17 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             raise BuildImplementationPlanContractError(
                 "implementation plan must classify every analyzed acceptance criterion exactly once"
             )
-        unsupported = set(plan.get("unsupportedAcceptanceCriteria", ()))
+        unsupported_values = plan.get("unsupportedAcceptanceCriteria", ())
+        if (
+            isinstance(unsupported_values, (str, bytes))
+            or not isinstance(unsupported_values, Sequence)
+            or any(not isinstance(value, str) or not value for value in unsupported_values)
+            or len(set(unsupported_values)) != len(unsupported_values)
+        ):
+            raise BuildImplementationPlanContractError(
+                "unsupportedAcceptanceCriteria must contain unique criteria"
+            )
+        unsupported = set(unsupported_values)
         insertions = {
             (item.get("path"), item.get("value"))
             for item in plan.get("requiredInsertions", ())
@@ -194,6 +204,15 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         if bound != insertions:
             raise BuildImplementationPlanContractError(
                 "every required insertion must have deterministic criterion ownership"
+            )
+        classified_unsupported = {
+            str(item.get("criterion"))
+            for item in classifications
+            if item.get("classification") == "UNSUPPORTED"
+        }
+        if unsupported != classified_unsupported:
+            raise BuildImplementationPlanContractError(
+                "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
             )
 
     def _context_arguments(
