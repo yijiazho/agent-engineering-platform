@@ -18,7 +18,11 @@ from aep.filesystem_tool import (
     FILESYSTEM_OUTPUT_SCHEMA,
     FilesystemTool,
 )
-from aep.generate_patch import GeneratePatchContractError, GeneratePatchTaskHandler
+from aep.generate_patch import (
+    GeneratePatchContractError,
+    GeneratePatchTaskHandler,
+    _verify_no_change_targets,
+)
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.git_tool import (
     GIT_INPUT_SCHEMA,
@@ -51,6 +55,27 @@ PLAN_EVALUATION_ID = "evaluationresult-eeeeeeeeeeee"
 PLAN_ARTIFACT_ID = "generatedartifact-ffffffffffff"
 BRANCH = "agent/work"
 ROOT = Path(__file__).parents[1]
+
+
+def test_planning_no_change_insertions_remain_region_scoped() -> None:
+    content = "# Target\n\nsrc/\n\n# Other\n\ndeploy/ outside\n"
+    target = {
+        "path": "README.md",
+        "content": content,
+        "repositoryRevision": "a" * 40,
+    }
+
+    with pytest.raises(
+        GeneratePatchContractError, match="not deterministically satisfied"
+    ):
+        _verify_no_change_targets(
+            ["README.md"],
+            [{"path": "README.md", "value": "deploy/"}],
+            [target],
+            regions_by_path={
+                "README.md": {"kind": "MARKDOWN_SECTION", "name": "Target"}
+            },
+        )
 
 CHANGE_SCHEMA = {
     "type": "object",

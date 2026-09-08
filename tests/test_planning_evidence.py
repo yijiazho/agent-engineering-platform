@@ -125,6 +125,17 @@ def test_ambiguous_or_missing_structured_field_fails_closed(
             predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}], source_id="snapshot")
 
 
+def test_non_heading_hash_text_prevents_later_status_from_becoming_leading() -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content="#not-a-heading\n\n**Status:** In Progress\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+            source_id="snapshot",
+        )
+
+
 def test_plan_contract_rejects_overlap_omission_and_stale_evidence() -> None:
     item = evidence("docs/task.md", "In Progress")
     plan = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": ["docs/task.md"],
@@ -285,6 +296,39 @@ def test_reconciliation_proves_an_authorized_deleted_post_state() -> None:
     assert disposition["postState"] == "ABSENT"
     assert disposition["outputSha256"] is None
     assert disposition["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_reconciliation_rejects_whole_file_delete_from_scoped_evidence() -> None:
+    content = "# Target\n\nobsolete text\n\n# Other\n\nkeep me\n"
+    target = {
+        "path": "docs/task.md",
+        "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION,
+        "provenance": {},
+    }
+
+    with pytest.raises(
+        PlanningEvidenceError, match="cannot rely on region-scoped evidence"
+    ):
+        reconcile_dispositions(
+            plan_id="artifact-1",
+            repository_revision=REVISION,
+            original_required_paths=["docs/task.md"],
+            targets=[target],
+            dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}],
+            postconditions_by_path={
+                "docs/task.md": ({"kind": "TEXT_ABSENT", "value": "obsolete text"},)
+            },
+            proposed_contents_by_path={},
+            deleted_paths=["docs/task.md"],
+            regions_by_path={
+                "docs/task.md": {"kind": "MARKDOWN_SECTION", "name": "Target"}
+            },
+            evaluator_ref={
+                "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+            },
+        )
 
 
 def test_reconciliation_targets_exactly_cover_original_required_paths() -> None:

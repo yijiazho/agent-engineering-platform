@@ -729,8 +729,12 @@ def _pinned_workspace_reader(
                 status_fields = []
                 for match in status_pattern.finditer(prefix_text):
                     before = prefix_text[:match.start()].splitlines()
-                    if any(line.strip() and not line.startswith("#") and
-                           not re.match(r"^\*\*Status:\*\*", line) for line in before):
+                    if any(
+                        line.strip()
+                        and not re.match(r"^ {0,3}#{1,6}(?:\s+|$)", line)
+                        and not re.match(r"^\*\*Status:\*\*", line)
+                        for line in before
+                    ):
                         continue
                     status_fields.append(
                         (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)

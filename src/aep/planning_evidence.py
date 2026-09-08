@@ -43,8 +43,12 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     for match in _STATUS.finditer(content):
         prefix = content[:match.start()]
         lines = prefix.splitlines()
-        substantive = [line for line in lines if line.strip() and not line.startswith("#")
-                       and not _STATUS.match(line)]
+        substantive = [
+            line for line in lines
+            if line.strip()
+            and not re.match(r"^ {0,3}#{1,6}(?:\s+|$)", line)
+            and not _STATUS.match(line)
+        ]
         if substantive:
             continue
         fields.append((match.group("value"), content.count("\n", 0, match.start()) + 1))
@@ -364,6 +368,10 @@ def reconcile_dispositions(
         if state == "CHANGE":
             proposed = (proposed_contents_by_path or {}).get(path)
             if path in deleted:
+                if region is not None:
+                    raise PlanningEvidenceError(
+                        f"DELETE for {path!r} cannot rely on region-scoped evidence"
+                    )
                 postconditions = postconditions_by_path.get(path, ())
                 if not postconditions or any(
                     item.get("kind") != "TEXT_ABSENT"

@@ -27,7 +27,11 @@ from aep.filesystem_tool import FilesystemTool
 from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
-from aep.planning_evidence import PlanningEvidenceError, reconcile_dispositions
+from aep.planning_evidence import (
+    PlanningEvidenceError,
+    evaluate_path_predicates,
+    reconcile_dispositions,
+)
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeStoreError
 from aep.task_execution import FailureClass
@@ -179,7 +183,8 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 )
                 if insertion_no_change_paths:
                     _verify_no_change_targets(
-                        insertion_no_change_paths, required_insertions, editable_targets
+                        insertion_no_change_paths, required_insertions, editable_targets,
+                        regions_by_path=_regions_by_path(plan),
                     )
             else:
                 _verify_no_change_targets(
@@ -1111,16 +1116,30 @@ def _verify_no_change_targets(
     no_change_paths: Sequence[str],
     required_insertions: Sequence[Mapping[str, str]],
     editable_targets: Sequence[JsonMapping],
+    *,
+    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
     for path in no_change_paths:
         criteria = [item["value"] for item in required_insertions if item["path"] == path]
         target = next((item for item in editable_targets if item.get("path") == path), None)
         content = target.get("content") if isinstance(target, Mapping) else None
-        if (
-            not criteria
-            or not isinstance(content, str)
-            or any(value not in content for value in criteria)
-        ):
+        if not criteria or not isinstance(content, str):
+            raise GeneratePatchContractError(
+                f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
+            )
+        try:
+            evidence = evaluate_path_predicates(
+                path=path,
+                content=content,
+                repository_revision=str(target.get("repositoryRevision", "")),
+                predicates=[{"kind": "TEXT_PRESENT", "value": value}
+                            for value in criteria],
+                source_id="editable-target-no-change",
+                region=(regions_by_path or {}).get(path),
+            )
+        except PlanningEvidenceError as error:
+            raise GeneratePatchContractError(str(error)) from error
+        if any(item.get("result") != "MATCH" for item in evidence["predicateResults"]):
             raise GeneratePatchContractError(
                 f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
             )
