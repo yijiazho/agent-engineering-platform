@@ -264,7 +264,7 @@ def test_required_classification_must_bind_its_own_insertion() -> None:
     assert "bind its own insertion evidence" in result.message
 
 
-def test_shared_insertion_requires_one_lexical_criterion_owner() -> None:
+def test_shared_insertion_supports_non_owner_criterion_binding() -> None:
     class AnalysisArtifacts:
         def list_by_task_execution(self, _task_execution_id):
             return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
@@ -285,13 +285,9 @@ def test_shared_insertion_requires_one_lexical_criterion_owner() -> None:
         ],
     }
 
-    with pytest.raises(
-        BuildImplementationPlanContractError,
-        match="exactly one lexical criterion owner",
-    ):
-        handler._validate_acceptance_criteria_accounting(
-            {"dependencyTaskExecutionIds": ["analyze"]}, plan
-        )
+    handler._validate_acceptance_criteria_accounting(
+        {"dependencyTaskExecutionIds": ["analyze"]}, plan
+    )
 
 
 def test_unsupported_list_must_exactly_match_classifications() -> None:

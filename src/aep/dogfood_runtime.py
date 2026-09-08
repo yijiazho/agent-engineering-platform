@@ -724,7 +724,8 @@ def _pinned_workspace_reader(
                     prefix = prefix.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in prefix else b""
                 prefix_text = prefix.decode("utf-8")
                 status_pattern = re.compile(
-                    r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE
+                    r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$",
+                    re.MULTILINE,
                 )
                 status_fields = []
                 for match in status_pattern.finditer(prefix_text):
@@ -732,7 +733,7 @@ def _pinned_workspace_reader(
                     if any(
                         line.strip()
                         and not re.match(r"^ {0,3}#{1,6}(?:\s+|$)", line)
-                        and not re.match(r"^\*\*Status:\*\*", line)
+                        and not status_pattern.fullmatch(line)
                         for line in before
                     ):
                         continue

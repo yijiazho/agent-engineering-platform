@@ -725,7 +725,8 @@ all matching and insertion evidence is evaluated only inside that region. The
 body-free record retains its region identity, match count, completeness, and
 selection identity. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
-are deduplicated and owned deterministically by lexical criterion order, while
+remain bound to every criterion they support, are deduplicated in the canonical
+collection, and are owned deterministically by lexical criterion order, while
 unsupported criteria bind none.
 
 The checkout-bound implementation reads `revision:path` through Git rather

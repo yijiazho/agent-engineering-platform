@@ -240,6 +240,7 @@ text matching for structured status fields.
   with stable safe messages.
 * Every analyzed acceptance criterion is classified exactly once, every
   canonical required insertion has deterministic criterion ownership, and
+  shared insertions remain bound to supported non-owner criteria while
   unsupported criteria cannot carry insertion bindings.
 * A credential-free issue #85 regression with at least two task files produces
   a valid implementation plan instead of

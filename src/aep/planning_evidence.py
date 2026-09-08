@@ -30,7 +30,10 @@ class PlanningEvidenceInspectionError(PlanningEvidenceError):
         super().__init__(reason)
 
 
-_STATUS = re.compile(r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE)
+_STATUS = re.compile(
+    r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$",
+    re.MULTILINE,
+)
 
 
 def _structured_status_fields(content: str) -> list[tuple[str, int]]:
