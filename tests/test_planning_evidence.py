@@ -97,6 +97,35 @@ def test_markdown_section_selector_ignores_headings_inside_fences() -> None:
     assert record["inspection"]["region"]["matchCount"] == 1
 
 
+def test_markdown_section_preserves_non_delimited_trailing_hash() -> None:
+    content = "# Target#\n\nwrong section\n\n# Target\n\nright section\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "right section"},
+            {"kind": "TEXT_ABSENT", "value": "wrong section"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
+def test_markdown_section_strips_whitespace_delimited_closing_hashes() -> None:
+    record = evaluate_path_predicates(
+        path="README.md", content="# Target ###  \n\ninside\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
 def test_structured_status_is_evaluated_inside_the_selected_region() -> None:
     content = (
         "# Document\n\n**Status:** Completed\n\n"

@@ -724,7 +724,9 @@ may also declare a uniquely selected `MARKDOWN_SECTION` or `MARKDOWN_FENCE` by
 name. Missing, duplicate, malformed, or unsupported regions fail closed, and
 all matching and insertion evidence is evaluated only inside that region. The
 body-free record retains its region identity, match count, completeness, and
-selection identity. A single acceptance criterion binds zero, one, or many
+selection identity. Markdown ATX section names strip a trailing hash sequence
+only when whitespace-delimited as closing syntax; a literal trailing hash
+remains part of the section name. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
 remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while

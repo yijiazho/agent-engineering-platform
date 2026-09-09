@@ -121,9 +121,19 @@ def _markdown_structure(
             marker = fence.group("marker")
             active = (marker[0], len(marker), offset, fence.group("info").strip(), line_number)
         else:
-            heading = re.match(r"^ {0,3}(?P<marks>#{1,6})\s+(?P<title>.+?)\s*#*\s*$", text)
+            heading = re.match(
+                r"^ {0,3}(?P<marks>#{1,6})(?:[ \t]+(?P<body>.*)|[ \t]*)$",
+                text,
+            )
             if heading:
-                headings.append((offset, heading.group("title"), len(heading.group("marks")), line_number))
+                title = (heading.group("body") or "").rstrip(" \t")
+                closing = re.match(r"^(?P<title>.*?)[ \t]+#+$", title)
+                if closing:
+                    title = closing.group("title").rstrip(" \t")
+                elif title and set(title) == {"#"}:
+                    title = ""
+                if title:
+                    headings.append((offset, title, len(heading.group("marks")), line_number))
         offset += len(line)
     if active is not None:
         raise PlanningEvidenceInspectionError(
