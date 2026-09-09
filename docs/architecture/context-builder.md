@@ -720,7 +720,10 @@ Agents receive immutable evidence and never query the repository provider.
 
 `STATUS_EQUALS` binds only the unique leading structured Status field. Blank
 lines and one initial level-one document title may precede it; later headings,
-narrative, example, and historical mentions are not status evidence. Planning predicates
+narrative, example, whitespace-only values, and historical mentions are not
+status evidence. For a selected Markdown section, its heading is the structural
+boundary rather than body content, so an immediately nested Status field is
+leading at any supported heading level. Planning predicates
 may also declare a uniquely selected `MARKDOWN_SECTION` or `MARKDOWN_FENCE` by
 name. Missing, duplicate, malformed, or unsupported regions fail closed, and
 all matching and insertion evidence is evaluated only inside that region. The
@@ -729,7 +732,8 @@ selection identity. Markdown ATX section names strip a trailing hash sequence
 only when whitespace-delimited as closing syntax; a literal trailing hash
 remains part of the section name. Fenced-region predicates evaluate only the
 content between delimiters; the opener and info string contribute identity but
-cannot satisfy text predicates. A single acceptance criterion binds zero, one, or many
+cannot satisfy text predicates. Tilde-fence info strings may contain backticks;
+the backtick restriction applies only to backtick fence openers. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
 remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while
@@ -742,6 +746,9 @@ Planner cross-field check runs inside invocation output validation before a
 successful AgentInvocation can be persisted.
 Every canonical insertion path must also have trusted planning evidence and
 therefore belong to the authoritative path set before planner success.
+An `UNSUPPORTED` criterion with expected insertions requires trusted evidence
+that at least one expected path is itself unsupported; supported path evidence
+cannot be discarded by classification alone.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the

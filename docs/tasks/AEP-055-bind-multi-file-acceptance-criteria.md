@@ -242,7 +242,9 @@ text matching for structured status fields.
 * Every analyzed acceptance criterion is classified exactly once, every
   canonical required insertion has deterministic criterion ownership, and
   shared insertions remain bound to supported non-owner criteria while
-  unsupported criteria cannot carry insertion bindings.
+  unsupported criteria cannot carry insertion bindings. Criteria with expected
+  insertions may be `UNSUPPORTED` only when trusted evidence classifies at least
+  one expected path as unsupported.
 * A credential-free issue #85 regression with at least two task files produces
   a valid implementation plan instead of
   `each required-insertion classification must bind its own insertion evidence`.

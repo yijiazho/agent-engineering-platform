@@ -99,14 +99,36 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         output: Any,
     ) -> list[str]:
         try:
-            self._validate_acceptance_criteria_accounting(task_execution, output)
-            evidence_paths = {
-                item.get("content", {}).get("path")
+            evidence = [
+                item.get("content", {})
                 for item in context_package.get("elements", ())
                 if isinstance(item, Mapping)
                 and item.get("type") == "planning-evidence"
                 and isinstance(item.get("content"), Mapping)
-            }
+            ]
+            evidence_paths = {item.get("path") for item in evidence}
+            unsupported_evidence_paths = set()
+            for item in evidence:
+                states = [
+                    result.get("result")
+                    for result in item.get("predicateResults", ())
+                    if isinstance(result, Mapping)
+                ]
+                post_states = [
+                    result.get("result")
+                    for result in item.get("postconditionResults", ())
+                    if isinstance(result, Mapping)
+                ]
+                required = bool(states) and all(state == "MATCH" for state in states)
+                no_change = bool(post_states) and all(
+                    state == "MATCH" for state in post_states
+                )
+                if "UNSUPPORTED" in states or not (required or no_change):
+                    unsupported_evidence_paths.add(item.get("path"))
+            self._validate_acceptance_criteria_accounting(
+                task_execution, output,
+                unsupported_evidence_paths=unsupported_evidence_paths,
+            )
             insertion_paths = {
                 item.get("path") for item in output.get("requiredInsertions", ())
                 if isinstance(item, Mapping)
@@ -120,7 +142,8 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         return []
 
     def _validate_acceptance_criteria_accounting(
-        self, task_execution: Mapping[str, Any], plan: Any
+        self, task_execution: Mapping[str, Any], plan: Any,
+        *, unsupported_evidence_paths: set[Any] | None = None,
     ) -> None:
         if not isinstance(plan, Mapping):
             return
@@ -261,6 +284,17 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must have no insertion bindings"
                 )
+            if disposition == "UNSUPPORTED" and expected_by_criterion[str(criterion)]:
+                expected_paths = {
+                    path for path, _value in expected_by_criterion[str(criterion)]
+                }
+                if (
+                    unsupported_evidence_paths is not None
+                    and not expected_paths.intersection(unsupported_evidence_paths)
+                ):
+                    raise BuildImplementationPlanContractError(
+                        "unsupported criterion requires trusted unsupported path evidence"
+                    )
             if disposition == "REQUIRED_INSERTION" and not bindings:
                 raise BuildImplementationPlanContractError(
                     "each required-insertion classification must bind at least one insertion"

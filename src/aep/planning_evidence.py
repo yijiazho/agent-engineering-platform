@@ -31,7 +31,7 @@ class PlanningEvidenceInspectionError(PlanningEvidenceError):
 
 
 _STATUS = re.compile(
-    r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$",
+    r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$",
     re.MULTILINE,
 )
 _TITLE = re.compile(r"^ {0,3}#(?:\s+|$)")
@@ -111,17 +111,22 @@ def _markdown_structure(
     offset = 0
     for line_number, line in enumerate(content.splitlines(keepends=True), start=1):
         text = line.rstrip("\r\n")
-        fence = re.match(r"^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>[^`]*)$", text)
+        fence = re.match(
+            r"^ {0,3}(?:(?P<ticks>`{3,})(?P<tick_info>[^`]*)|"
+            r"(?P<tildes>~{3,})(?P<tilde_info>.*))$",
+            text,
+        )
         if active is not None:
             marker_char, marker_length, start, info, start_line = active
             if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}\s*$", text):
                 fences.append((start, offset, info, start_line))
                 active = None
         elif fence:
-            marker = fence.group("marker")
+            marker = fence.group("ticks") or fence.group("tildes")
+            info = fence.group("tick_info") or fence.group("tilde_info") or ""
             active = (
                 marker[0], len(marker), offset + len(line),
-                fence.group("info").strip(), line_number,
+                info.strip(), line_number,
             )
         else:
             heading = re.match(
@@ -197,9 +202,14 @@ def evaluate_path_predicates(
         if kind == "STATUS_EQUALS":
             if region is not None:
                 base_line = content.count("\n", 0, start)
+                status_content = scoped_content
+                if region.get("kind") == "MARKDOWN_SECTION":
+                    _heading, separator, status_content = scoped_content.partition("\n")
+                    if separator:
+                        base_line += 1
                 fields = [
                     (value, line + base_line)
-                    for value, line in _structured_status_fields(scoped_content)
+                    for value, line in _structured_status_fields(status_content)
                 ]
             else:
                 fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)

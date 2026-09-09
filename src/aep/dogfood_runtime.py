@@ -671,7 +671,7 @@ def _pinned_workspace_reader(
             inspected = 0
             decoder = codecs.getincrementaldecoder("utf-8")()
             status_pattern = re.compile(
-                r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$"
+                r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$"
             )
             title_pattern = re.compile(r"^ {0,3}#(?:\s+|$)")
             status_fields: list[tuple[str, int]] = []
