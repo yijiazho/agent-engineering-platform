@@ -115,11 +115,14 @@ def _markdown_structure(
         if active is not None:
             marker_char, marker_length, start, info, start_line = active
             if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}\s*$", text):
-                fences.append((start, offset + len(line), info, start_line))
+                fences.append((start, offset, info, start_line))
                 active = None
         elif fence:
             marker = fence.group("marker")
-            active = (marker[0], len(marker), offset, fence.group("info").strip(), line_number)
+            active = (
+                marker[0], len(marker), offset + len(line),
+                fence.group("info").strip(), line_number,
+            )
         else:
             heading = re.match(
                 r"^ {0,3}(?P<marks>#{1,6})(?:[ \t]+(?P<body>.*)|[ \t]*)$",

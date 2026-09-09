@@ -372,6 +372,34 @@ def test_partial_binding_fails_before_agent_invocation_success() -> None:
     assert "generatedArtifactIds" not in execution
 
 
+def test_insertion_path_requires_trusted_planning_evidence() -> None:
+    insertion = {"path": "README.md", "value": "x"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [insertion]
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [insertion]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [insertion],
+    }]
+    store, handler, task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+
+    errors = handler._invocation_output_errors(
+        store.get(TASK_EXECUTION_ID),
+        {"elements": [{
+            "type": "planning-evidence",
+            "content": {"path": "src/aep/build_implementation_plan.py"},
+        }]},
+        output,
+    )
+
+    assert errors == ["required insertions must target trusted authorized paths"]
+
+
 def test_unsupported_criterion_does_not_claim_analyzed_insertions() -> None:
     class AnalysisArtifacts:
         def list_by_task_execution(self, _task_execution_id):

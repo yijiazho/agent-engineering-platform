@@ -668,9 +668,32 @@ def _pinned_workspace_reader(
                     applied_ceiling=max_bytes)
             digest = sha256()
             data = bytearray() if strategy == "COMPLETE_BLOB_SCAN" else None
-            status_prefix = bytearray()
             inspected = 0
             decoder = codecs.getincrementaldecoder("utf-8")()
+            status_pattern = re.compile(
+                r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$"
+            )
+            title_pattern = re.compile(r"^ {0,3}#(?:\s+|$)")
+            status_fields: list[tuple[str, int]] = []
+            status_buffer = ""
+            status_line = 1
+            status_active = data is None
+            title_seen = False
+            status_seen = False
+
+            def consume_status_line(line: str) -> None:
+                nonlocal status_active, title_seen, status_seen, status_line
+                text = line.removesuffix("\r")
+                if text.strip():
+                    match = status_pattern.fullmatch(text)
+                    if match:
+                        status_fields.append((match.group("value"), status_line))
+                        status_seen = True
+                    elif not title_seen and not status_seen and title_pattern.match(text):
+                        title_seen = True
+                    else:
+                        status_active = False
+                status_line += 1
             process = subprocess.Popen(
                 ["git", "-C", str(root), "cat-file", "blob", object_name],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -689,22 +712,28 @@ def _pinned_workspace_reader(
                             "BINARY_CONTENT", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy)
                     try:
-                        decoder.decode(chunk, final=False)
+                        decoded = decoder.decode(chunk, final=False)
                     except UnicodeDecodeError as error:
                         raise PlanningEvidenceInspectionError(
                             "INVALID_UTF8", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy) from error
                     if data is not None:
                         data.extend(chunk)
-                    elif len(status_prefix) < status_scan_bytes:
-                        remaining = status_scan_bytes - len(status_prefix)
-                        status_prefix.extend(chunk[:remaining])
+                    elif status_active:
+                        status_buffer += decoded
+                        while "\n" in status_buffer and status_active:
+                            line, status_buffer = status_buffer.split("\n", 1)
+                            consume_status_line(line)
             try:
-                decoder.decode(b"", final=True)
+                final_text = decoder.decode(b"", final=True)
             except UnicodeDecodeError as error:
                 raise PlanningEvidenceInspectionError(
                     "INVALID_UTF8", path=path, blob_size=size,
                     applied_ceiling=max_bytes, strategy=strategy) from error
+            if data is None and status_active:
+                status_buffer += final_text
+                if status_buffer:
+                    consume_status_line(status_buffer)
             assert process.stderr is not None
             stderr = process.stderr.read()
             return_code = process.wait()
@@ -717,39 +746,6 @@ def _pinned_workspace_reader(
                     "CONCURRENT_SIZE_DRIFT", path=path, blob_size=inspected,
                     applied_ceiling=max_bytes)
             raw = bytes(data) if data is not None else b""
-            status_fields: list[tuple[str, int]] = []
-            if data is None:
-                prefix = bytes(status_prefix)
-                if size > len(prefix) and not prefix.endswith((b"\n", b"\r")):
-                    prefix = prefix.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in prefix else b""
-                prefix_text = prefix.decode("utf-8")
-                status_pattern = re.compile(
-                    r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>[^\r\n]+?)[^\S\r\n]*$",
-                    re.MULTILINE,
-                )
-                title_pattern = re.compile(r"^ {0,3}#(?:\s+|$)")
-                status_fields = []
-                for match in status_pattern.finditer(prefix_text):
-                    before = prefix_text[:match.start()].splitlines()
-                    title_seen = False
-                    status_seen = False
-                    valid_prefix = True
-                    for line in before:
-                        if not line.strip():
-                            continue
-                        if status_pattern.fullmatch(line):
-                            status_seen = True
-                            continue
-                        if not title_seen and not status_seen and title_pattern.match(line):
-                            title_seen = True
-                            continue
-                        valid_prefix = False
-                        break
-                    if not valid_prefix:
-                        continue
-                    status_fields.append(
-                        (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)
-                    )
             try:
                 content = raw.decode("utf-8") if data is not None else ""
             except UnicodeDecodeError as error:

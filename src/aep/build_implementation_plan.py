@@ -95,10 +95,26 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         return canonical
 
     def _invocation_output_errors(
-        self, task_execution: Mapping[str, Any], output: Any
+        self, task_execution: Mapping[str, Any], context_package: Mapping[str, Any],
+        output: Any,
     ) -> list[str]:
         try:
             self._validate_acceptance_criteria_accounting(task_execution, output)
+            evidence_paths = {
+                item.get("content", {}).get("path")
+                for item in context_package.get("elements", ())
+                if isinstance(item, Mapping)
+                and item.get("type") == "planning-evidence"
+                and isinstance(item.get("content"), Mapping)
+            }
+            insertion_paths = {
+                item.get("path") for item in output.get("requiredInsertions", ())
+                if isinstance(item, Mapping)
+            } if isinstance(output, Mapping) else set()
+            if evidence_paths and not insertion_paths.issubset(evidence_paths):
+                raise BuildImplementationPlanContractError(
+                    "required insertions must target trusted authorized paths"
+                )
         except BuildImplementationPlanContractError as error:
             return [str(error)]
         return []

@@ -126,6 +126,18 @@ def test_markdown_section_strips_whitespace_delimited_closing_hashes() -> None:
     assert record["predicateResults"][0]["result"] == "MATCH"
 
 
+def test_markdown_fence_matches_only_body_content() -> None:
+    record = evaluate_path_predicates(
+        path="example.md", content="```python\nprint('ok')\n```\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_ABSENT", "value": "python"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_FENCE", "name": "python"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
 def test_structured_status_is_evaluated_inside_the_selected_region() -> None:
     content = (
         "# Document\n\n**Status:** Completed\n\n"

@@ -151,7 +151,7 @@ class AnalyzeIssueTaskHandler:
                 started_at=started_at,
                 completed_at=self._timestamp(),
                 output_validator=lambda output: self._invocation_output_errors(
-                    task_execution, output
+                    task_execution, context_package, output
                 ),
             )
             self._attach(
@@ -249,9 +249,9 @@ class AnalyzeIssueTaskHandler:
         return output
 
     def _invocation_output_errors(
-        self, task_execution: JsonMapping, output: Any
+        self, task_execution: JsonMapping, context_package: JsonMapping, output: Any
     ) -> list[str]:
-        del task_execution
+        del task_execution, context_package
         if self.task_name != "analyze-issue":
             return []
         try:

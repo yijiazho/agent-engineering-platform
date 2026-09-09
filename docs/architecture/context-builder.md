@@ -705,9 +705,10 @@ only serialized body-free evidence does.
 
 Every repository reader used for planning evidence implements the typed
 inspection interface; legacy whole-file callables are rejected. Structured
-status matching stops at the cumulative `statusFieldScanBytes` offset while the
-reader continues streaming only to validate UTF-8 and compute complete blob
-identity. Complete scans recheck their ceiling before every buffer extension,
+status matching retains no body beyond `statusFieldScanBytes`, but the reader
+continues parsing leading metadata across the complete stream to detect later
+ambiguity while validating UTF-8 and computing complete blob identity. Complete
+scans recheck their ceiling before every buffer extension,
 derive structured fields from their retained complete content when predicates
 are mixed, and reject unsafe exact or prefix paths before repository lookup.
 Aggregate-limit failures carry the same safe structured metadata as reader
@@ -726,7 +727,9 @@ all matching and insertion evidence is evaluated only inside that region. The
 body-free record retains its region identity, match count, completeness, and
 selection identity. Markdown ATX section names strip a trailing hash sequence
 only when whitespace-delimited as closing syntax; a literal trailing hash
-remains part of the section name. A single acceptance criterion binds zero, one, or many
+remains part of the section name. Fenced-region predicates evaluate only the
+content between delimiters; the opener and info string contribute identity but
+cannot satisfy text predicates. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
 remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while
@@ -737,6 +740,8 @@ aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
 validates exact criterion-map coverage before publishing its artifact, and the
 Planner cross-field check runs inside invocation output validation before a
 successful AgentInvocation can be persisted.
+Every canonical insertion path must also have trusted planning evidence and
+therefore belong to the authoritative path set before planner success.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the
