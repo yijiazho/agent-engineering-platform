@@ -673,6 +673,7 @@ def _pinned_workspace_reader(
             status_pattern = re.compile(
                 r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$"
             )
+            status_prefix_pattern = re.compile(r"^\*\*Status:\*\*")
             title_pattern = re.compile(r"^ {0,3}#(?:\s+|$)")
             status_fields: list[tuple[str, int]] = []
             status_buffer = ""
@@ -689,6 +690,12 @@ def _pinned_workspace_reader(
                     if match:
                         status_fields.append((match.group("value"), status_line))
                         status_seen = True
+                    elif status_prefix_pattern.match(text):
+                        raise PlanningEvidenceInspectionError(
+                            "STATUS_FIELD_MALFORMED", path=path, blob_size=size,
+                            applied_ceiling=max_bytes, strategy=strategy,
+                            evaluation_complete=True,
+                        )
                     elif not title_seen and not status_seen and title_pattern.match(text):
                         title_seen = True
                     else:

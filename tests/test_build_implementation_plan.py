@@ -455,6 +455,39 @@ def test_unsupported_criterion_requires_unsupported_path_evidence() -> None:
     ]
 
 
+def test_required_criterion_rejects_unsupported_path_evidence() -> None:
+    insertion = {"path": "README.md", "value": "x"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [insertion]
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [insertion]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [insertion],
+    }]
+    store, handler, _task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+    errors = handler._invocation_output_errors(
+        store.get(TASK_EXECUTION_ID),
+        {"elements": [{
+            "type": "planning-evidence",
+            "content": {
+                "path": "README.md",
+                "predicateResults": [{"result": "UNSUPPORTED"}],
+                "postconditionResults": [],
+            },
+        }]},
+        output,
+    )
+
+    assert errors == [
+        "required-insertion criterion cannot rely on unsupported path evidence"
+    ]
+
+
 def test_unsupported_list_must_exactly_match_classifications() -> None:
     output = dict(VALID_PLAN)
     insertion = {"path": "src/a.py", "value": "first"}

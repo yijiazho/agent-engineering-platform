@@ -77,6 +77,19 @@ def test_planning_no_change_insertions_remain_region_scoped() -> None:
             },
         )
 
+
+def test_planning_no_change_uses_editable_target_byte_limit() -> None:
+    content = "x" * (65 * 1024) + "\nrequired value\n"
+    _verify_no_change_targets(
+        ["README.md"],
+        [{"path": "README.md", "value": "required value"}],
+        [{
+            "path": "README.md", "content": content,
+            "repositoryRevision": "a" * 40,
+        }],
+        max_bytes=128 * 1024,
+    )
+
 CHANGE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

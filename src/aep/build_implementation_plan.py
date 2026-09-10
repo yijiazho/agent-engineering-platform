@@ -276,6 +276,17 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "criterion insertion bindings must exactly match analyzed requirements"
                 )
+            if disposition == "REQUIRED_INSERTION":
+                expected_paths = {
+                    path for path, _value in expected_by_criterion[str(criterion)]
+                }
+                if (
+                    unsupported_evidence_paths is not None
+                    and expected_paths.intersection(unsupported_evidence_paths)
+                ):
+                    raise BuildImplementationPlanContractError(
+                        "required-insertion criterion cannot rely on unsupported path evidence"
+                    )
             if disposition == "UNSUPPORTED" and criterion not in unsupported:
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"

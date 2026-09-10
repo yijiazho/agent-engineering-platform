@@ -110,12 +110,13 @@ def test_status_scanner_rejects_malformed_leading_status_field(tmp_path: Path) -
     )
     revision = commit_repository(tmp_path)
 
-    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
-        "task.md", revision, max_bytes=100,
-        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
-    )
-
-    assert inspected.status_fields == ()
+    with pytest.raises(
+        PlanningEvidenceInspectionError, match="STATUS_FIELD_MALFORMED"
+    ):
+        _pinned_workspace_reader(tmp_path, revision).inspect(
+            "task.md", revision, max_bytes=100,
+            strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+        )
 
 
 def test_status_scanner_rejects_whitespace_only_status_value(tmp_path: Path) -> None:
@@ -123,12 +124,13 @@ def test_status_scanner_rejects_whitespace_only_status_value(tmp_path: Path) -> 
     target.write_text("**Status:**   \n", encoding="utf-8")
     revision = commit_repository(tmp_path)
 
-    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
-        "task.md", revision, max_bytes=100,
-        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
-    )
-
-    assert inspected.status_fields == ()
+    with pytest.raises(
+        PlanningEvidenceInspectionError, match="STATUS_FIELD_MALFORMED"
+    ):
+        _pinned_workspace_reader(tmp_path, revision).inspect(
+            "task.md", revision, max_bytes=100,
+            strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+        )
 
 
 def test_status_scanner_allows_only_one_document_title_before_status(tmp_path: Path) -> None:

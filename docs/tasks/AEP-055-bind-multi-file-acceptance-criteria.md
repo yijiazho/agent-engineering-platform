@@ -244,7 +244,8 @@ text matching for structured status fields.
   shared insertions remain bound to supported non-owner criteria while
   unsupported criteria cannot carry insertion bindings. Criteria with expected
   insertions may be `UNSUPPORTED` only when trusted evidence classifies at least
-  one expected path as unsupported.
+  one expected path as unsupported; they may be `REQUIRED_INSERTION` only when
+  none of their expected paths has unsupported evidence.
 * A credential-free issue #85 regression with at least two task files produces
   a valid implementation plan instead of
   `each required-insertion classification must bind its own insertion evidence`.
@@ -267,13 +268,17 @@ text matching for structured status fields.
   distinct stable results and cannot authorize a change or no-change decision.
 * Missing, duplicate, malformed, or ambiguous structured status fields fail
   with distinct deterministic classifications and create no authoritative
-  implementation plan.
+  implementation plan. A status-prefixed field with an empty or whitespace-only
+  value is `STATUS_FIELD_MALFORMED`, not `STATUS_FIELD_MISSING`.
 * Planning evidence for structured status checks contains field identity, line
   location, revision, complete blob digest, inspection limits, and selection
   identity, but no selected line text or complete file body.
 * Only blank lines and one initial level-one document title may precede the
   structured Status field; malformed fields and later section headings fail
   closed in both complete-content and streamed checkout readers.
+* Markdown section discovery ignores ATX-like headings inside raw HTML blocks,
+  and late no-change verification uses the same trusted editable-target byte
+  ceiling as target loading.
 * `requiredChangePaths`, `intendedFiles`, `noChangeFiles`, `unsupportedPaths`,
   `requiredInsertions`, and acceptance-criterion classifications reconcile to
   the same exact path set before an implementation-plan artifact is published.

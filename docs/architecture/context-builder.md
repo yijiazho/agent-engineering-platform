@@ -721,7 +721,9 @@ Agents receive immutable evidence and never query the repository provider.
 `STATUS_EQUALS` binds only the unique leading structured Status field. Blank
 lines and one initial level-one document title may precede it; later headings,
 narrative, example, whitespace-only values, and historical mentions are not
-status evidence. For a selected Markdown section, its heading is the structural
+status evidence. A status-prefixed line with no non-whitespace value fails as
+`STATUS_FIELD_MALFORMED`, distinct from a missing field, in both complete and
+streamed readers. For a selected Markdown section, its heading is the structural
 boundary rather than body content, so an immediately nested Status field is
 leading at any supported heading level. Planning predicates
 may also declare a uniquely selected `MARKDOWN_SECTION` or `MARKDOWN_FENCE` by
@@ -733,7 +735,9 @@ only when whitespace-delimited as closing syntax; a literal trailing hash
 remains part of the section name. Fenced-region predicates evaluate only the
 content between delimiters; the opener and info string contribute identity but
 cannot satisfy text predicates. Tilde-fence info strings may contain backticks;
-the backtick restriction applies only to backtick fence openers. A single acceptance criterion binds zero, one, or many
+the backtick restriction applies only to backtick fence openers. ATX-like lines
+inside raw HTML blocks such as `pre`, `script`, `style`, or `textarea` are not
+Markdown section headings. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
 remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while
@@ -748,7 +752,9 @@ Every canonical insertion path must also have trusted planning evidence and
 therefore belong to the authoritative path set before planner success.
 An `UNSUPPORTED` criterion with expected insertions requires trusted evidence
 that at least one expected path is itself unsupported; supported path evidence
-cannot be discarded by classification alone.
+cannot be discarded by classification alone. Symmetrically, a
+`REQUIRED_INSERTION` criterion is rejected if any expected path has unsupported
+evidence.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the
@@ -763,3 +769,5 @@ accept only the bounded diagnostic fields defined by the runtime schema;
 executor-supplied bodies or arbitrary detail keys are rejected before durable
 evidence is written. Paths exceeding the diagnostic text bound are represented
 by a deterministic SHA-256 identifier before failure metadata is attached.
+GeneratePatch applies the editable-target byte ceiling derived from the trusted
+Task token budget to both target loading and late no-change predicate checks.

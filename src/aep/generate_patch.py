@@ -158,12 +158,15 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 raise GeneratePatchContractError(
                     "GeneratePatch requires a clean checkout at the recorded repository revision"
                 )
+            editable_target_max_bytes = max(
+                1, int(task_spec["inputContextTokenBudget"]) * 4
+            )
             editable_targets = self._read_editable_targets(
                 task_execution=task_execution,
                 repository_revision=str(workflow["repositoryRevision"]),
                 paths=allowed_paths,
                 tool_ref=filesystem_read_ref,
-                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+                max_bytes=editable_target_max_bytes,
             )
             self._verify_targets_at_revision(
                 task_execution=task_execution,
@@ -171,7 +174,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 paths=allowed_paths,
                 targets=editable_targets,
                 tool_ref=git_read_ref,
-                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+                max_bytes=editable_target_max_bytes,
             )
             if "authorizedPaths" in plan:
                 _verify_plan_evidence_targets(
@@ -185,10 +188,12 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     _verify_no_change_targets(
                         insertion_no_change_paths, required_insertions, editable_targets,
                         regions_by_path=_regions_by_path(plan),
+                        max_bytes=editable_target_max_bytes,
                     )
             else:
                 _verify_no_change_targets(
-                    no_change_paths, required_insertions, editable_targets
+                    no_change_paths, required_insertions, editable_targets,
+                    max_bytes=editable_target_max_bytes,
                 )
             context_package = self._context_builder.build(
                 task=task,
@@ -1118,6 +1123,7 @@ def _verify_no_change_targets(
     editable_targets: Sequence[JsonMapping],
     *,
     regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    max_bytes: int = 64 * 1024,
 ) -> None:
     for path in no_change_paths:
         criteria = [item["value"] for item in required_insertions if item["path"] == path]
@@ -1136,6 +1142,7 @@ def _verify_no_change_targets(
                             for value in criteria],
                 source_id="editable-target-no-change",
                 region=(regions_by_path or {}).get(path),
+                max_bytes=max_bytes,
             )
         except PlanningEvidenceError as error:
             raise GeneratePatchContractError(str(error)) from error

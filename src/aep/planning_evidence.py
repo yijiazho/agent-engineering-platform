@@ -35,6 +35,7 @@ _STATUS = re.compile(
     re.MULTILINE,
 )
 _TITLE = re.compile(r"^ {0,3}#(?:\s+|$)")
+_STATUS_PREFIX = re.compile(r"^\*\*Status:\*\*")
 
 
 def _structured_status_fields(content: str) -> list[tuple[str, int]]:
@@ -44,26 +45,24 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     before the first substantive body line (blank lines and a title are fine).
     """
     fields = []
-    for match in _STATUS.finditer(content):
-        prefix = content[:match.start()]
-        lines = prefix.splitlines()
-        title_seen = False
-        status_seen = False
-        valid_prefix = True
-        for line in lines:
-            if not line.strip():
-                continue
-            if _STATUS.fullmatch(line):
-                status_seen = True
-                continue
-            if not title_seen and not status_seen and _TITLE.match(line):
-                title_seen = True
-                continue
-            valid_prefix = False
-            break
-        if not valid_prefix:
+    title_seen = False
+    status_seen = False
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        if not line.strip():
             continue
-        fields.append((match.group("value"), content.count("\n", 0, match.start()) + 1))
+        match = _STATUS.fullmatch(line)
+        if match:
+            fields.append((match.group("value"), line_number))
+            status_seen = True
+            continue
+        if _STATUS_PREFIX.match(line):
+            raise PlanningEvidenceInspectionError(
+                "STATUS_FIELD_MALFORMED", path="", evaluation_complete=True
+            )
+        if not title_seen and not status_seen and _TITLE.match(line):
+            title_seen = True
+            continue
+        break
     return fields
 
 
@@ -108,6 +107,7 @@ def _markdown_structure(
     headings: list[tuple[int, str, int, int]] = []
     fences: list[tuple[int, int, str, int]] = []
     active: tuple[str, int, int, str, int] | None = None
+    html_terminator: re.Pattern[str] | None = None
     offset = 0
     for line_number, line in enumerate(content.splitlines(keepends=True), start=1):
         text = line.rstrip("\r\n")
@@ -121,6 +121,25 @@ def _markdown_structure(
             if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}\s*$", text):
                 fences.append((start, offset, info, start_line))
                 active = None
+        elif html_terminator is not None:
+            if html_terminator.search(text):
+                html_terminator = None
+        elif html := re.match(
+            r"^ {0,3}<(?P<tag>script|pre|style|textarea)(?:\s|>|$)",
+            text,
+            re.IGNORECASE,
+        ):
+            terminator = re.compile(
+                rf"</{re.escape(html.group('tag'))}\s*>", re.IGNORECASE
+            )
+            if not terminator.search(text, html.end()):
+                html_terminator = terminator
+        elif "<!--" in text and re.match(r"^ {0,3}<!--", text):
+            if "-->" not in text[text.index("<!--") + 4:]:
+                html_terminator = re.compile(r"-->")
+        elif re.match(r"^ {0,3}<!\[CDATA\[", text, re.IGNORECASE):
+            if "]]>" not in text:
+                html_terminator = re.compile(r"\]\]>")
         elif fence:
             marker = fence.group("ticks") or fence.group("tildes")
             info = fence.group("tick_info") or fence.group("tilde_info") or ""
@@ -200,19 +219,27 @@ def evaluate_path_predicates(
     for predicate in predicates:
         kind, expected = predicate.get("kind"), predicate.get("value")
         if kind == "STATUS_EQUALS":
-            if region is not None:
-                base_line = content.count("\n", 0, start)
-                status_content = scoped_content
-                if region.get("kind") == "MARKDOWN_SECTION":
-                    _heading, separator, status_content = scoped_content.partition("\n")
-                    if separator:
-                        base_line += 1
-                fields = [
-                    (value, line + base_line)
-                    for value, line in _structured_status_fields(status_content)
-                ]
-            else:
-                fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)
+            try:
+                if region is not None:
+                    base_line = content.count("\n", 0, start)
+                    status_content = scoped_content
+                    if region.get("kind") == "MARKDOWN_SECTION":
+                        _heading, separator, status_content = scoped_content.partition("\n")
+                        if separator:
+                            base_line += 1
+                    fields = [
+                        (value, line + base_line)
+                        for value, line in _structured_status_fields(status_content)
+                    ]
+                else:
+                    fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)
+            except PlanningEvidenceInspectionError as error:
+                error.metadata.update({
+                    "path": path, "blobSize": complete_size,
+                    "appliedTrustedCeiling": max_bytes, "predicateType": kind,
+                    "inspectionStrategy": inspection_strategy,
+                })
+                raise
             if not fields:
                 raise PlanningEvidenceInspectionError(
                     "STATUS_FIELD_MISSING", path=path, blob_size=complete_size,

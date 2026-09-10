@@ -117,6 +117,26 @@ def test_markdown_section_ignores_headings_in_tilde_fence_with_backtick_info() -
     ]
 
 
+def test_markdown_section_ignores_headings_inside_raw_html_block() -> None:
+    content = (
+        "<pre>\n# Target\nwrong section\n</pre>\n\n"
+        "# Target\n\nright section\n"
+    )
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "right section"},
+            {"kind": "TEXT_ABSENT", "value": "wrong section"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
 def test_markdown_section_preserves_non_delimited_trailing_hash() -> None:
     content = "# Target#\n\nwrong section\n\n# Target\n\nright section\n"
     record = evaluate_path_predicates(
@@ -190,8 +210,8 @@ def test_structured_status_supports_a_nested_selected_section() -> None:
 
 @pytest.mark.parametrize(("content", "reason"), [
     ("**Status:** In Progress\n**Status:** Completed\n", "STATUS_FIELD_AMBIGUOUS"),
-    ("**Status:**\n**Status:** Completed\n", "STATUS_FIELD_MISSING"),
-    ("**Status:**   \n", "STATUS_FIELD_MISSING"),
+    ("**Status:**\n**Status:** Completed\n", "STATUS_FIELD_MALFORMED"),
+    ("**Status:**   \n", "STATUS_FIELD_MALFORMED"),
     ("# Task\n## Context\n**Status:** Completed\n", "STATUS_FIELD_MISSING"),
     ("no status", "STATUS_FIELD_MISSING"),
 ])
