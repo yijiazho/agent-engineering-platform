@@ -159,6 +159,18 @@ def test_markdown_section_ignores_all_other_raw_html_blocks(
     assert record["predicateResults"][0]["result"] == "MATCH"
 
 
+def test_markdown_section_ignores_hgroup_raw_html_block() -> None:
+    content = "paragraph\n<hgroup>\n# Target\nwrong section\n\n# Target\nright section\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "right section"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
 def test_generic_html_tag_does_not_interrupt_a_markdown_paragraph() -> None:
     content = "paragraph\n<x-example>\n# Target\n\ninside\n"
     record = evaluate_path_predicates(

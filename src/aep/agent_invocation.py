@@ -273,7 +273,54 @@ def invoke_agent(
         else _output_errors(output, agent["outputSchema"])
     )
     if not validation_errors and output_validator is not None:
-        validation_errors.extend(output_validator(output))
+        try:
+            validation_errors.extend(output_validator(output))
+        except Exception as error:
+            failure = {
+                "class": "EVALUATION",
+                "message": "output validator failed",
+                "retryable": False,
+            }
+            failed_model_changes: dict[str, Any] = {
+                "tokenUsage": response.usage.as_record(),
+                "latencyMs": response.latency_ms,
+                "providerMetadata": deepcopy(dict(response.provider_metadata)),
+                "schemaValidation": "FAILED",
+                "failure": failure,
+            }
+            if serialization_error is None:
+                failed_model_changes["outputAddress"] = _content_address(output)
+            if response.cost is not None:
+                failed_model_changes["cost"] = response.cost
+            failed_model = store.update_status(
+                model_invocation_id,
+                "FAILED",
+                expected_status="RUNNING",
+                updated_at=completed_at,
+                changes=failed_model_changes,
+            )
+            _validate_runtime(failed_model, "ModelInvocation")
+            _emit(lifecycle_logger, "ModelInvocationFailed", failed_model, completed_at)
+            failed_agent_changes: dict[str, Any] = {
+                "modelInvocationIds": [model_invocation_id],
+                "outputSchemaValidation": "FAILED",
+                "tokenUsage": response.usage.as_record(),
+                "failure": failure,
+            }
+            if serialization_error is None:
+                failed_agent_changes["output"] = output
+            if response.cost is not None:
+                failed_agent_changes["cost"] = response.cost
+            failed_agent = store.update_status(
+                invocation_id,
+                "FAILED",
+                expected_status="RUNNING",
+                updated_at=completed_at,
+                changes=failed_agent_changes,
+            )
+            _validate_runtime(failed_agent, "AgentInvocation")
+            _emit(lifecycle_logger, "AgentInvocationFailed", failed_agent, completed_at)
+            raise AgentInvocationContractError(failure["message"]) from error
     validation = "FAILED" if validation_errors else "PASSED"
     model_changes: dict[str, Any] = {
         "tokenUsage": response.usage.as_record(),

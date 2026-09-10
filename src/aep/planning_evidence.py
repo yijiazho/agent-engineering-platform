@@ -173,7 +173,7 @@ def _markdown_structure(
             r"^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|"
             r"caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|"
             r"fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|"
-            r"header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|"
+            r"header|hgroup|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|"
             r"noframes|ol|optgroup|option|p|param|search|section|summary|table|"
             r"tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|/?>|$)",
             text,
