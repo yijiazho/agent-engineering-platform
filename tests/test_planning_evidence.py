@@ -282,6 +282,17 @@ def test_non_heading_hash_text_prevents_later_status_from_becoming_leading() -> 
         )
 
 
+def test_unicode_whitespace_does_not_make_a_markdown_document_title() -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content="#\u00a0Narrative\n**Status:** Completed\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+            source_id="snapshot",
+        )
+
+
 def test_plan_contract_rejects_overlap_omission_and_stale_evidence() -> None:
     item = evidence("docs/task.md", "In Progress")
     plan = {"authorizedPaths": ["docs/task.md"], "requiredChangePaths": ["docs/task.md"],

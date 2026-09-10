@@ -674,11 +674,12 @@ def _pinned_workspace_reader(
                 r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$"
             )
             status_prefix_pattern = re.compile(r"^\*\*Status:\*\*")
-            title_pattern = re.compile(r"^ {0,3}#(?:\s+|$)")
+            title_pattern = re.compile(r"^ {0,3}#(?:[ \t]+|$)")
             status_fields: list[tuple[str, int]] = []
             status_buffer = ""
             status_line = 1
             status_active = data is None
+            status_after_cr = False
             title_seen = False
             status_seen = False
 
@@ -715,17 +716,32 @@ def _pinned_workspace_reader(
                 status_buffer += fragment
 
             def consume_status_text(value: str) -> None:
-                nonlocal status_buffer
+                nonlocal status_after_cr, status_buffer
                 remainder = value
+                if status_after_cr:
+                    if remainder.startswith("\n"):
+                        remainder = remainder[1:]
+                    status_after_cr = False
                 while remainder and status_active:
-                    boundary = remainder.find("\n")
-                    if boundary < 0:
+                    cr_boundary = remainder.find("\r")
+                    lf_boundary = remainder.find("\n")
+                    boundaries = tuple(
+                        item for item in (cr_boundary, lf_boundary) if item >= 0
+                    )
+                    if not boundaries:
                         retain_status_fragment(remainder)
                         return
+                    boundary = min(boundaries)
                     retain_status_fragment(remainder[:boundary])
                     consume_status_line(status_buffer)
                     status_buffer = ""
+                    delimiter = remainder[boundary]
                     remainder = remainder[boundary + 1:]
+                    if delimiter == "\r":
+                        if remainder.startswith("\n"):
+                            remainder = remainder[1:]
+                        elif not remainder:
+                            status_after_cr = True
             process = subprocess.Popen(
                 ["git", "-C", str(root), "cat-file", "blob", object_name],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,

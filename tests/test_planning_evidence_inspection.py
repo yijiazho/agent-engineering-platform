@@ -110,6 +110,48 @@ def test_status_scanner_rejects_an_overlong_unterminated_metadata_line(
     assert captured.value.metadata["evaluationComplete"] is False
 
 
+def test_status_scanner_recognizes_cr_only_line_boundaries(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_bytes(b"# Task\r**Status:** In Progress\rBody")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == (("In Progress", 2),)
+
+
+def test_status_scanner_handles_crlf_split_across_read_chunks(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    long_title = b"# " + b"x" * (64 * 1024 - 3)
+    target.write_bytes(long_title + b"\r\n**Status:** Completed\r\nBody")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100_000,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=70_000,
+    )
+
+    assert inspected.status_fields == (("Completed", 2),)
+
+
+def test_status_scanner_rejects_unicode_whitespace_as_title_separator(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text("#\u00a0Narrative\n**Status:** Completed\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == ()
+
+
 def test_status_scanner_does_not_match_truncated_boundary_line(tmp_path: Path) -> None:
     target = tmp_path / "task.md"
     target.write_text("header\n**Status:** Completed but not verified\n", encoding="utf-8")

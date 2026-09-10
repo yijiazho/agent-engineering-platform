@@ -710,7 +710,9 @@ continues parsing leading metadata across the complete stream to detect later
 ambiguity while validating UTF-8 and computing complete blob identity. The
 ceiling bounds each retained unterminated metadata line; exceeding it fails
 closed without retaining the remainder, while newline-delimited blank metadata
-can still be streamed to detect later ambiguity. Complete
+can still be streamed to detect later ambiguity. Streamed metadata recognizes
+LF, CRLF (including a delimiter split across chunks), and CR-only boundaries.
+Complete
 scans recheck their ceiling before every buffer extension,
 derive structured fields from their retained complete content when predicates
 are mixed, and reject unsafe exact or prefix paths before repository lookup.
@@ -722,7 +724,9 @@ postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
 
 `STATUS_EQUALS` binds only the unique leading structured Status field. Blank
-lines and one initial level-one document title may precede it; later headings,
+lines and one initial level-one document title may precede it; the title uses
+only Markdown space or tab separators, not arbitrary Unicode whitespace. Later
+headings,
 narrative, example, whitespace-only values, and historical mentions are not
 status evidence. A status-prefixed line with no non-whitespace value fails as
 `STATUS_FIELD_MALFORMED`, distinct from a missing field, in both complete and

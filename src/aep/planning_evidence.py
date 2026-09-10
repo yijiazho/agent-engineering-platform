@@ -34,7 +34,7 @@ _STATUS = re.compile(
     r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$",
     re.MULTILINE,
 )
-_TITLE = re.compile(r"^ {0,3}#(?:\s+|$)")
+_TITLE = re.compile(r"^ {0,3}#(?:[ \t]+|$)")
 _STATUS_PREFIX = re.compile(r"^\*\*Status:\*\*")
 
 
