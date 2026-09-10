@@ -137,6 +137,24 @@ def test_status_scanner_handles_crlf_split_across_read_chunks(tmp_path: Path) ->
     assert inspected.status_fields == (("Completed", 2),)
 
 
+def test_status_scanner_stops_retaining_after_leading_metadata_ends(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(
+        "**Status:** In Progress\n" + "x" * 1_000,
+        encoding="utf-8",
+    )
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=2_000,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == (("In Progress", 1),)
+
+
 def test_status_scanner_rejects_unicode_whitespace_as_title_separator(
     tmp_path: Path,
 ) -> None:

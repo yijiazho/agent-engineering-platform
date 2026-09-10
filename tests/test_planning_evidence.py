@@ -212,6 +212,18 @@ def test_markdown_fence_matches_only_body_content() -> None:
     assert record["predicateResults"][0]["result"] == "MATCH"
 
 
+def test_unicode_whitespace_does_not_close_a_markdown_fence() -> None:
+    with pytest.raises(PlanningEvidenceError, match="REGION_MALFORMED"):
+        evaluate_path_predicates(
+            path="example.md",
+            content="```python\nexample\n```\u00a0\n# Target\nwrong section\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "wrong section"}],
+            source_id="snapshot",
+            region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+        )
+
+
 def test_structured_status_is_evaluated_inside_the_selected_region() -> None:
     content = (
         "# Document\n\n**Status:** Completed\n\n"
@@ -290,6 +302,29 @@ def test_unicode_whitespace_does_not_make_a_markdown_document_title() -> None:
             repository_revision=REVISION,
             predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
             source_id="snapshot",
+        )
+
+
+def test_complete_status_scan_uses_only_cr_and_lf_line_boundaries() -> None:
+    record = evaluate_path_predicates(
+        path="docs/task.md",
+        content="**Status:** Completed\u2028Narrative",
+        repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+        source_id="snapshot",
+    )
+
+    assert record["predicateResults"][0]["result"] == "NO_MATCH"
+
+
+def test_whitespace_only_region_name_is_malformed() -> None:
+    with pytest.raises(PlanningEvidenceError, match="REGION_SELECTOR_MALFORMED"):
+        evaluate_path_predicates(
+            path="README.md", content="# Target\ninside\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+            source_id="snapshot",
+            region={"kind": "MARKDOWN_SECTION", "name": "   "},
         )
 
 

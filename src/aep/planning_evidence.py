@@ -47,7 +47,7 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     fields = []
     title_seen = False
     status_seen = False
-    for line_number, line in enumerate(content.splitlines(), start=1):
+    for line_number, line in enumerate(re.split(r"\r\n|[\r\n]", content), start=1):
         if not line.strip():
             continue
         match = _STATUS.fullmatch(line)
@@ -69,7 +69,7 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
 def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str, int]:
     kind = region.get("kind")
     name = region.get("name")
-    if not isinstance(kind, str) or not isinstance(name, str) or not name:
+    if not isinstance(kind, str) or not isinstance(name, str) or not name.strip():
         raise PlanningEvidenceInspectionError("REGION_SELECTOR_MALFORMED", path="", evaluation_complete=False)
     headings, fences = _markdown_structure(content)
     if kind == "MARKDOWN_SECTION":
@@ -120,7 +120,7 @@ def _markdown_structure(
         if active is not None:
             paragraph_active = False
             marker_char, marker_length, start, info, start_line = active
-            if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}\s*$", text):
+            if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}[ \t]*$", text):
                 fences.append((start, offset, info, start_line))
                 active = None
         elif html_terminator is not None:
@@ -260,12 +260,12 @@ def evaluate_path_predicates(
         if kind == "STATUS_EQUALS":
             try:
                 if region is not None:
-                    base_line = len(content[:start].splitlines())
+                    base_line = len(re.findall(r"\r\n|[\r\n]", content[:start]))
                     status_content = scoped_content
                     if region.get("kind") == "MARKDOWN_SECTION":
-                        scoped_lines = scoped_content.splitlines(keepends=True)
-                        if scoped_lines:
-                            status_content = "".join(scoped_lines[1:])
+                        heading_ending = re.search(r"\r\n|[\r\n]", scoped_content)
+                        if heading_ending:
+                            status_content = scoped_content[heading_ending.end():]
                             base_line += 1
                     fields = [
                         (value, line + base_line)

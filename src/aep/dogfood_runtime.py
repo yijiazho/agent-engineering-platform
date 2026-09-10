@@ -704,7 +704,25 @@ def _pinned_workspace_reader(
                 status_line += 1
 
             def retain_status_fragment(fragment: str) -> None:
-                nonlocal status_buffer
+                nonlocal status_active, status_buffer
+                candidate = status_buffer + fragment
+                if not candidate.isspace() and candidate:
+                    status_prefix = "**Status:**"
+                    if candidate.startswith(status_prefix):
+                        possible_metadata = True
+                    elif status_prefix.startswith(candidate):
+                        possible_metadata = True
+                    elif not title_seen and not status_seen:
+                        possible_metadata = (
+                            candidate == "#" or candidate.startswith("# ")
+                            or candidate.startswith("#\t")
+                        )
+                    else:
+                        possible_metadata = False
+                    if not possible_metadata:
+                        status_active = False
+                        status_buffer = ""
+                        return
                 retained_bytes = len(status_buffer.encode("utf-8"))
                 fragment_bytes = len(fragment.encode("utf-8"))
                 if retained_bytes + fragment_bytes > status_scan_bytes:
@@ -713,7 +731,7 @@ def _pinned_workspace_reader(
                         blob_size=size, applied_ceiling=status_scan_bytes,
                         strategy=strategy, evaluation_complete=False,
                     )
-                status_buffer += fragment
+                status_buffer = candidate
 
             def consume_status_text(value: str) -> None:
                 nonlocal status_after_cr, status_buffer
@@ -733,6 +751,8 @@ def _pinned_workspace_reader(
                         return
                     boundary = min(boundaries)
                     retain_status_fragment(remainder[:boundary])
+                    if not status_active:
+                        return
                     consume_status_line(status_buffer)
                     status_buffer = ""
                     delimiter = remainder[boundary]

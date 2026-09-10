@@ -712,6 +712,7 @@ ceiling bounds each retained unterminated metadata line; exceeding it fails
 closed without retaining the remainder, while newline-delimited blank metadata
 can still be streamed to detect later ambiguity. Streamed metadata recognizes
 LF, CRLF (including a delimiter split across chunks), and CR-only boundaries.
+Complete and region-scoped status scans use those same boundaries exclusively.
 Complete
 scans recheck their ceiling before every buffer extension,
 derive structured fields from their retained complete content when predicates
@@ -742,7 +743,9 @@ only when whitespace-delimited as closing syntax; a literal trailing hash
 remains part of the section name. Fenced-region predicates evaluate only the
 content between delimiters; the opener and info string contribute identity but
 cannot satisfy text predicates. Tilde-fence info strings may contain backticks;
-the backtick restriction applies only to backtick fence openers. ATX-like lines
+the backtick restriction applies only to backtick fence openers, and closing
+fences permit only spaces or tabs after their delimiters. Whitespace-only region
+names are malformed rather than missing. ATX-like lines
 inside every CommonMark raw HTML block form, including generic block tags,
 processing instructions, declarations, comments, and CDATA, are not Markdown
 section headings. A single acceptance criterion binds zero, one, or many
