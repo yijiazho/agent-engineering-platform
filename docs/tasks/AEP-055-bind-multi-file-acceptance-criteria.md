@@ -1,6 +1,6 @@
 # AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence
 
-**Status:** Not Started
+**Status:** In Progress
 
 ## Context
 
@@ -276,9 +276,10 @@ text matching for structured status fields.
 * Only blank lines and one initial level-one document title may precede the
   structured Status field; malformed fields and later section headings fail
   closed in both complete-content and streamed checkout readers.
-* Markdown section discovery ignores ATX-like headings inside raw HTML blocks,
-  and late no-change verification uses the same trusted editable-target byte
-  ceiling as target loading.
+* Markdown section discovery ignores ATX-like headings inside every CommonMark
+  raw HTML block form. Scoped status selection handles LF, CRLF, and CR-only
+  boundaries. Late no-change and reconciliation verification use the same
+  trusted editable-target byte ceiling as target loading.
 * `requiredChangePaths`, `intendedFiles`, `noChangeFiles`, `unsupportedPaths`,
   `requiredInsertions`, and acceptance-criterion classifications reconcile to
   the same exact path set before an implementation-plan artifact is published.

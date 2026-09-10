@@ -90,6 +90,26 @@ def test_status_scanner_detects_ambiguity_beyond_retained_prefix(tmp_path: Path)
     assert inspected.status_fields == (("In Progress", 1), ("Completed", 70_002))
 
 
+def test_status_scanner_rejects_an_overlong_unterminated_metadata_line(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(" " * 101, encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    with pytest.raises(
+        PlanningEvidenceInspectionError,
+        match="STATUS_FIELD_SCAN_LIMIT_EXCEEDED",
+    ) as captured:
+        _pinned_workspace_reader(tmp_path, revision).inspect(
+            "task.md", revision, max_bytes=200,
+            strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+        )
+
+    assert captured.value.metadata["appliedTrustedCeiling"] == 100
+    assert captured.value.metadata["evaluationComplete"] is False
+
+
 def test_status_scanner_does_not_match_truncated_boundary_line(tmp_path: Path) -> None:
     target = tmp_path / "task.md"
     target.write_text("header\n**Status:** Completed but not verified\n", encoding="utf-8")

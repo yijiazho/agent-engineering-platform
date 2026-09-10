@@ -108,6 +108,7 @@ def _markdown_structure(
     fences: list[tuple[int, int, str, int]] = []
     active: tuple[str, int, int, str, int] | None = None
     html_terminator: re.Pattern[str] | None = None
+    paragraph_active = False
     offset = 0
     for line_number, line in enumerate(content.splitlines(keepends=True), start=1):
         text = line.rstrip("\r\n")
@@ -117,11 +118,13 @@ def _markdown_structure(
             text,
         )
         if active is not None:
+            paragraph_active = False
             marker_char, marker_length, start, info, start_line = active
             if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}\s*$", text):
                 fences.append((start, offset, info, start_line))
                 active = None
         elif html_terminator is not None:
+            paragraph_active = False
             if html_terminator.search(text):
                 html_terminator = None
         elif html := re.match(
@@ -129,18 +132,51 @@ def _markdown_structure(
             text,
             re.IGNORECASE,
         ):
+            paragraph_active = False
             terminator = re.compile(
                 rf"</{re.escape(html.group('tag'))}\s*>", re.IGNORECASE
             )
             if not terminator.search(text, html.end()):
                 html_terminator = terminator
         elif "<!--" in text and re.match(r"^ {0,3}<!--", text):
+            paragraph_active = False
             if "-->" not in text[text.index("<!--") + 4:]:
                 html_terminator = re.compile(r"-->")
+        elif re.match(r"^ {0,3}<\?", text):
+            paragraph_active = False
+            if "?>" not in text:
+                html_terminator = re.compile(r"\?>")
+        elif re.match(r"^ {0,3}<![A-Z]", text):
+            paragraph_active = False
+            if ">" not in text:
+                html_terminator = re.compile(r">")
         elif re.match(r"^ {0,3}<!\[CDATA\[", text, re.IGNORECASE):
+            paragraph_active = False
             if "]]>" not in text:
                 html_terminator = re.compile(r"\]\]>")
+        elif re.match(
+            r"^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|"
+            r"caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|"
+            r"fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|"
+            r"header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|"
+            r"noframes|ol|optgroup|option|p|param|search|section|summary|table|"
+            r"tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|/?>|$)",
+            text,
+            re.IGNORECASE,
+        ):
+            paragraph_active = False
+            html_terminator = re.compile(r"^[ \t]*$")
+        elif not paragraph_active and re.match(
+            r"^ {0,3}</?[A-Za-z][A-Za-z0-9-]*"
+            r"(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*"
+            r"(?:\s*=\s*(?:[^ \t\r\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*"
+            r"\s*/?>[ \t]*$",
+            text,
+        ):
+            paragraph_active = False
+            html_terminator = re.compile(r"^[ \t]*$")
         elif fence:
+            paragraph_active = False
             marker = fence.group("ticks") or fence.group("tildes")
             info = fence.group("tick_info") or fence.group("tilde_info") or ""
             active = (
@@ -153,6 +189,7 @@ def _markdown_structure(
                 text,
             )
             if heading:
+                paragraph_active = False
                 title = (heading.group("body") or "").rstrip(" \t")
                 closing = re.match(r"^(?P<title>.*?)[ \t]+#+$", title)
                 if closing:
@@ -161,6 +198,8 @@ def _markdown_structure(
                     title = ""
                 if title:
                     headings.append((offset, title, len(heading.group("marks")), line_number))
+            else:
+                paragraph_active = bool(text.strip())
         offset += len(line)
     if active is not None:
         raise PlanningEvidenceInspectionError(
@@ -221,11 +260,12 @@ def evaluate_path_predicates(
         if kind == "STATUS_EQUALS":
             try:
                 if region is not None:
-                    base_line = content.count("\n", 0, start)
+                    base_line = len(content[:start].splitlines())
                     status_content = scoped_content
                     if region.get("kind") == "MARKDOWN_SECTION":
-                        _heading, separator, status_content = scoped_content.partition("\n")
-                        if separator:
+                        scoped_lines = scoped_content.splitlines(keepends=True)
+                        if scoped_lines:
+                            status_content = "".join(scoped_lines[1:])
                             base_line += 1
                     fields = [
                         (value, line + base_line)
@@ -398,6 +438,7 @@ def reconcile_dispositions(
     deleted_paths: Sequence[str] = (),
     required_insertions_by_path: Mapping[str, Sequence[str]] | None = None,
     regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    max_bytes: int = 64 * 1024,
 ) -> dict[str, Any]:
     """Create immutable reconciliation evidence from freshly verified targets."""
     target_map = {item.get("path"): item for item in targets}
@@ -463,6 +504,7 @@ def reconcile_dispositions(
                     predicates=postconditions_by_path.get(path, ()),
                     source_id="generated-change",
                     region=region,
+                    max_bytes=max_bytes,
                 )
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(
@@ -472,7 +514,7 @@ def reconcile_dispositions(
         elif state == "NO_CHANGE":
             proof = evaluate_path_predicates(path=path, content=content, repository_revision=repository_revision,
                 predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")),
-                region=region)
+                region=region, max_bytes=max_bytes)
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
             no_change.append(path)
@@ -490,6 +532,7 @@ def reconcile_dispositions(
                 predicates=[{"kind": "TEXT_PRESENT", "value": value}
                             for value in insertion_values],
                 source_id="generated-insertion-reconciliation", region=region,
+                max_bytes=max_bytes,
             )
             insertion_proof = [
                 {"value": value, "result": result["result"]}

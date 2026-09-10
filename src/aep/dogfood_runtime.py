@@ -701,6 +701,31 @@ def _pinned_workspace_reader(
                     else:
                         status_active = False
                 status_line += 1
+
+            def retain_status_fragment(fragment: str) -> None:
+                nonlocal status_buffer
+                retained_bytes = len(status_buffer.encode("utf-8"))
+                fragment_bytes = len(fragment.encode("utf-8"))
+                if retained_bytes + fragment_bytes > status_scan_bytes:
+                    raise PlanningEvidenceInspectionError(
+                        "STATUS_FIELD_SCAN_LIMIT_EXCEEDED", path=path,
+                        blob_size=size, applied_ceiling=status_scan_bytes,
+                        strategy=strategy, evaluation_complete=False,
+                    )
+                status_buffer += fragment
+
+            def consume_status_text(value: str) -> None:
+                nonlocal status_buffer
+                remainder = value
+                while remainder and status_active:
+                    boundary = remainder.find("\n")
+                    if boundary < 0:
+                        retain_status_fragment(remainder)
+                        return
+                    retain_status_fragment(remainder[:boundary])
+                    consume_status_line(status_buffer)
+                    status_buffer = ""
+                    remainder = remainder[boundary + 1:]
             process = subprocess.Popen(
                 ["git", "-C", str(root), "cat-file", "blob", object_name],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -727,10 +752,7 @@ def _pinned_workspace_reader(
                     if data is not None:
                         data.extend(chunk)
                     elif status_active:
-                        status_buffer += decoded
-                        while "\n" in status_buffer and status_active:
-                            line, status_buffer = status_buffer.split("\n", 1)
-                            consume_status_line(line)
+                        consume_status_text(decoded)
             try:
                 final_text = decoder.decode(b"", final=True)
             except UnicodeDecodeError as error:
@@ -738,7 +760,7 @@ def _pinned_workspace_reader(
                     "INVALID_UTF8", path=path, blob_size=size,
                     applied_ceiling=max_bytes, strategy=strategy) from error
             if data is None and status_active:
-                status_buffer += final_text
+                consume_status_text(final_text)
                 if status_buffer:
                     consume_status_line(status_buffer)
             assert process.stderr is not None

@@ -137,6 +137,40 @@ def test_markdown_section_ignores_headings_inside_raw_html_block() -> None:
     ]
 
 
+@pytest.mark.parametrize("raw_block", [
+    "<div>\n# Target\nwrong section\n</div>",
+    "<?example\n# Target\n?>",
+    "<!DOCTYPE html\n# Target\n>",
+    "<!--\n# Target\n-->",
+    "<![CDATA[\n# Target\n]]>",
+    "<x-example>\n# Target\nwrong section\n</x-example>",
+])
+def test_markdown_section_ignores_all_other_raw_html_blocks(
+    raw_block: str,
+) -> None:
+    content = f"{raw_block}\n\n# Target\n\nright section\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "right section"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_generic_html_tag_does_not_interrupt_a_markdown_paragraph() -> None:
+    content = "paragraph\n<x-example>\n# Target\n\ninside\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
 def test_markdown_section_preserves_non_delimited_trailing_hash() -> None:
     content = "# Target#\n\nwrong section\n\n# Target\n\nright section\n"
     record = evaluate_path_predicates(
@@ -206,6 +240,20 @@ def test_structured_status_supports_a_nested_selected_section() -> None:
 
     assert record["predicateResults"][0]["result"] == "MATCH"
     assert record["predicateResults"][0]["selectedEvidence"]["line"] == 5
+
+
+def test_structured_status_supports_a_cr_only_selected_section() -> None:
+    record = evaluate_path_predicates(
+        path="docs/task.md",
+        content="# Document\r\r## Target\r**Status:** In Progress\r",
+        repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["predicateResults"][0]["selectedEvidence"]["line"] == 4
 
 
 @pytest.mark.parametrize(("content", "reason"), [
@@ -327,6 +375,35 @@ def test_reconciliation_keeps_required_change_and_rejects_stale_target() -> None
             dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}], postconditions_by_path={},
             proposed_contents_by_path={"docs/task.md": "**Status:** Completed\n"},
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
+
+
+def test_reconciliation_uses_the_trusted_editable_target_byte_limit() -> None:
+    original = "original\n"
+    proposed = "x" * (65 * 1024) + "\nrequired value\n"
+    result = reconcile_dispositions(
+        plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["docs/task.md"],
+        targets=[{
+            "path": "docs/task.md", "content": original,
+            "preimageSha256": sha256(original.encode()).hexdigest(),
+            "repositoryRevision": REVISION, "provenance": {},
+        }],
+        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}],
+        postconditions_by_path={
+            "docs/task.md": ({"kind": "TEXT_PRESENT", "value": "required value"},)
+        },
+        proposed_contents_by_path={"docs/task.md": proposed},
+        required_insertions_by_path={"docs/task.md": ("required value",)},
+        evaluator_ref={
+            "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+        },
+        max_bytes=128 * 1024,
+    )
+
+    assert result["effectiveRequiredPaths"] == ["docs/task.md"]
+    assert result["pathDispositions"][0]["requiredInsertionProof"] == [
+        {"value": "required value", "result": "MATCH"}
+    ]
 
 
 def test_no_change_requires_exact_required_insertions_to_be_present() -> None:

@@ -25,8 +25,8 @@ or `Blocked` as implementation state changes.
 | Status | Count |
 | ------ | ----: |
 | Completed | 43 |
-| In Progress | 11 |
-| Not Started | 1 |
+| In Progress | 12 |
+| Not Started | 0 |
 | Blocked | 0 |
 | Total | 55 |
 
@@ -179,7 +179,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 51 | [AEP-052: Validate Strict Provider Output Schemas](tasks/AEP-052-validate-strict-provider-output-schemas.md) | In Progress |
 | 52 | [AEP-053: Bind Planning Decisions To Exact Repository Evidence](tasks/AEP-053-bind-planning-decisions-to-exact-repository-evidence.md) | In Progress |
 | 53 | [AEP-054: Derive Planning Evidence Read Budgets](tasks/AEP-054-derive-planning-evidence-read-budgets.md) | In Progress |
-| 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | Not Started |
+| 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | In Progress |
 | 55 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 
 ---
@@ -242,7 +242,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-052 | AEP-001, AEP-003, AEP-012, AEP-013, AEP-014, AEP-030, AEP-036, AEP-040, AEP-042 | In Progress |
 | AEP-053 | AEP-016, AEP-017, AEP-025, AEP-030, AEP-031, AEP-033, AEP-040, AEP-045, AEP-048, AEP-051 | In Progress |
 | AEP-054 | AEP-015, AEP-016, AEP-017, AEP-029, AEP-030, AEP-036, AEP-039, AEP-040, AEP-045, AEP-053 | In Progress |
-| AEP-055 | AEP-002, AEP-013, AEP-017, AEP-025, AEP-029, AEP-030, AEP-036, AEP-040, AEP-051, AEP-052, AEP-053, AEP-054 | Not Started |
+| AEP-055 | AEP-002, AEP-013, AEP-017, AEP-025, AEP-029, AEP-030, AEP-036, AEP-040, AEP-051, AEP-052, AEP-053, AEP-054 | In Progress |
 
 ---
 

@@ -707,7 +707,10 @@ Every repository reader used for planning evidence implements the typed
 inspection interface; legacy whole-file callables are rejected. Structured
 status matching retains no body beyond `statusFieldScanBytes`, but the reader
 continues parsing leading metadata across the complete stream to detect later
-ambiguity while validating UTF-8 and computing complete blob identity. Complete
+ambiguity while validating UTF-8 and computing complete blob identity. The
+ceiling bounds each retained unterminated metadata line; exceeding it fails
+closed without retaining the remainder, while newline-delimited blank metadata
+can still be streamed to detect later ambiguity. Complete
 scans recheck their ceiling before every buffer extension,
 derive structured fields from their retained complete content when predicates
 are mixed, and reject unsafe exact or prefix paths before repository lookup.
@@ -736,8 +739,9 @@ remains part of the section name. Fenced-region predicates evaluate only the
 content between delimiters; the opener and info string contribute identity but
 cannot satisfy text predicates. Tilde-fence info strings may contain backticks;
 the backtick restriction applies only to backtick fence openers. ATX-like lines
-inside raw HTML blocks such as `pre`, `script`, `style`, or `textarea` are not
-Markdown section headings. A single acceptance criterion binds zero, one, or many
+inside every CommonMark raw HTML block form, including generic block tags,
+processing instructions, declarations, comments, and CDATA, are not Markdown
+section headings. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
 remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while
@@ -770,4 +774,5 @@ executor-supplied bodies or arbitrary detail keys are rejected before durable
 evidence is written. Paths exceeding the diagnostic text bound are represented
 by a deterministic SHA-256 identifier before failure metadata is attached.
 GeneratePatch applies the editable-target byte ceiling derived from the trusted
-Task token budget to both target loading and late no-change predicate checks.
+Task token budget to target loading, late no-change predicate checks, and both
+postcondition and insertion reconciliation proofs.

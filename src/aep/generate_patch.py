@@ -299,6 +299,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                             )
                             for path in required_change_paths
                         },
+                        max_bytes=editable_target_max_bytes,
                     )
                 except PlanningEvidenceError as error:
                     raise GeneratePatchContractError(str(error)) from error
