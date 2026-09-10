@@ -170,6 +170,34 @@ def test_status_scanner_rejects_unicode_whitespace_as_title_separator(
     assert inspected.status_fields == ()
 
 
+def test_status_scanner_supports_an_indented_markdown_title(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(" # Task\n**Status:** In Progress\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == (("In Progress", 2),)
+
+
+def test_status_scanner_rejects_unicode_whitespace_as_blank_metadata(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text("\u00a0\n**Status:** Completed\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == ()
+
+
 def test_status_scanner_does_not_match_truncated_boundary_line(tmp_path: Path) -> None:
     target = tmp_path / "task.md"
     target.write_text("header\n**Status:** Completed but not verified\n", encoding="utf-8")

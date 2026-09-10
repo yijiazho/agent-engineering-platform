@@ -725,8 +725,9 @@ postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
 
 `STATUS_EQUALS` binds only the unique leading structured Status field. Blank
-lines and one initial level-one document title may precede it; the title uses
-only Markdown space or tab separators, not arbitrary Unicode whitespace. Later
+lines containing only Markdown spaces or tabs and one initial level-one document
+title may precede it; the title uses only Markdown space or tab separators, not
+arbitrary Unicode whitespace. Later
 headings,
 narrative, example, whitespace-only values, and historical mentions are not
 status evidence. A status-prefixed line with no non-whitespace value fails as
@@ -740,7 +741,9 @@ all matching and insertion evidence is evaluated only inside that region. The
 body-free record retains its region identity, match count, completeness, and
 selection identity. Markdown ATX section names strip a trailing hash sequence
 only when whitespace-delimited as closing syntax; a literal trailing hash
-remains part of the section name. Fenced-region predicates evaluate only the
+remains part of the section name. Empty headings remain structural boundaries
+even though they cannot be selected by a nonempty name. Fenced-region predicates
+evaluate only the
 content between delimiters; the opener and info string contribute identity but
 cannot satisfy text predicates. Tilde-fence info strings may contain backticks;
 the backtick restriction applies only to backtick fence openers, and closing

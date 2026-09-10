@@ -686,7 +686,7 @@ def _pinned_workspace_reader(
             def consume_status_line(line: str) -> None:
                 nonlocal status_active, title_seen, status_seen, status_line
                 text = line.removesuffix("\r")
-                if text.strip():
+                if text and not all(character in " \t" for character in text):
                     match = status_pattern.fullmatch(text)
                     if match:
                         status_fields.append((match.group("value"), status_line))
@@ -706,16 +706,19 @@ def _pinned_workspace_reader(
             def retain_status_fragment(fragment: str) -> None:
                 nonlocal status_active, status_buffer
                 candidate = status_buffer + fragment
-                if not candidate.isspace() and candidate:
+                if candidate and not all(
+                    character in " \t" for character in candidate
+                ):
                     status_prefix = "**Status:**"
                     if candidate.startswith(status_prefix):
                         possible_metadata = True
                     elif status_prefix.startswith(candidate):
                         possible_metadata = True
                     elif not title_seen and not status_seen:
-                        possible_metadata = (
-                            candidate == "#" or candidate.startswith("# ")
-                            or candidate.startswith("#\t")
+                        possible_metadata = bool(
+                            re.match(
+                                r"^ {0,3}#(?:[ \t].*)?$", candidate
+                            )
                         )
                     else:
                         possible_metadata = False

@@ -188,6 +188,24 @@ def test_markdown_section_preserves_non_delimited_trailing_hash() -> None:
     ]
 
 
+def test_empty_heading_ends_a_selected_markdown_section() -> None:
+    record = evaluate_path_predicates(
+        path="README.md",
+        content="# Target\ninside\n#\noutside\n",
+        repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "inside"},
+            {"kind": "TEXT_ABSENT", "value": "outside"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
 def test_markdown_section_strips_whitespace_delimited_closing_hashes() -> None:
     record = evaluate_path_predicates(
         path="README.md", content="# Target ###  \n\ninside\n",
@@ -315,6 +333,29 @@ def test_complete_status_scan_uses_only_cr_and_lf_line_boundaries() -> None:
     )
 
     assert record["predicateResults"][0]["result"] == "NO_MATCH"
+
+
+def test_markdown_structure_does_not_split_on_unicode_line_separators() -> None:
+    with pytest.raises(PlanningEvidenceError, match="REGION_MISSING"):
+        evaluate_path_predicates(
+            path="README.md",
+            content="narrative\u2028# Target\ninside\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+            source_id="snapshot",
+            region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+        )
+
+
+def test_unicode_whitespace_is_not_blank_leading_metadata() -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content="\u00a0\n**Status:** Completed\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+            source_id="snapshot",
+        )
 
 
 def test_whitespace_only_region_name_is_malformed() -> None:

@@ -38,6 +38,21 @@ _TITLE = re.compile(r"^ {0,3}#(?:[ \t]+|$)")
 _STATUS_PREFIX = re.compile(r"^\*\*Status:\*\*")
 
 
+def _is_markdown_blank(value: str) -> bool:
+    return not value or all(character in " \t" for character in value)
+
+
+def _markdown_lines(content: str) -> Sequence[str]:
+    start = 0
+    lines = []
+    for match in re.finditer(r"\r\n|[\r\n]", content):
+        lines.append(content[start:match.end()])
+        start = match.end()
+    if start < len(content):
+        lines.append(content[start:])
+    return lines
+
+
 def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     """Return only the document's leading, structured Status field.
 
@@ -48,7 +63,7 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
     title_seen = False
     status_seen = False
     for line_number, line in enumerate(re.split(r"\r\n|[\r\n]", content), start=1):
-        if not line.strip():
+        if _is_markdown_blank(line):
             continue
         match = _STATUS.fullmatch(line)
         if match:
@@ -110,7 +125,7 @@ def _markdown_structure(
     html_terminator: re.Pattern[str] | None = None
     paragraph_active = False
     offset = 0
-    for line_number, line in enumerate(content.splitlines(keepends=True), start=1):
+    for line_number, line in enumerate(_markdown_lines(content), start=1):
         text = line.rstrip("\r\n")
         fence = re.match(
             r"^ {0,3}(?:(?P<ticks>`{3,})(?P<tick_info>[^`]*)|"
@@ -196,8 +211,7 @@ def _markdown_structure(
                     title = closing.group("title").rstrip(" \t")
                 elif title and set(title) == {"#"}:
                     title = ""
-                if title:
-                    headings.append((offset, title, len(heading.group("marks")), line_number))
+                headings.append((offset, title, len(heading.group("marks")), line_number))
             else:
                 paragraph_active = bool(text.strip())
         offset += len(line)
