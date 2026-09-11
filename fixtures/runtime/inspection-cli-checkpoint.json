@@ -1,0 +1,33 @@
+{
+  "claims": {},
+  "deterministicKeys": {},
+  "objects": {
+    "workflowexecution-inspection-fixture": {
+      "apiVersion": "aep.dev/v1alpha1",
+      "createdAt": "2026-09-11T00:00:00Z",
+      "id": "workflowexecution-inspection-fixture",
+      "kind": "WorkflowExecution",
+      "repositoryRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "FAILED",
+      "taskExecutionIds": ["taskexecution-inspection-fixture"],
+      "workflowRef": {"kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0"}
+    },
+    "taskexecution-inspection-fixture": {
+      "createdAt": "2026-09-11T00:00:01Z",
+      "id": "taskexecution-inspection-fixture",
+      "kind": "TaskExecution",
+      "status": "FAILED",
+      "taskRef": {"kind": "Task", "name": "run-validation", "version": "1.0.0"},
+      "workflowExecutionId": "workflowexecution-inspection-fixture"
+    },
+    "policydecision-inspection-fixture": {
+      "createdAt": "2026-09-11T00:00:02Z",
+      "decision": "DENY",
+      "id": "policydecision-inspection-fixture",
+      "kind": "PolicyDecision",
+      "reason": "Fixture blocks publication.",
+      "taskExecutionId": "taskexecution-inspection-fixture",
+      "workflowExecutionId": "workflowexecution-inspection-fixture"
+    }
+  }
+}
