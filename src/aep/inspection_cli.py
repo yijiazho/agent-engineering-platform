@@ -27,6 +27,22 @@ TASK_REFERENCE_FIELDS = {
     "generatedArtifactIds": "GeneratedArtifact", "evaluationResultIds": "EvaluationResult",
     "policyDecisionIds": "PolicyDecision", "dependencyTaskExecutionIds": "TaskExecution",
 }
+NESTED_REFERENCE_FIELDS = {
+    "AgentInvocation": {
+        "modelInvocationIds": "ModelInvocation",
+        "toolInvocationIds": "ToolInvocation",
+    },
+    "ToolInvocation": {"policyDecisionId": "PolicyDecision"},
+    "GeneratedArtifact": {
+        "evaluationResultIds": "EvaluationResult",
+        "policyDecisionIds": "PolicyDecision",
+    },
+    "PolicyDecision": {
+        "generatedArtifactIds": "GeneratedArtifact",
+        "evaluationResultIds": "EvaluationResult",
+        "priorPolicyDecisionIds": "PolicyDecision",
+    },
+}
 
 
 class InspectionError(ValueError):
@@ -191,7 +207,38 @@ class ExecutionInspector:
                 raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "task runtime reference is malformed")
             for object_id in references:
                 self._reference(object_id, kind)
-                self._validate_owner(self._get(object_id), workflow, task_id=None if kind == "TaskExecution" else str(task["id"]))
+                referenced = self._get(object_id)
+                owner_task_id = None if kind == "TaskExecution" else str(task["id"])
+                self._validate_owner(referenced, workflow, task_id=owner_task_id)
+                self._validate_nested_references(referenced, workflow, owner_task_id, visited=set())
+
+    def _validate_nested_references(
+        self,
+        value: Mapping[str, Any],
+        workflow: Mapping[str, Any],
+        task_id: str | None,
+        *,
+        visited: set[str],
+    ) -> None:
+        object_id = value.get("id")
+        if not isinstance(object_id, str) or object_id in visited:
+            return
+        visited.add(object_id)
+        for field, kind in NESTED_REFERENCE_FIELDS.get(str(value.get("kind")), {}).items():
+            references = value.get(field)
+            if references is None:
+                continue
+            if field.endswith("Ids"):
+                if not isinstance(references, list):
+                    raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "nested runtime reference is malformed")
+                reference_ids = references
+            else:
+                reference_ids = [references]
+            for reference_id in reference_ids:
+                self._reference(reference_id, kind)
+                referenced = self._get(reference_id)
+                self._validate_owner(referenced, workflow, task_id=task_id)
+                self._validate_nested_references(referenced, workflow, task_id, visited=visited)
 
     def _validate_owner(self, value: Mapping[str, Any], workflow: Mapping[str, Any], *, task_id: str | None) -> None:
         provenance = value.get("provenance")
@@ -237,7 +284,16 @@ def _is_sensitive_key(key: str) -> bool:
 
 
 def _ordered(values: Sequence[Mapping[str, Any]] | Any) -> list[dict[str, Any]]:
-    return [dict(item) for item in sorted(values, key=lambda item: (str(item.get("createdAt", "")), str(item.get("id", ""))))]
+    return [dict(item) for item in sorted(values, key=lambda item: (_timestamp_order(item.get("createdAt")), str(item.get("id", ""))))]
+
+
+def _timestamp_order(value: Any) -> float:
+    if not isinstance(value, str):
+        return float("inf")
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return float("inf")
 
 
 def _effective_tasks(values: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -258,16 +314,32 @@ def _blocked_plan_nodes(execution: Mapping[str, Any], tasks: Sequence[Mapping[st
     if not isinstance(plan, list):
         return []
     by_ref = {json.dumps(item.get("taskRef"), sort_keys=True): item for item in tasks}
+    unresolved = [node for node in plan if isinstance(node, Mapping) and isinstance(node.get("taskRef"), Mapping)]
     blocked: list[dict[str, Any]] = []
-    for node in plan:
-        if not isinstance(node, Mapping) or not isinstance(node.get("taskRef"), Mapping):
-            continue
-        key = json.dumps(node["taskRef"], sort_keys=True)
-        if key in by_ref:
-            continue
-        dependencies = node.get("dependencies", ())
-        if any(by_ref.get(json.dumps(dependency, sort_keys=True), {}).get("status") == "FAILED" for dependency in dependencies if isinstance(dependency, Mapping)):
-            blocked.append({"id": f"blocked:{key}", "kind": "TaskExecution", "taskRef": dict(node["taskRef"]), "status": "BLOCKED"})
+    while unresolved:
+        progressed = False
+        for node in tuple(unresolved):
+            key = json.dumps(node["taskRef"], sort_keys=True)
+            if key in by_ref:
+                unresolved.remove(node)
+                progressed = True
+                continue
+            dependencies = node.get("dependencies", ())
+            if not isinstance(dependencies, list):
+                unresolved.remove(node)
+                progressed = True
+                continue
+            if any(
+                by_ref.get(json.dumps(dependency, sort_keys=True), {}).get("status") in {"FAILED", "BLOCKED"}
+                for dependency in dependencies if isinstance(dependency, Mapping)
+            ):
+                synthetic = {"id": f"blocked:{key}", "kind": "TaskExecution", "taskRef": dict(node["taskRef"]), "status": "BLOCKED"}
+                blocked.append(synthetic)
+                by_ref[key] = synthetic
+                unresolved.remove(node)
+                progressed = True
+        if not progressed:
+            break
     return blocked
 
 

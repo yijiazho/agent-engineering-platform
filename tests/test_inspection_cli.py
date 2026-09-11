@@ -51,6 +51,18 @@ def test_execution_list_discovers_ids_in_deterministic_order_and_filters_status(
     assert [item["id"] for item in json.loads(capsys.readouterr().out)["workflowExecutions"]] == ["wf-2"]
 
 
+def test_execution_list_orders_rfc3339_timestamps_by_instant(tmp_path, capsys):
+    records = _records()
+    later = dict(records[0])
+    later.update({"id": "wf-later", "createdAt": "2026-01-01T00:00:00Z"})
+    earlier = dict(records[0])
+    earlier.update({"id": "wf-earlier", "createdAt": "2026-01-01T01:00:00+02:00"})
+    records.extend([later, earlier])
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "executions", "list"]) == 0
+    assert [item["id"] for item in json.loads(capsys.readouterr().out)["workflowExecutions"]] == ["wf-earlier", "wf-1", "wf-later"]
+
+
 def test_explain_has_deterministic_policy_and_approval_precedence(tmp_path, capsys):
     state = _checkpoint(tmp_path, _records(status="FAILED", policy="DENY"))
     assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
@@ -131,19 +143,37 @@ def test_execution_checks_task_references_and_redacts_evaluation_logs(tmp_path, 
     assert json.loads(capsys.readouterr().out)["failure"]["message"] == "[REDACTED]"
 
 
-def test_explain_reports_blocked_dependency_and_rejects_foreign_evidence(tmp_path, capsys):
+def test_explain_reports_transitively_blocked_dependencies_and_rejects_foreign_evidence(tmp_path, capsys):
     records = _records(status="FAILED")
     records[1]["status"] = "FAILED"
     records[0]["resolvedTaskPlan"] = [
         {"taskRef": records[1]["taskRef"], "dependencies": []},
         {"taskRef": {"kind": "Task", "name": "publish", "version": "1.0.0"}, "dependencies": [records[1]["taskRef"]]},
+        {"taskRef": {"kind": "Task", "name": "notify", "version": "1.0.0"}, "dependencies": [{"kind": "Task", "name": "publish", "version": "1.0.0"}]},
     ]
     state = _checkpoint(tmp_path, records)
     assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
     assert json.loads(capsys.readouterr().out)["outcome"] == "BLOCKED"
+    assert main(["--state-file", str(state), "--output", "json", "executions", "show", "wf-1"]) == 0
+    blocked = [item["taskRef"]["name"] for item in json.loads(capsys.readouterr().out)["tasks"] if item["status"] == "BLOCKED"]
+    assert blocked == ["publish", "notify"]
     records = _records()
     records[1]["contextPackageId"] = "ctx-1"
     records[2]["workflowExecutionId"] = "other-workflow"
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
+
+
+def test_execution_rejects_broken_nested_runtime_reference(tmp_path, capsys):
+    records = _records()
+    records[1]["agentInvocationIds"] = ["agent-1"]
+    records.append({
+        "id": "agent-1", "kind": "AgentInvocation", "traceId": "trace-1",
+        "workflowExecutionId": "wf-1", "taskExecutionId": "task-1",
+        "modelInvocationIds": ["missing-model"], "toolInvocationIds": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+    })
     state = _checkpoint(tmp_path, records)
     assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 2
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
