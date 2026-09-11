@@ -569,11 +569,26 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 55 implementation tasks are complete.
+contracts are established, and 43 of the 66 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
 Task status is tracked in [docs/execution-plan.md](docs/execution-plan.md).
+
+The post-MVP roadmap extends the proven issue-to-PR control loop without
+changing its completion boundary. It adds deterministic execution inspection,
+replay and resume, artifact-bound human approvals, first-class budgets,
+AI-regression suites and versioned experiments, symbol-aware repository
+knowledge, a pull-request review workflow, and governed GitHub Actions evidence.
+These increments are tracked by AEP-056 through AEP-065 and are organized in
+[ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
+
+AEP-066 tracks the issue #88 GeneratePatch remediation: localized
+preimage-bound edit operations, deterministic preservation evidence,
+consistent multiline-insertion checks, retained non-publishable rejected
+artifacts, and explicit pass, review-required, or reject dispositions. Accidental
+unrelated deletion remains fail-closed; an explicitly authorized risky rewrite
+may proceed only through artifact-bound human approval.
 
 Implemented foundations currently include:
 

@@ -575,12 +575,13 @@ These trade-offs are acceptable because the MVP must validate the end-to-end arc
 
 # Future Expansion Path
 
-After the MVP works, the next increments should be:
+The post-MVP expansion is now governed by
+[ADR-005](ADR-005-post-mvp-platform-evolution.md) and tracked as AEP-056 through
+AEP-065. Those increments add execution inspection, replay and resume,
+artifact-bound approval, evaluation suites and configuration experiments,
+execution budgets, symbol-aware repository intelligence, pull-request review,
+and GitHub Actions validation evidence.
 
-1. Replace simplified repository scanning with AST and symbol graph compilation.
-2. Add Pull Request event workflows.
-3. Add review and documentation workflows.
-4. Add richer policy language.
-5. Add human approval UI.
-6. Add multi-repository workflow support.
-7. Add replay and execution comparison tooling.
+This roadmap refines the ordering of future work without changing the MVP
+scope or success criteria in this ADR. Multi-repository workflows, autonomous
+promotion, and deployment remain outside the currently approved expansion.
