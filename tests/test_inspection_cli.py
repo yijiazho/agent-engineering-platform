@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 
 from aep.inspection_cli import main
+from aep.workflow_execution import _runtime_validator
 
 
 def _checkpoint(tmp_path, objects):
@@ -60,6 +62,29 @@ def test_explain_has_deterministic_policy_and_approval_precedence(tmp_path, caps
     assert explanation["decisiveEvidence"]["id"] == "approval-1"
 
 
+def test_explain_denial_outranks_approval_and_approved_requirement_is_not_pending(tmp_path, capsys):
+    records = _records(status="FAILED", policy="DENY", approval="PENDING")
+    records.append({"id": "policy-2", "kind": "PolicyDecision", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "decision": "REQUIRE_APPROVAL", "reason": "review", "createdAt": "2026-01-01T00:00:01Z"})
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
+    assert json.loads(capsys.readouterr().out)["outcome"] == "DENIED"
+    records = _records(policy="REQUIRE_APPROVAL", approval="APPROVED")
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
+    assert json.loads(capsys.readouterr().out)["outcome"] == "SUCCEEDED"
+
+
+def test_explain_ignores_failed_superseded_task_attempt(tmp_path, capsys):
+    records = _records()
+    failed = dict(records[1])
+    failed.update({"id": "task-old", "attempt": 1, "status": "FAILED"})
+    records[1].update({"attempt": 2, "status": "SUCCEEDED"})
+    records.append(failed)
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
+    assert json.loads(capsys.readouterr().out)["outcome"] == "SUCCEEDED"
+
+
 def test_explain_identifies_validation_failure(tmp_path, capsys):
     state = _checkpoint(tmp_path, _records(status="FAILED"))
     assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
@@ -74,6 +99,8 @@ def test_missing_or_wrong_kind_identifier_has_stable_json_error(tmp_path, capsys
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_OBJECT_NOT_FOUND"
     assert main(["--state-file", str(state), "artifacts", "show", "task-1"]) == 2
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_KIND_MISMATCH"
+    assert main(["--state-file", str(state), "--output", "json", "tasks", "show"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_artifact_metadata_is_safe_and_unsafe_debug_is_explicit(tmp_path, capsys):
@@ -84,3 +111,23 @@ def test_artifact_metadata_is_safe_and_unsafe_debug_is_explicit(tmp_path, capsys
     assert artifact["contentAddress"].startswith("sha256:")
     assert main(["--state-file", str(state), "--unsafe-debug", "--output", "json", "contexts", "show", "ctx-1"]) == 0
     assert json.loads(capsys.readouterr().out)["elements"][0]["content"] == "private source"
+
+
+def test_execution_checks_task_references_and_redacts_evaluation_logs(tmp_path, capsys):
+    records = _records()
+    records[1]["contextPackageId"] = "missing-context"
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
+    records = _records(status="FAILED")
+    records[-1]["logs"] = ["private rejected output"]
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "evaluations", "show", "evaluation-1"]) == 0
+    assert json.loads(capsys.readouterr().out)["logs"] == "[REDACTED]"
+
+
+def test_runtime_checkpoint_fixture_is_schema_valid():
+    fixture = Path(__file__).parents[1] / "fixtures" / "runtime" / "inspection-cli-checkpoint.json"
+    for value in json.loads(fixture.read_text(encoding="utf-8"))["objects"].values():
+        validator = _runtime_validator(f"{str(value['kind']).lower()}.schema.json")
+        assert not list(validator.iter_errors(value))

@@ -581,6 +581,7 @@ aep --output json executions show workflowexecution-...
 aep explain workflowexecution-...
 aep contexts show contextpackage-...
 aep artifacts show generatedartifact-...
+aep policy-decisions show policydecision-...
 ```
 
 By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; use
@@ -593,6 +594,14 @@ denials, failed evaluations, and failed Tasks rather than generating text with
 a model. Drill-down families are `tasks`, `contexts`, `invocations`,
 `artifacts`, `evaluations`, `policy-decisions`, and `approvals`, each followed
 by `show <immutable-id>`.
+
+To trace an issue-to-PR run, start with `aep executions list`, select the
+WorkflowExecution whose `eventId` corresponds to the normalized Event, and run
+`aep executions show <id>`. Follow each task's attached ContextPackage,
+invocation, artifact, and EvaluationResult IDs, then inspect the final
+`PolicyDecision` ID before treating publication as authorized. `aep explain
+<id>` identifies the decisive terminal evidence. The CLI never renders an Event
+body by default; use the persisted Event ID only as the correlation key.
 
 ## Key Documents
 
@@ -608,7 +617,7 @@ by `show <immutable-id>`.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 66 implementation tasks are complete.
+contracts are established, and 44 of the 66 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 

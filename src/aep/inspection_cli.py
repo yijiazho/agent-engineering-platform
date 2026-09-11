@@ -21,12 +21,31 @@ KIND_COMMANDS = {
 }
 INVOCATION_KINDS = {"AgentInvocation", "ModelInvocation", "ToolInvocation"}
 SENSITIVE_FIELDS = frozenset({"content", "output", "input", "payload", "body", "prompt", "credentials", "token", "secret"})
+TASK_REFERENCE_FIELDS = {
+    "contextPackageId": "ContextPackage", "resolvedAgentId": "ResolvedAgent",
+    "agentInvocationIds": "AgentInvocation", "toolInvocationIds": "ToolInvocation",
+    "generatedArtifactIds": "GeneratedArtifact", "evaluationResultIds": "EvaluationResult",
+    "policyDecisionIds": "PolicyDecision", "dependencyTaskExecutionIds": "TaskExecution",
+}
 
 
 class InspectionError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    _json_errors_default = False
+
+    def __init__(self, *args: Any, json_errors: bool | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._json_errors = self._json_errors_default if json_errors is None else json_errors
+
+    def error(self, message: str) -> None:
+        if self._json_errors:
+            raise InspectionError("INVALID_ARGUMENT", message)
+        super().error(message)
 
 
 class RuntimeEvidenceReader:
@@ -84,6 +103,8 @@ class ExecutionInspector:
         if not isinstance(task_ids, list):
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "WorkflowExecution task references are malformed")
         tasks = [self._reference(item, "TaskExecution") for item in task_ids]
+        for task in tasks:
+            self._validate_task_references(self._get(str(task["id"])))
         related = [item for item in self._objects.values() if _belongs_to_workflow(item, execution_id)]
         return self._safe({
             "workflowExecution": workflow,
@@ -97,24 +118,30 @@ class ExecutionInspector:
         if execution.get("kind") != "WorkflowExecution":
             raise InspectionError("RUNTIME_KIND_MISMATCH", "runtime object is not a WorkflowExecution")
         related = _ordered(item for item in self._objects.values() if _belongs_to_workflow(item, execution_id))
-        approvals = [item for item in related if item.get("kind") == "Approval" and item.get("status") == "PENDING"]
+        approvals = [item for item in related if item.get("kind") == "Approval"]
         policies = [item for item in related if item.get("kind") == "PolicyDecision"]
         denials = [item for item in policies if item.get("decision") == "DENY"]
         required = [item for item in policies if item.get("decision") == "REQUIRE_APPROVAL"]
-        failed_tasks = [item for item in related if item.get("kind") == "TaskExecution" and item.get("status") == "FAILED"]
-        failed_evaluations = [item for item in related if item.get("kind") == "EvaluationResult" and item.get("outcome") == "FAIL"]
-        if approvals:
-            decisive, outcome, reason = approvals[0], "APPROVAL_PENDING", "approval is pending"
-        elif required:
-            decisive, outcome, reason = required[0], "APPROVAL_PENDING", "policy requires approval"
-        elif denials:
+        approval_by_policy = {item.get("policyDecisionId"): item for item in approvals}
+        unresolved = [item for item in required if approval_by_policy.get(item.get("id"), {}).get("status") in (None, "PENDING")]
+        rejected = [approval_by_policy[item.get("id")] for item in required if approval_by_policy.get(item.get("id"), {}).get("status") in ("REJECTED", "EXPIRED")]
+        effective_tasks = _effective_tasks(related)
+        effective_ids = {item["id"] for item in effective_tasks}
+        failed_tasks = [item for item in effective_tasks if item.get("status") == "FAILED"]
+        failed_evaluations = [item for item in related if item.get("kind") == "EvaluationResult" and item.get("outcome") == "FAIL" and item.get("taskExecutionId") in effective_ids]
+        if denials:
             decisive, outcome, reason = denials[0], "DENIED", str(denials[0].get("reason", "policy denied action"))
+        elif rejected:
+            decisive, outcome, reason = rejected[0], "DENIED", f"approval {str(rejected[0].get('status')).lower()}"
+        elif unresolved:
+            approval = approval_by_policy.get(unresolved[0].get("id"))
+            decisive, outcome, reason = approval or unresolved[0], "APPROVAL_PENDING", "policy requires approval"
+        elif execution.get("status") == "SUCCEEDED":
+            decisive, outcome, reason = execution, "SUCCEEDED", "all recorded tasks completed successfully"
         elif failed_evaluations:
             decisive, outcome, reason = failed_evaluations[0], "FAILED", "evaluation failed"
         elif failed_tasks:
             decisive, outcome, reason = failed_tasks[0], "FAILED", "task execution failed"
-        elif execution.get("status") == "SUCCEEDED":
-            decisive, outcome, reason = execution, "SUCCEEDED", "all recorded tasks completed successfully"
         else:
             decisive, outcome, reason = execution, str(execution.get("status", "UNKNOWN")), "workflow has no more specific terminal evidence"
         return {"workflowExecutionId": execution_id, "outcome": outcome, "reason": reason,
@@ -133,10 +160,26 @@ class ExecutionInspector:
     def _reference(self, object_id: Any, kind: str) -> dict[str, Any]:
         if not isinstance(object_id, str):
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference is malformed")
-        value = self._get(object_id)
+        try:
+            value = self._get(object_id)
+        except InspectionError as error:
+            if error.code == "RUNTIME_OBJECT_NOT_FOUND":
+                raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "task runtime reference was not found") from None
+            raise
         if value.get("kind") != kind:
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference has an unexpected kind")
         return _summary(value)
+
+    def _validate_task_references(self, task: Mapping[str, Any]) -> None:
+        for field, kind in TASK_REFERENCE_FIELDS.items():
+            value = task.get(field)
+            if value is None:
+                continue
+            references = value if field.endswith("Ids") else [value]
+            if not isinstance(references, list):
+                raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "task runtime reference is malformed")
+            for object_id in references:
+                self._reference(object_id, kind)
 
     def _safe(self, value: Any, *, unsafe: bool) -> Any:
         if unsafe:
@@ -149,7 +192,7 @@ class ExecutionInspector:
 
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = ("id", "kind", "status", "outcome", "decision", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "provenance")
+    fields = ("id", "kind", "status", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
     return {field: deepcopy(value[field]) for field in fields if field in value}
 
 
@@ -164,13 +207,26 @@ def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("_", "").replace("-", "")
     if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit"}:
         return False
-    return normalized in SENSITIVE_FIELDS or any(
+    return normalized in SENSITIVE_FIELDS or normalized == "logs" or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")
     )
 
 
 def _ordered(values: Sequence[Mapping[str, Any]] | Any) -> list[dict[str, Any]]:
     return [dict(item) for item in sorted(values, key=lambda item: (str(item.get("createdAt", "")), str(item.get("id", ""))))]
+
+
+def _effective_tasks(values: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    latest: dict[str, Mapping[str, Any]] = {}
+    for value in values:
+        if value.get("kind") != "TaskExecution":
+            continue
+        ref = value.get("taskRef")
+        key = json.dumps(ref, sort_keys=True, separators=(",", ":")) if isinstance(ref, Mapping) else str(value.get("id"))
+        prior = latest.get(key)
+        if prior is None or (int(value.get("attempt", 0)), str(value.get("id", ""))) > (int(prior.get("attempt", 0)), str(prior.get("id", ""))):
+            latest[key] = value
+    return _ordered(latest.values())
 
 
 def _elapsed(value: Mapping[str, Any]) -> dict[str, Any]:
@@ -185,7 +241,10 @@ def _elapsed(value: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="aep")
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    json_errors = any(arguments[index:index + 2] == ["--output", "json"] for index in range(len(arguments)))
+    _ArgumentParser._json_errors_default = json_errors
+    parser = _ArgumentParser(prog="aep", json_errors=json_errors)
     parser.add_argument("--state-file", type=Path, default=_default_state_file())
     parser.add_argument("--output", choices=("human", "json"), default="human")
     parser.add_argument("--unsafe-debug", action="store_true")
@@ -197,8 +256,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command == "executions":
             listing = group.add_parser("list")
             listing.add_argument("--status")
-    args = parser.parse_args(argv)
     try:
+        args = parser.parse_args(arguments)
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
         elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
@@ -216,7 +275,22 @@ def _default_state_file() -> Path:
 
 
 def _human(value: Any) -> str:
-    return json.dumps(value, indent=2, sort_keys=True, default=str)
+    if isinstance(value, Mapping) and "workflowExecutions" in value:
+        records = value["workflowExecutions"]
+        return "Workflow executions:\n" + ("\n".join(
+            f"- {item['id']}  {item.get('status', 'UNKNOWN')}  {item.get('createdAt', '')}" for item in records
+        ) if records else "- none")
+    if isinstance(value, Mapping) and "workflowExecution" in value:
+        workflow = value["workflowExecution"]
+        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", "Tasks:"]
+        lines.extend(f"- {item['id']}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(item.get('dependencyTaskExecutionIds', ())) or 'none'}" for item in value.get("tasks", ()))
+        return "\n".join(lines)
+    if isinstance(value, Mapping) and "decisiveEvidence" in value:
+        evidence = value["decisiveEvidence"]
+        return f"Outcome: {value['outcome']}\nReason: {value['reason']}\nDecisive evidence: {evidence.get('kind')} {evidence.get('id')}"
+    if isinstance(value, Mapping):
+        return "\n".join(f"{key}: {item}" for key, item in value.items())
+    return str(value)
 
 
 if __name__ == "__main__":

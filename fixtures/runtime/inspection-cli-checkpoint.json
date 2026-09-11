@@ -2,32 +2,33 @@
   "claims": {},
   "deterministicKeys": {},
   "objects": {
-    "workflowexecution-inspection-fixture": {
+    "taskexecution-123456789abc": {
       "apiVersion": "aep.dev/v1alpha1",
-      "createdAt": "2026-09-11T00:00:00Z",
-      "id": "workflowexecution-inspection-fixture",
-      "kind": "WorkflowExecution",
-      "repositoryRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "status": "FAILED",
-      "taskExecutionIds": ["taskexecution-inspection-fixture"],
-      "workflowRef": {"kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0"}
-    },
-    "taskexecution-inspection-fixture": {
+      "attempt": 1,
       "createdAt": "2026-09-11T00:00:01Z",
-      "id": "taskexecution-inspection-fixture",
+      "id": "taskexecution-123456789abc",
       "kind": "TaskExecution",
+      "provenance": {"actor": "workflow-scheduler", "resourceRefs": [{"kind": "Task", "name": "run-validation", "version": "1.0.0"}], "workflowExecutionId": "workflowexecution-123456789abc"},
       "status": "FAILED",
       "taskRef": {"kind": "Task", "name": "run-validation", "version": "1.0.0"},
-      "workflowExecutionId": "workflowexecution-inspection-fixture"
+      "traceId": "trace-inspection-fixture",
+      "updatedAt": "2026-09-11T00:00:01Z",
+      "workflowExecutionId": "workflowexecution-123456789abc"
     },
-    "policydecision-inspection-fixture": {
-      "createdAt": "2026-09-11T00:00:02Z",
-      "decision": "DENY",
-      "id": "policydecision-inspection-fixture",
-      "kind": "PolicyDecision",
-      "reason": "Fixture blocks publication.",
-      "taskExecutionId": "taskexecution-inspection-fixture",
-      "workflowExecutionId": "workflowexecution-inspection-fixture"
+    "workflowexecution-123456789abc": {
+      "apiVersion": "aep.dev/v1alpha1",
+      "createdAt": "2026-09-11T00:00:00Z",
+      "eventId": "event-123456789abc",
+      "eventRef": {"kind": "Event", "name": "github-issue-created", "version": "1.0.0"},
+      "id": "workflowexecution-123456789abc",
+      "kind": "WorkflowExecution",
+      "provenance": {"actor": "workflow-controller", "resourceRefs": [{"kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0"}, {"kind": "Event", "name": "github-issue-created", "version": "1.0.0"}], "repositoryRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      "repositoryRevision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "FAILED",
+      "taskExecutionIds": ["taskexecution-123456789abc"],
+      "traceId": "trace-inspection-fixture",
+      "updatedAt": "2026-09-11T00:00:01Z",
+      "workflowRef": {"kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0"}
     }
   }
 }
