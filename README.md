@@ -555,6 +555,41 @@ filesystem content-addressed store, and accepted outbox rows are retired only
 after terminal workflow evidence. AEP-043 remains in progress until an
 authorized operator completes and records the credentialed live pilot.
 
+### Inspecting Execution Evidence
+
+The installed `aep` command reads the durable runtime checkpoint without
+starting a worker or materializing artifact bodies. It redacts prompt, source,
+event, Tool input/output, and artifact content by default; `--unsafe-debug` is
+an explicit, controlled local-investigation switch.
+
+Install the repository package into the local virtual environment to register
+the `aep` command:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,yaml]"
+.\.venv\Scripts\aep.exe --help
+```
+
+After activating the virtual environment with
+`.\.venv\Scripts\Activate.ps1`, `aep --help` is available directly on
+`PATH`.
+
+```powershell
+aep --output json executions show workflowexecution-...
+aep explain workflowexecution-...
+aep contexts show contextpackage-...
+aep artifacts show generatedartifact-...
+```
+
+By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; use
+`--state-file <path>` for an offline backup. `aep executions show` traces the
+Workflow, revision, task DAG, elapsed time, and linked evidence. `aep explain`
+uses deterministic runtime evidence, prioritizing pending approvals, policy
+denials, failed evaluations, and failed Tasks rather than generating text with
+a model. Drill-down families are `tasks`, `contexts`, `invocations`,
+`artifacts`, `evaluations`, `policy-decisions`, and `approvals`, each followed
+by `show <immutable-id>`.
+
 ## Key Documents
 
 * [Product Requirements](docs/prd.md)

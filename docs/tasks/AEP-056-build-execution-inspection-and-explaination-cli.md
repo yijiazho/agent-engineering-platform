@@ -1,6 +1,6 @@
 # AEP-056: Build Execution Inspection and Explanation CLI
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
