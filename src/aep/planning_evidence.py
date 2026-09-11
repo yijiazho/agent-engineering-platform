@@ -42,6 +42,18 @@ def _is_markdown_blank(value: str) -> bool:
     return not value or all(character in " \t" for character in value)
 
 
+def _is_nonempty_document_title(value: str) -> bool:
+    if not _TITLE.match(value):
+        return False
+    title = value.lstrip(" ")[1:].strip(" \t")
+    closing = re.match(r"^(?P<title>.*?)[ \t]+#+$", title)
+    if closing:
+        title = closing.group("title").rstrip(" \t")
+    elif title and set(title) == {"#"}:
+        title = ""
+    return bool(title)
+
+
 def _markdown_lines(content: str) -> Sequence[str]:
     start = 0
     lines = []
@@ -74,7 +86,7 @@ def _structured_status_fields(content: str) -> list[tuple[str, int]]:
             raise PlanningEvidenceInspectionError(
                 "STATUS_FIELD_MALFORMED", path="", evaluation_complete=True
             )
-        if not title_seen and not status_seen and _TITLE.match(line):
+        if not title_seen and not status_seen and _is_nonempty_document_title(line):
             title_seen = True
             continue
         break
@@ -243,6 +255,7 @@ def evaluate_path_predicates(
     inspected_bytes: int | None = None,
     status_scan_bytes: int | None = None,
     region: Mapping[str, Any] | None = None,
+    distinct_text_matches: bool = False,
 ) -> dict[str, Any]:
     """Evaluate bounded syntactic predicates and return body-free evidence."""
     _path(path)
@@ -269,6 +282,7 @@ def evaluate_path_predicates(
             raise
         scoped_content = content[start:end]
     results = []
+    distinct_candidates: list[tuple[int, str, list[int]]] = []
     for predicate in predicates:
         kind, expected = predicate.get("kind"), predicate.get("value")
         if kind == "STATUS_EQUALS":
@@ -319,7 +333,22 @@ def evaluate_path_predicates(
         else:
             results.append({"predicate": dict(predicate), "result": "UNSUPPORTED", "selectedEvidence": None})
             continue
+        result_index = len(results)
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
+        if distinct_text_matches and kind == "TEXT_PRESENT":
+            distinct_candidates.append((result_index, expected, positions))
+    if distinct_candidates:
+        selected_positions = _independent_text_positions(distinct_candidates)
+        for result_index, _value, positions in distinct_candidates:
+            result = results[result_index]
+            result["result"] = (
+                "MATCH" if result_index in selected_positions else "NO_MATCH"
+            )
+            result["selectedEvidence"] = {
+                "kind": "TEXT_MATCH",
+                "occurrences": len(positions),
+                "independentOccurrence": result_index in selected_positions,
+            }
     partial_status_scan = inspection_strategy == "STRUCTURED_STATUS_FIELD_SCAN" and status_fields is not None
     if (not partial_status_scan and complete_size != len(encoded)) or (
         not partial_status_scan and complete_digest != digest
@@ -350,6 +379,37 @@ def evaluate_path_predicates(
         json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:20]
     return record
+
+
+def _independent_text_positions(
+    candidates: Sequence[tuple[int, str, Sequence[int]]],
+) -> set[int]:
+    """Find one non-overlapping occurrence for each required text value."""
+    ordered = sorted(candidates, key=lambda item: (len(item[2]), item[0]))
+    attempts = 0
+
+    def select(
+        offset: int, intervals: tuple[tuple[int, int], ...], chosen: dict[int, int],
+    ) -> dict[int, int] | None:
+        nonlocal attempts
+        if offset == len(ordered):
+            return chosen
+        result_index, value, positions = ordered[offset]
+        for position in positions:
+            attempts += 1
+            if attempts > 256:
+                return None
+            interval = (position, position + len(value))
+            if any(interval[0] < end and start < interval[1] for start, end in intervals):
+                continue
+            result = select(
+                offset + 1, (*intervals, interval), {**chosen, result_index: position})
+            if result is not None:
+                return result
+        return None
+
+    selected = select(0, (), {})
+    return set(selected or {})
 
 
 def finalize_planning_evidence(
@@ -547,6 +607,7 @@ def reconcile_dispositions(
                             for value in insertion_values],
                 source_id="generated-insertion-reconciliation", region=region,
                 max_bytes=max_bytes,
+                distinct_text_matches=True,
             )
             insertion_proof = [
                 {"value": value, "result": result["result"]}

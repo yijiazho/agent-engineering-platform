@@ -90,6 +90,21 @@ def test_planning_no_change_uses_editable_target_byte_limit() -> None:
         max_bytes=128 * 1024,
     )
 
+
+def test_planning_no_change_requires_independent_insertions() -> None:
+    with pytest.raises(GeneratePatchContractError, match="not deterministically satisfied"):
+        _verify_no_change_targets(
+            ["README.md"],
+            [
+                {"path": "README.md", "value": "deploy/"},
+                {"path": "README.md", "value": "deploy/local/"},
+            ],
+            [{
+                "path": "README.md", "content": "deploy/local/\n",
+                "repositoryRevision": "a" * 40,
+            }],
+        )
+
 CHANGE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

@@ -637,6 +637,7 @@ def _pinned_workspace_reader(
                     strategy: str, status_scan_bytes: int):
             from aep.planning_evidence import (
                 PlanningEvidenceInspection, PlanningEvidenceInspectionError,
+                _is_nonempty_document_title,
             )
             if revision != expected_revision:
                 raise PlanningEvidenceInspectionError(
@@ -674,7 +675,6 @@ def _pinned_workspace_reader(
                 r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$"
             )
             status_prefix_pattern = re.compile(r"^\*\*Status:\*\*")
-            title_pattern = re.compile(r"^ {0,3}#(?:[ \t]+|$)")
             status_fields: list[tuple[str, int]] = []
             status_buffer = ""
             status_line = 1
@@ -697,7 +697,7 @@ def _pinned_workspace_reader(
                             applied_ceiling=max_bytes, strategy=strategy,
                             evaluation_complete=True,
                         )
-                    elif not title_seen and not status_seen and title_pattern.match(text):
+                    elif not title_seen and not status_seen and _is_nonempty_document_title(text):
                         title_seen = True
                     else:
                         status_active = False

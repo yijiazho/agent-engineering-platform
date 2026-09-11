@@ -313,6 +313,18 @@ def test_ambiguous_or_missing_structured_field_fails_closed(
             predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}], source_id="snapshot")
 
 
+@pytest.mark.parametrize("title", ["#", "# ###"])
+def test_empty_heading_is_not_a_leading_document_title(title: str) -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content=f"{title}\n**Status:** Completed\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+            source_id="snapshot",
+        )
+
+
 def test_non_heading_hash_text_prevents_later_status_from_becoming_leading() -> None:
     with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
         evaluate_path_predicates(
@@ -523,6 +535,31 @@ def test_no_change_requires_exact_required_insertions_to_be_present() -> None:
     assert result["pathDispositions"][0]["requiredInsertionProof"] == [
         {"value": "existing text", "result": "MATCH"}
     ]
+
+
+def test_required_insertions_must_have_independent_occurrences() -> None:
+    content = "deploy/local/\n"
+    target = {
+        "path": "docs/task.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {},
+    }
+
+    with pytest.raises(PlanningEvidenceError, match="lacks a required insertion"):
+        reconcile_dispositions(
+            plan_id="artifact-1", repository_revision=REVISION,
+            original_required_paths=["docs/task.md"], targets=[target],
+            dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
+            postconditions_by_path={
+                "docs/task.md": ({"kind": "TEXT_PRESENT", "value": "deploy/local/"},)
+            },
+            required_insertions_by_path={
+                "docs/task.md": ("deploy/", "deploy/local/")
+            },
+            evaluator_ref={
+                "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+            },
+        )
 
 
 def test_reconciliation_keeps_insertions_inside_the_trusted_region() -> None:

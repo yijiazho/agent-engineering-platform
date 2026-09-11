@@ -1144,6 +1144,7 @@ def _verify_no_change_targets(
                 source_id="editable-target-no-change",
                 region=(regions_by_path or {}).get(path),
                 max_bytes=max_bytes,
+                distinct_text_matches=True,
             )
         except PlanningEvidenceError as error:
             raise GeneratePatchContractError(str(error)) from error

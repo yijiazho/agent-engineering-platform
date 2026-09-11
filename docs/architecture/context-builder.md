@@ -726,8 +726,8 @@ Agents receive immutable evidence and never query the repository provider.
 
 `STATUS_EQUALS` binds only the unique leading structured Status field. Blank
 lines containing only Markdown spaces or tabs and one initial level-one document
-title may precede it; the title uses only Markdown space or tab separators, not
-arbitrary Unicode whitespace. Later
+title with nonempty content may precede it; the title uses only Markdown space
+or tab separators, not arbitrary Unicode whitespace. Later
 headings,
 narrative, example, whitespace-only values, and historical mentions are not
 status evidence. A status-prefixed line with no non-whitespace value fails as
@@ -755,7 +755,10 @@ section headings. A single acceptance criterion binds zero, one, or many
 canonical `{path, value}` entries through `requiredInsertions`; shared entries
 remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while
-unsupported criteria bind none. The evaluated issue analysis records the
+unsupported criteria bind none. Reconciliation and planning-time no-change
+proofs require a distinct non-overlapping occurrence for every canonical value,
+so a longer insertion cannot prove a shorter overlapping insertion. The
+evaluated issue analysis records the
 independent expected set for every criterion in `acceptanceCriterionInsertions`;
 planner validation requires each classification to match that set exactly, so
 aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
