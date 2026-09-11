@@ -281,7 +281,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034, AEP-055, AEP-066 | In Progress |
 | Deployment And Observability | AEP-035, AEP-036, AEP-037 | Completed |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043, AEP-044, AEP-046, AEP-047, AEP-052 | In Progress |
-| Operations And Governance Expansion | AEP-056, AEP-057, AEP-058, AEP-059, AEP-062 | Not Started |
+| Operations And Governance Expansion | AEP-056, AEP-057, AEP-058, AEP-059, AEP-062 | In Progress |
 | Evaluation And Experimentation | AEP-060, AEP-061 | Not Started |
 | Repository Intelligence Expansion | AEP-063 | Not Started |
 | Workflow And CI Expansion | AEP-064, AEP-065 | Not Started |

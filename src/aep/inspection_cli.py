@@ -29,18 +29,18 @@ TASK_REFERENCE_FIELDS = {
 }
 NESTED_REFERENCE_FIELDS = {
     "AgentInvocation": {
-        "modelInvocationIds": "ModelInvocation",
-        "toolInvocationIds": "ToolInvocation",
+        "modelInvocationIds": ("ModelInvocation", True),
+        "toolInvocationIds": ("ToolInvocation", True),
     },
-    "ToolInvocation": {"policyDecisionId": "PolicyDecision"},
+    "ToolInvocation": {"policyDecisionId": ("PolicyDecision", True)},
     "GeneratedArtifact": {
-        "evaluationResultIds": "EvaluationResult",
-        "policyDecisionIds": "PolicyDecision",
+        "evaluationResultIds": ("EvaluationResult", False),
+        "policyDecisionIds": ("PolicyDecision", False),
     },
     "PolicyDecision": {
-        "generatedArtifactIds": "GeneratedArtifact",
-        "evaluationResultIds": "EvaluationResult",
-        "priorPolicyDecisionIds": "PolicyDecision",
+        "generatedArtifactIds": ("GeneratedArtifact", False),
+        "evaluationResultIds": ("EvaluationResult", False),
+        "priorPolicyDecisionIds": ("PolicyDecision", False),
     },
 }
 
@@ -224,7 +224,7 @@ class ExecutionInspector:
         if not isinstance(object_id, str) or object_id in visited:
             return
         visited.add(object_id)
-        for field, kind in NESTED_REFERENCE_FIELDS.get(str(value.get("kind")), {}).items():
+        for field, (kind, task_owned) in NESTED_REFERENCE_FIELDS.get(str(value.get("kind")), {}).items():
             references = value.get(field)
             if references is None:
                 continue
@@ -237,8 +237,9 @@ class ExecutionInspector:
             for reference_id in reference_ids:
                 self._reference(reference_id, kind)
                 referenced = self._get(reference_id)
-                self._validate_owner(referenced, workflow, task_id=task_id)
-                self._validate_nested_references(referenced, workflow, task_id, visited=visited)
+                referenced_task_id = task_id if task_owned else None
+                self._validate_owner(referenced, workflow, task_id=referenced_task_id)
+                self._validate_nested_references(referenced, workflow, referenced_task_id, visited=visited)
 
     def _validate_owner(self, value: Mapping[str, Any], workflow: Mapping[str, Any], *, task_id: str | None) -> None:
         provenance = value.get("provenance")
@@ -256,7 +257,11 @@ class ExecutionInspector:
         if unsafe:
             return deepcopy(value)
         if isinstance(value, Mapping):
-            return {str(key): ("[REDACTED]" if _is_sensitive_key(str(key)) else self._safe(item, unsafe=False)) for key, item in value.items()}
+            safe = {str(key): ("[REDACTED]" if _is_sensitive_key(str(key)) else self._safe(item, unsafe=False)) for key, item in value.items()}
+            reasons = _context_selection_reasons(value)
+            if reasons is not None:
+                safe["selectionReasons"] = reasons
+            return safe
         if isinstance(value, list):
             return [self._safe(item, unsafe=False) for item in value]
         return deepcopy(value)
@@ -281,6 +286,16 @@ def _is_sensitive_key(key: str) -> bool:
     return normalized in SENSITIVE_FIELDS or normalized in {"logs", "message"} or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")
     )
+
+
+def _context_selection_reasons(value: Mapping[str, Any]) -> list[str] | None:
+    if value.get("type") not in {"repository", "knowledge"}:
+        return None
+    content = value.get("content")
+    reasons = content.get("selectionReasons") if isinstance(content, Mapping) else None
+    if not isinstance(reasons, list) or not all(isinstance(reason, str) for reason in reasons):
+        return None
+    return deepcopy(reasons)
 
 
 def _ordered(values: Sequence[Mapping[str, Any]] | Any) -> list[dict[str, Any]]:
@@ -333,7 +348,11 @@ def _blocked_plan_nodes(execution: Mapping[str, Any], tasks: Sequence[Mapping[st
                 by_ref.get(json.dumps(dependency, sort_keys=True), {}).get("status") in {"FAILED", "BLOCKED"}
                 for dependency in dependencies if isinstance(dependency, Mapping)
             ):
-                synthetic = {"id": f"blocked:{key}", "kind": "TaskExecution", "taskRef": dict(node["taskRef"]), "status": "BLOCKED"}
+                synthetic = {
+                    "id": f"blocked:{key}", "kind": "TaskExecution",
+                    "taskRef": dict(node["taskRef"]), "status": "BLOCKED",
+                    "dependencyTaskRefs": [dict(dependency) for dependency in dependencies],
+                }
                 blocked.append(synthetic)
                 by_ref[key] = synthetic
                 unresolved.remove(node)
@@ -399,7 +418,11 @@ def _human(value: Any) -> str:
         workflow_ref = workflow.get("workflowRef", {})
         elapsed = value.get("elapsed", {})
         lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Workflow: {workflow_ref.get('name', '')}:{workflow_ref.get('version', '')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", f"Elapsed: {elapsed.get('milliseconds', 'in progress')} ms", "Tasks:"]
-        lines.extend(f"- {item['id']}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(item.get('dependencyTaskExecutionIds', ())) or 'none'}" for item in value.get("tasks", ()))
+        for item in value.get("tasks", ()):
+            dependencies = item.get("dependencyTaskExecutionIds") or _human_refs(item.get("dependencyTaskRefs"))
+            evidence = _human_task_evidence(item)
+            line = f"- {item['id']}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(dependencies) or 'none'}"
+            lines.append(f"{line}\n  evidence: {evidence}" if evidence else line)
         return "\n".join(lines)
     if isinstance(value, Mapping) and "decisiveEvidence" in value:
         evidence = value["decisiveEvidence"]
@@ -407,6 +430,30 @@ def _human(value: Any) -> str:
     if isinstance(value, Mapping):
         return "\n".join(f"{key}: {item}" for key, item in value.items())
     return str(value)
+
+
+def _human_refs(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        f"{item.get('name', '')}:{item.get('version', '')}"
+        for item in value if isinstance(item, Mapping)
+    ]
+
+
+def _human_task_evidence(task: Mapping[str, Any]) -> str:
+    fields = (
+        "contextPackageId", "resolvedAgentId", "agentInvocationIds", "toolInvocationIds",
+        "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds",
+    )
+    values: list[str] = []
+    for field in fields:
+        value = task.get(field)
+        if isinstance(value, str):
+            values.append(f"{field}={value}")
+        elif isinstance(value, list) and value:
+            values.append(f"{field}={','.join(str(item) for item in value)}")
+    return " ".join(values)
 
 
 if __name__ == "__main__":
