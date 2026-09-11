@@ -30,7 +30,208 @@ class PlanningEvidenceInspectionError(PlanningEvidenceError):
         super().__init__(reason)
 
 
-_STATUS = re.compile(r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$", re.MULTILINE)
+_STATUS = re.compile(
+    r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$",
+    re.MULTILINE,
+)
+_TITLE = re.compile(r"^ {0,3}#(?:[ \t]+|$)")
+_STATUS_PREFIX = re.compile(r"^\*\*Status:\*\*")
+
+
+def _is_markdown_blank(value: str) -> bool:
+    return not value or all(character in " \t" for character in value)
+
+
+def _is_nonempty_document_title(value: str) -> bool:
+    if not _TITLE.match(value):
+        return False
+    title = value.lstrip(" ")[1:].strip(" \t")
+    closing = re.match(r"^(?P<title>.*?)[ \t]+#+$", title)
+    if closing:
+        title = closing.group("title").rstrip(" \t")
+    elif title and set(title) == {"#"}:
+        title = ""
+    return bool(title)
+
+
+def _markdown_lines(content: str) -> Sequence[str]:
+    start = 0
+    lines = []
+    for match in re.finditer(r"\r\n|[\r\n]", content):
+        lines.append(content[start:match.end()])
+        start = match.end()
+    if start < len(content):
+        lines.append(content[start:])
+    return lines
+
+
+def _structured_status_fields(content: str) -> list[tuple[str, int]]:
+    """Return only the document's leading, structured Status field.
+
+    A later literal mention is narrative, not metadata.  The field must occur
+    before the first substantive body line (blank lines and a title are fine).
+    """
+    fields = []
+    title_seen = False
+    status_seen = False
+    for line_number, line in enumerate(re.split(r"\r\n|[\r\n]", content), start=1):
+        if _is_markdown_blank(line):
+            continue
+        match = _STATUS.fullmatch(line)
+        if match:
+            fields.append((match.group("value"), line_number))
+            status_seen = True
+            continue
+        if _STATUS_PREFIX.match(line):
+            raise PlanningEvidenceInspectionError(
+                "STATUS_FIELD_MALFORMED", path="", evaluation_complete=True
+            )
+        if not title_seen and not status_seen and _is_nonempty_document_title(line):
+            title_seen = True
+            continue
+        break
+    return fields
+
+
+def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str, int]:
+    kind = region.get("kind")
+    name = region.get("name")
+    if not isinstance(kind, str) or not isinstance(name, str) or not name.strip():
+        raise PlanningEvidenceInspectionError("REGION_SELECTOR_MALFORMED", path="", evaluation_complete=False)
+    headings, fences = _markdown_structure(content)
+    if kind == "MARKDOWN_SECTION":
+        matches = [item for item in headings if item[1] == name]
+        if not matches:
+            raise PlanningEvidenceInspectionError("REGION_MISSING", path="", evaluation_complete=False)
+        if len(matches) != 1:
+            raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
+        start, _heading_name, level, line = matches[0]
+        end = next(
+            (offset for offset, _title, candidate_level, _line in headings
+             if offset > start and candidate_level <= level),
+            len(content),
+        )
+        return (start, end,
+                f"markdown-section:{name}:line-{line}",
+                len(matches))
+    if kind == "MARKDOWN_FENCE":
+        matches = [item for item in fences if name in item[2].split()]
+        if not matches:
+            raise PlanningEvidenceInspectionError("REGION_MISSING", path="", evaluation_complete=False)
+        if len(matches) != 1:
+            raise PlanningEvidenceInspectionError("REGION_AMBIGUOUS", path="", evaluation_complete=False)
+        start, end, _info, line = matches[0]
+        return (start, end,
+                f"markdown-fence:{name}:line-{line}",
+                len(matches))
+    raise PlanningEvidenceInspectionError("REGION_UNSUPPORTED", path="", evaluation_complete=False)
+
+
+def _markdown_structure(
+    content: str,
+) -> tuple[list[tuple[int, str, int, int]], list[tuple[int, int, str, int]]]:
+    """Return headings outside fences and complete fenced regions."""
+    headings: list[tuple[int, str, int, int]] = []
+    fences: list[tuple[int, int, str, int]] = []
+    active: tuple[str, int, int, str, int] | None = None
+    html_terminator: re.Pattern[str] | None = None
+    paragraph_active = False
+    offset = 0
+    for line_number, line in enumerate(_markdown_lines(content), start=1):
+        text = line.rstrip("\r\n")
+        fence = re.match(
+            r"^ {0,3}(?:(?P<ticks>`{3,})(?P<tick_info>[^`]*)|"
+            r"(?P<tildes>~{3,})(?P<tilde_info>.*))$",
+            text,
+        )
+        if active is not None:
+            paragraph_active = False
+            marker_char, marker_length, start, info, start_line = active
+            if re.match(rf"^ {{0,3}}{re.escape(marker_char)}{{{marker_length},}}[ \t]*$", text):
+                fences.append((start, offset, info, start_line))
+                active = None
+        elif html_terminator is not None:
+            paragraph_active = False
+            if html_terminator.search(text):
+                html_terminator = None
+        elif html := re.match(
+            r"^ {0,3}<(?P<tag>script|pre|style|textarea)(?:\s|>|$)",
+            text,
+            re.IGNORECASE,
+        ):
+            paragraph_active = False
+            terminator = re.compile(
+                rf"</{re.escape(html.group('tag'))}\s*>", re.IGNORECASE
+            )
+            if not terminator.search(text, html.end()):
+                html_terminator = terminator
+        elif "<!--" in text and re.match(r"^ {0,3}<!--", text):
+            paragraph_active = False
+            if "-->" not in text[text.index("<!--") + 4:]:
+                html_terminator = re.compile(r"-->")
+        elif re.match(r"^ {0,3}<\?", text):
+            paragraph_active = False
+            if "?>" not in text:
+                html_terminator = re.compile(r"\?>")
+        elif re.match(r"^ {0,3}<![A-Z]", text):
+            paragraph_active = False
+            if ">" not in text:
+                html_terminator = re.compile(r">")
+        elif re.match(r"^ {0,3}<!\[CDATA\[", text, re.IGNORECASE):
+            paragraph_active = False
+            if "]]>" not in text:
+                html_terminator = re.compile(r"\]\]>")
+        elif re.match(
+            r"^ {0,3}</?(?:address|article|aside|base|basefont|blockquote|body|"
+            r"caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|"
+            r"fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|"
+            r"header|hgroup|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|"
+            r"noframes|ol|optgroup|option|p|param|search|section|summary|table|"
+            r"tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|/?>|$)",
+            text,
+            re.IGNORECASE,
+        ):
+            paragraph_active = False
+            html_terminator = re.compile(r"^[ \t]*$")
+        elif not paragraph_active and re.match(
+            r"^ {0,3}</?[A-Za-z][A-Za-z0-9-]*"
+            r"(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*"
+            r"(?:\s*=\s*(?:[^ \t\r\n\"'=<>`]+|'[^']*'|\"[^\"]*\"))?)*"
+            r"\s*/?>[ \t]*$",
+            text,
+        ):
+            paragraph_active = False
+            html_terminator = re.compile(r"^[ \t]*$")
+        elif fence:
+            paragraph_active = False
+            marker = fence.group("ticks") or fence.group("tildes")
+            info = fence.group("tick_info") or fence.group("tilde_info") or ""
+            active = (
+                marker[0], len(marker), offset + len(line),
+                info.strip(), line_number,
+            )
+        else:
+            heading = re.match(
+                r"^ {0,3}(?P<marks>#{1,6})(?:[ \t]+(?P<body>.*)|[ \t]*)$",
+                text,
+            )
+            if heading:
+                paragraph_active = False
+                title = (heading.group("body") or "").rstrip(" \t")
+                closing = re.match(r"^(?P<title>.*?)[ \t]+#+$", title)
+                if closing:
+                    title = closing.group("title").rstrip(" \t")
+                elif title and set(title) == {"#"}:
+                    title = ""
+                headings.append((offset, title, len(heading.group("marks")), line_number))
+            else:
+                paragraph_active = bool(text.strip())
+        offset += len(line)
+    if active is not None:
+        raise PlanningEvidenceInspectionError(
+            "REGION_MALFORMED", path="", evaluation_complete=False
+        )
+    return headings, fences
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +254,8 @@ def evaluate_path_predicates(
     status_fields: Sequence[tuple[str, int]] | None = None,
     inspected_bytes: int | None = None,
     status_scan_bytes: int | None = None,
+    region: Mapping[str, Any] | None = None,
+    distinct_text_matches: bool = False,
 ) -> dict[str, Any]:
     """Evaluate bounded syntactic predicates and return body-free evidence."""
     _path(path)
@@ -68,14 +271,43 @@ def evaluate_path_predicates(
         raise PlanningEvidenceError(f"planning-evidence target {path!r} exceeds its byte limit")
     if not predicates:
         raise PlanningEvidenceError(f"planning-evidence target {path!r} has no predicates")
+    region_identity = None
+    region_match_count = 0
+    scoped_content = content
+    if region is not None:
+        try:
+            start, end, region_identity, region_match_count = _region_span(content, region)
+        except PlanningEvidenceInspectionError as error:
+            error.metadata["path"] = path
+            raise
+        scoped_content = content[start:end]
     results = []
+    distinct_candidates: list[tuple[int, str, list[int]]] = []
     for predicate in predicates:
         kind, expected = predicate.get("kind"), predicate.get("value")
         if kind == "STATUS_EQUALS":
-            fields = list(status_fields) if status_fields is not None else [
-                (match.group("value"), content.count("\n", 0, match.start()) + 1)
-                for match in _STATUS.finditer(content)
-            ]
+            try:
+                if region is not None:
+                    base_line = len(re.findall(r"\r\n|[\r\n]", content[:start]))
+                    status_content = scoped_content
+                    if region.get("kind") == "MARKDOWN_SECTION":
+                        heading_ending = re.search(r"\r\n|[\r\n]", scoped_content)
+                        if heading_ending:
+                            status_content = scoped_content[heading_ending.end():]
+                            base_line += 1
+                    fields = [
+                        (value, line + base_line)
+                        for value, line in _structured_status_fields(status_content)
+                    ]
+                else:
+                    fields = list(status_fields) if status_fields is not None else _structured_status_fields(content)
+            except PlanningEvidenceInspectionError as error:
+                error.metadata.update({
+                    "path": path, "blobSize": complete_size,
+                    "appliedTrustedCeiling": max_bytes, "predicateType": kind,
+                    "inspectionStrategy": inspection_strategy,
+                })
+                raise
             if not fields:
                 raise PlanningEvidenceInspectionError(
                     "STATUS_FIELD_MISSING", path=path, blob_size=complete_size,
@@ -94,14 +326,29 @@ def evaluate_path_predicates(
         elif kind in {"TEXT_PRESENT", "TEXT_ABSENT"}:
             if not isinstance(expected, str) or not expected:
                 raise PlanningEvidenceError("text predicates require a non-empty value")
-            positions = [match.start() for match in re.finditer(re.escape(expected), content)]
+            positions = [match.start() for match in re.finditer(re.escape(expected), scoped_content)]
             actual = bool(positions)
             satisfied = actual if kind == "TEXT_PRESENT" else not actual
             selected = {"kind": "TEXT_MATCH", "occurrences": len(positions)}
         else:
             results.append({"predicate": dict(predicate), "result": "UNSUPPORTED", "selectedEvidence": None})
             continue
+        result_index = len(results)
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
+        if distinct_text_matches and kind == "TEXT_PRESENT":
+            distinct_candidates.append((result_index, expected, positions))
+    if distinct_candidates:
+        selected_positions = _independent_text_positions(distinct_candidates)
+        for result_index, _value, positions in distinct_candidates:
+            result = results[result_index]
+            result["result"] = (
+                "MATCH" if result_index in selected_positions else "NO_MATCH"
+            )
+            result["selectedEvidence"] = {
+                "kind": "TEXT_MATCH",
+                "occurrences": len(positions),
+                "independentOccurrence": result_index in selected_positions,
+            }
     partial_status_scan = inspection_strategy == "STRUCTURED_STATUS_FIELD_SCAN" and status_fields is not None
     if (not partial_status_scan and complete_size != len(encoded)) or (
         not partial_status_scan and complete_digest != digest
@@ -121,12 +368,48 @@ def evaluate_path_predicates(
             "declaredMaxBytesHint": declared_max_bytes,
             "strategy": inspection_strategy, "evaluationComplete": True,
             "statusFieldScanBytes": status_scan_bytes,
+            "region": None if region is None else {
+                "kind": region.get("kind"), "name": region.get("name"),
+                "identity": region_identity, "matchCount": region_match_count,
+                "evaluationComplete": True,
+            },
         },
     }
     record["selectionId"] = "planselection-" + sha256(
         json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:20]
     return record
+
+
+def _independent_text_positions(
+    candidates: Sequence[tuple[int, str, Sequence[int]]],
+) -> set[int]:
+    """Find one non-overlapping occurrence for each required text value."""
+    ordered = sorted(candidates, key=lambda item: (len(item[2]), item[0]))
+    attempts = 0
+
+    def select(
+        offset: int, intervals: tuple[tuple[int, int], ...], chosen: dict[int, int],
+    ) -> dict[int, int] | None:
+        nonlocal attempts
+        if offset == len(ordered):
+            return chosen
+        result_index, value, positions = ordered[offset]
+        for position in positions:
+            attempts += 1
+            if attempts > 256:
+                return None
+            interval = (position, position + len(value))
+            if any(interval[0] < end and start < interval[1] for start, end in intervals):
+                continue
+            result = select(
+                offset + 1, (*intervals, interval), {**chosen, result_index: position})
+            if result is not None:
+                return result
+        return None
+
+    selected = select(0, (), {})
+    return set(selected or {})
 
 
 def finalize_planning_evidence(
@@ -228,6 +511,8 @@ def reconcile_dispositions(
     proposed_contents_by_path: Mapping[str, str] | None = None,
     deleted_paths: Sequence[str] = (),
     required_insertions_by_path: Mapping[str, Sequence[str]] | None = None,
+    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    max_bytes: int = 64 * 1024,
 ) -> dict[str, Any]:
     """Create immutable reconciliation evidence from freshly verified targets."""
     target_map = {item.get("path"): item for item in targets}
@@ -254,11 +539,16 @@ def reconcile_dispositions(
         if digest != target.get("preimageSha256"):
             raise PlanningEvidenceError(f"editable target {path!r} has stale content evidence")
         state = disposition.get("disposition")
+        region = (regions_by_path or {}).get(path)
         proof = None
         insertion_proof: list[dict[str, Any]] = []
         if state == "CHANGE":
             proposed = (proposed_contents_by_path or {}).get(path)
             if path in deleted:
+                if region is not None:
+                    raise PlanningEvidenceError(
+                        f"DELETE for {path!r} cannot rely on region-scoped evidence"
+                    )
                 postconditions = postconditions_by_path.get(path, ())
                 if not postconditions or any(
                     item.get("kind") != "TEXT_ABSENT"
@@ -287,6 +577,8 @@ def reconcile_dispositions(
                     path=path, content=proposed, repository_revision=repository_revision,
                     predicates=postconditions_by_path.get(path, ()),
                     source_id="generated-change",
+                    region=region,
+                    max_bytes=max_bytes,
                 )
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(
@@ -295,20 +587,38 @@ def reconcile_dispositions(
             effective.append(path)
         elif state == "NO_CHANGE":
             proof = evaluate_path_predicates(path=path, content=content, repository_revision=repository_revision,
-                predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")))
+                predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")),
+                region=region, max_bytes=max_bytes)
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise PlanningEvidenceError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
-            for value in (required_insertions_by_path or {}).get(path, ()):
-                matched = isinstance(value, str) and bool(value) and value in content
-                insertion_proof.append({"value": value, "result": "MATCH" if matched else "NO_MATCH"})
-            if any(item["result"] != "MATCH" for item in insertion_proof):
-                raise PlanningEvidenceError(
-                    f"NO_CHANGE for {path!r} lacks a required insertion"
-                )
             no_change.append(path)
         else:
             raise PlanningEvidenceError(f"disposition for {path!r} must be CHANGE or NO_CHANGE")
         output = None if path in deleted else (proposed_contents_by_path or {}).get(path, content)
+        insertion_values = tuple((required_insertions_by_path or {}).get(path, ()))
+        if insertion_values:
+            if output is None:
+                raise PlanningEvidenceError(
+                    f"{state} for {path!r} lacks a required insertion"
+                )
+            insertion_record = evaluate_path_predicates(
+                path=path, content=output, repository_revision=repository_revision,
+                predicates=[{"kind": "TEXT_PRESENT", "value": value}
+                            for value in insertion_values],
+                source_id="generated-insertion-reconciliation", region=region,
+                max_bytes=max_bytes,
+                distinct_text_matches=True,
+            )
+            insertion_proof = [
+                {"value": value, "result": result["result"]}
+                for value, result in zip(
+                    insertion_values, insertion_record["predicateResults"], strict=True
+                )
+            ]
+            if any(item["result"] != "MATCH" for item in insertion_proof):
+                raise PlanningEvidenceError(
+                    f"{state} for {path!r} lacks a required insertion"
+                )
         records.append({"path": path, "disposition": state, "targetSha256": digest,
             "outputSha256": None if output is None else sha256(output.encode()).hexdigest(),
             "postState": "ABSENT" if path in deleted else "PRESENT",

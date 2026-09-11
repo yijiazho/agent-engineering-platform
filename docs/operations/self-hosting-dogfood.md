@@ -862,8 +862,9 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `analyze-issue:1.3.0` derives bounded exact or prefix predicate declarations
-  from the request; `build-implementation-plan:1.9.0` uses those declarations
+* `analyze-issue:1.4.0` derives bounded exact or prefix predicate declarations,
+  including nullable deterministic region selectors, from the request;
+  `build-implementation-plan:1.10.0` uses those declarations
   to create trusted `planning-evidence` records
 
 The planning Task owns trusted limits of 256 KiB per file, 1 MiB in aggregate,

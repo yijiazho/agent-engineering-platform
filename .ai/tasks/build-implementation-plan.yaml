@@ -3,14 +3,14 @@
   "kind": "Task",
   "metadata": {
     "name": "build-implementation-plan",
-    "version": "1.9.0"
+    "version": "1.10.0"
   },
   "spec": {
     "objective": "Turn evaluated issue analysis into an actionable repository-scoped plan.",
     "agentRef": {
       "kind": "Agent",
       "name": "planner",
-      "version": "1.8.0"
+      "version": "1.9.0"
     },
     "outputs": {
       "type": "object",
@@ -98,7 +98,7 @@
             "required": [
               "criterion",
               "classification",
-              "requiredInsertion"
+              "requiredInsertions"
             ],
             "properties": {
               "criterion": {
@@ -111,30 +111,18 @@
                   "UNSUPPORTED"
                 ]
               },
-              "requiredInsertion": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "path",
-                      "value"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "value": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  },
-                  {
-                    "type": "null"
+              "requiredInsertions": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path", "value"],
+                  "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "value": {"type": "string", "minLength": 1}
                   }
-                ]
+                }
               }
             }
           }
@@ -244,7 +232,7 @@
       {
         "kind": "Evaluation",
         "name": "implementation-plan-schema",
-        "version": "1.6.0"
+        "version": "1.7.0"
       }
     ],
     "planningPredicateSource": "PRIOR_ISSUE_ANALYSIS"

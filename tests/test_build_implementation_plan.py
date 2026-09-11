@@ -40,6 +40,8 @@ PLAN_SCHEMA = {
         "risks",
         "implementationSteps",
         "acceptanceCriteriaClassifications",
+        "requiredInsertions",
+        "unsupportedAcceptanceCriteria",
     ],
     "properties": {
         "intendedFiles": {
@@ -70,9 +72,16 @@ PLAN_SCHEMA = {
             "items": {
                 "type": "object",
                 "required": ["criterion", "classification"],
+                "properties": {
+                    "criterion": {"type": "string"},
+                    "classification": {"type": "string"},
+                    "requiredInsertions": {"type": "array"},
+                    "requiredInsertion": {"type": "object"},
+                },
             },
             "minItems": 1,
         },
+        "requiredInsertions": {"type": "array"},
         "unsupportedAcceptanceCriteria": {
             "type": "array",
             "items": {"type": "string", "minLength": 1},
@@ -93,6 +102,7 @@ VALID_PLAN = {
         "criterion": "Persist an evaluated plan.",
         "classification": "UNSUPPORTED",
     }],
+    "requiredInsertions": [],
     "unsupportedAcceptanceCriteria": ["Persist an evaluated plan."],
 }
 
@@ -243,8 +253,8 @@ def test_plan_must_classify_every_analyzed_acceptance_criterion() -> None:
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
-    assert result.failure_class is FailureClass.CONFIGURATION
-    assert "classify every analyzed acceptance criterion" in result.message
+    assert result.failure_class is FailureClass.EVALUATION
+    assert "should be non-empty" in result.message
 
 
 def test_required_classification_must_bind_its_own_insertion() -> None:
@@ -262,6 +272,261 @@ def test_required_classification_must_bind_its_own_insertion() -> None:
 
     assert result.succeeded is False
     assert "bind its own insertion evidence" in result.message
+
+
+def test_shared_insertion_supports_non_owner_criterion_binding() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": ["A", "B"],
+                "acceptanceCriterionInsertions": [
+                    {"criterion": criterion, "requiredInsertions": [insertion]}
+                    for criterion in ("A", "B")
+                ],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    insertion = {"path": "README.md", "value": "deploy/"}
+    plan = {
+        "requiredInsertions": [insertion],
+        "unsupportedAcceptanceCriteria": [],
+        "acceptanceCriteriaClassifications": [
+            {"criterion": criterion, "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [insertion]}
+            for criterion in ("A", "B")
+        ],
+    }
+
+    handler._validate_acceptance_criteria_accounting(
+        {"dependencyTaskExecutionIds": ["analyze"]}, plan
+    )
+
+
+def test_criterion_bindings_must_match_independent_analyzed_sets() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": ["A", "B"],
+                "acceptanceCriterionInsertions": [
+                    {"criterion": "A", "requiredInsertions": [x, y]},
+                    {"criterion": "B", "requiredInsertions": [z]},
+                ],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    x = {"path": "README.md", "value": "x"}
+    y = {"path": "README.md", "value": "y"}
+    z = {"path": "README.md", "value": "z"}
+    plan = {
+        "requiredInsertions": [x, y, z],
+        "unsupportedAcceptanceCriteria": [],
+        "acceptanceCriteriaClassifications": [
+            {"criterion": "A", "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [x]},
+            {"criterion": "B", "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [y, z]},
+        ],
+    }
+
+    with pytest.raises(
+        BuildImplementationPlanContractError,
+        match="exactly match analyzed requirements",
+    ):
+        handler._validate_acceptance_criteria_accounting(
+            {"dependencyTaskExecutionIds": ["analyze"]}, plan
+        )
+
+
+def test_partial_binding_fails_before_agent_invocation_success() -> None:
+    x = {"path": "README.md", "value": "x"}
+    y = {"path": "README.md", "value": "y"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [x, y]
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [x]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [x],
+    }]
+    store, handler, task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.failure_class is FailureClass.EVALUATION
+    execution = store.get(TASK_EXECUTION_ID)
+    invocation = store.get(execution["agentInvocationIds"][0])
+    assert invocation["status"] == "FAILED"
+    assert invocation["outputSchemaValidation"] == "FAILED"
+    assert "generatedArtifactIds" not in execution
+
+
+def test_insertion_path_requires_trusted_planning_evidence() -> None:
+    insertion = {"path": "README.md", "value": "x"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [insertion]
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [insertion]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [insertion],
+    }]
+    store, handler, task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+
+    errors = handler._invocation_output_errors(
+        store.get(TASK_EXECUTION_ID),
+        {"elements": [{
+            "type": "planning-evidence",
+            "content": {"path": "src/aep/build_implementation_plan.py"},
+        }]},
+        output,
+    )
+
+    assert errors == ["required insertions must target trusted authorized paths"]
+
+
+def test_unsupported_criterion_does_not_claim_analyzed_insertions() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": ["A"],
+                "acceptanceCriterionInsertions": [{
+                    "criterion": "A",
+                    "requiredInsertions": [{"path": "README.md", "value": "x"}],
+                }],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    handler._validate_acceptance_criteria_accounting(
+        {"dependencyTaskExecutionIds": ["analyze"]},
+        {
+            "requiredInsertions": [],
+            "unsupportedAcceptanceCriteria": ["A"],
+            "acceptanceCriteriaClassifications": [{
+                "criterion": "A", "classification": "UNSUPPORTED",
+                "requiredInsertions": [],
+            }],
+        },
+    )
+
+
+def test_unsupported_criterion_requires_unsupported_path_evidence() -> None:
+    insertion = {"path": "README.md", "value": "x"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [insertion]
+    output = dict(VALID_PLAN)
+    store, handler, _task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+    errors = handler._invocation_output_errors(
+        store.get(TASK_EXECUTION_ID),
+        {"elements": [{
+            "type": "planning-evidence",
+            "content": {
+                "path": "README.md",
+                "predicateResults": [{"result": "MATCH"}],
+                "postconditionResults": [],
+            },
+        }]},
+        output,
+    )
+
+    assert errors == [
+        "unsupported criterion requires trusted unsupported path evidence"
+    ]
+
+
+def test_required_criterion_rejects_unsupported_path_evidence() -> None:
+    insertion = {"path": "README.md", "value": "x"}
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [insertion]
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [insertion]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [insertion],
+    }]
+    store, handler, _task, _adapter = setup_handler(
+        output, analysis_output=analysis
+    )
+    errors = handler._invocation_output_errors(
+        store.get(TASK_EXECUTION_ID),
+        {"elements": [{
+            "type": "planning-evidence",
+            "content": {
+                "path": "README.md",
+                "predicateResults": [{"result": "UNSUPPORTED"}],
+                "postconditionResults": [],
+            },
+        }]},
+        output,
+    )
+
+    assert errors == [
+        "required-insertion criterion cannot rely on unsupported path evidence"
+    ]
+
+
+def test_unsupported_list_must_exactly_match_classifications() -> None:
+    output = dict(VALID_PLAN)
+    insertion = {"path": "src/a.py", "value": "first"}
+    output["requiredInsertions"] = [insertion]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [insertion],
+    }]
+    # The same criterion cannot remain in the unsupported list after the
+    # Planner classified it as implementable.
+    analysis = issue_analysis()
+    analysis["acceptanceCriterionInsertions"][0]["requiredInsertions"] = [insertion]
+    store, handler, task, _adapter = setup_handler(output, analysis_output=analysis)
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    assert "exactly match UNSUPPORTED classifications" in result.message
+
+
+def test_plural_binding_rejects_conflicting_legacy_singular_value() -> None:
+    output = dict(VALID_PLAN)
+    output["unsupportedAcceptanceCriteria"] = []
+    output["requiredInsertions"] = [{"path": "src/a.py", "value": "first"}]
+    output["acceptanceCriteriaClassifications"] = [{
+        "criterion": "Persist an evaluated plan.",
+        "classification": "REQUIRED_INSERTION",
+        "requiredInsertions": [{"path": "src/a.py", "value": "first"}],
+        "requiredInsertion": {"path": "src/b.py", "value": "second"},
+    }]
+    store, handler, task, _adapter = setup_handler(output)
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    assert "cannot conflict with legacy requiredInsertion" in result.message
 
 
 def test_invalid_non_object_output_is_rejected_without_artifact() -> None:
@@ -298,6 +563,7 @@ def setup_handler(
     publish_analysis: bool = True,
     audit_analysis: bool = True,
     evaluation_schema: dict | None = None,
+    analysis_output: dict | None = None,
 ) -> tuple[
     InMemoryRuntimeObjectStore,
     BuildImplementationPlanTaskHandler,
@@ -313,7 +579,9 @@ def setup_handler(
         store.create(upstream_evaluation_result(), deterministic_key="upstream-evaluation")
     artifact_store = InMemoryGeneratedArtifactStore(runtime_store=store)
     if publish_analysis:
-        artifact_store.publish(issue_analysis_metadata(), issue_analysis())
+        artifact_store.publish(
+            issue_analysis_metadata(), analysis_output or issue_analysis()
+        )
     adapter = FakeModelAdapter(
         [ModelResponse(output=output, usage=ModelUsage(20, 15), latency_ms=3)]
     )
@@ -506,6 +774,10 @@ def issue_analysis() -> dict:
     return {
         "requestedChange": "Add implementation-plan handling.",
         "acceptanceCriteria": ["Persist an evaluated plan."],
+        "acceptanceCriterionInsertions": [{
+            "criterion": "Persist an evaluated plan.",
+            "requiredInsertions": [],
+        }],
         "risks": ["The plan could omit required sections."],
         "likelyRepositoryAreas": ["src/aep", "tests"],
     }

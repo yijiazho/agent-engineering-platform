@@ -294,6 +294,12 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
                     output={
                         "requestedChange": "Update the fixture value.",
                         "acceptanceCriteria": ["The value is updated and tests pass."],
+                        "acceptanceCriterionInsertions": [{
+                            "criterion": "The value is updated and tests pass.",
+                            "requiredInsertions": [
+                                {"path": "src/app.py", "value": "value = 2"}
+                            ],
+                        }],
                         "risks": ["The patch could exceed its plan."],
                         "likelyRepositoryAreas": ["src/app.py"],
                     },

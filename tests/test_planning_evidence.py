@@ -67,8 +67,242 @@ def test_predicates_cover_text_absence_and_unsupported_semantics_deterministical
     assert first["selectionId"] == second["selectionId"]
 
 
+def test_region_match_count_records_selector_cardinality_not_text_occurrences() -> None:
+    record = evaluate_path_predicates(
+        path="README.md",
+        content="# Repository Layout\n\n```text\ndeploy/\ndeploy/local/\n```\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "deploy/"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert record["inspection"]["region"]["matchCount"] == 1
+    assert record["predicateResults"][0]["selectedEvidence"]["occurrences"] == 2
+
+
+def test_markdown_section_selector_ignores_headings_inside_fences() -> None:
+    content = (
+        "```markdown\n# Repository Layout\ndeploy/ example\n```\n\n"
+        "# Repository Layout\n\nsrc/\n"
+    )
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_ABSENT", "value": "deploy/"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["inspection"]["region"]["matchCount"] == 1
+
+
+def test_markdown_section_ignores_headings_in_tilde_fence_with_backtick_info() -> None:
+    content = (
+        "~~~example`name\n# Target\nwrong section\n~~~\n\n"
+        "# Target\n\nright section\n"
+    )
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "right section"},
+            {"kind": "TEXT_ABSENT", "value": "wrong section"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
+def test_markdown_section_ignores_headings_inside_raw_html_block() -> None:
+    content = (
+        "<pre>\n# Target\nwrong section\n</pre>\n\n"
+        "# Target\n\nright section\n"
+    )
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "right section"},
+            {"kind": "TEXT_ABSENT", "value": "wrong section"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
+@pytest.mark.parametrize("raw_block", [
+    "<div>\n# Target\nwrong section\n</div>",
+    "<?example\n# Target\n?>",
+    "<!DOCTYPE html\n# Target\n>",
+    "<!--\n# Target\n-->",
+    "<![CDATA[\n# Target\n]]>",
+    "<x-example>\n# Target\nwrong section\n</x-example>",
+])
+def test_markdown_section_ignores_all_other_raw_html_blocks(
+    raw_block: str,
+) -> None:
+    content = f"{raw_block}\n\n# Target\n\nright section\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "right section"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_markdown_section_ignores_hgroup_raw_html_block() -> None:
+    content = "paragraph\n<hgroup>\n# Target\nwrong section\n\n# Target\nright section\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "right section"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_generic_html_tag_does_not_interrupt_a_markdown_paragraph() -> None:
+    content = "paragraph\n<x-example>\n# Target\n\ninside\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_markdown_section_preserves_non_delimited_trailing_hash() -> None:
+    content = "# Target#\n\nwrong section\n\n# Target\n\nright section\n"
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "right section"},
+            {"kind": "TEXT_ABSENT", "value": "wrong section"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
+def test_empty_heading_ends_a_selected_markdown_section() -> None:
+    record = evaluate_path_predicates(
+        path="README.md",
+        content="# Target\ninside\n#\noutside\n",
+        repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "inside"},
+            {"kind": "TEXT_ABSENT", "value": "outside"},
+        ],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert [item["result"] for item in record["predicateResults"]] == [
+        "MATCH", "MATCH"
+    ]
+
+
+def test_markdown_section_strips_whitespace_delimited_closing_hashes() -> None:
+    record = evaluate_path_predicates(
+        path="README.md", content="# Target ###  \n\ninside\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_markdown_fence_matches_only_body_content() -> None:
+    record = evaluate_path_predicates(
+        path="example.md", content="```python\nprint('ok')\n```\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "TEXT_ABSENT", "value": "python"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_FENCE", "name": "python"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_unicode_whitespace_does_not_close_a_markdown_fence() -> None:
+    with pytest.raises(PlanningEvidenceError, match="REGION_MALFORMED"):
+        evaluate_path_predicates(
+            path="example.md",
+            content="```python\nexample\n```\u00a0\n# Target\nwrong section\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "wrong section"}],
+            source_id="snapshot",
+            region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+        )
+
+
+def test_structured_status_is_evaluated_inside_the_selected_region() -> None:
+    content = (
+        "# Document\n\n**Status:** Completed\n\n"
+        "# Target\n\n**Status:** In Progress\n"
+    )
+    record = evaluate_path_predicates(
+        path="docs/task.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["predicateResults"][0]["selectedEvidence"]["line"] == 7
+
+
+def test_structured_status_supports_a_nested_selected_section() -> None:
+    record = evaluate_path_predicates(
+        path="docs/task.md",
+        content="# Document\n\n## Target\n\n**Status:** In Progress\n",
+        repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["predicateResults"][0]["selectedEvidence"]["line"] == 5
+
+
+def test_structured_status_supports_a_cr_only_selected_section() -> None:
+    record = evaluate_path_predicates(
+        path="docs/task.md",
+        content="# Document\r\r## Target\r**Status:** In Progress\r",
+        repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+        source_id="snapshot",
+        region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+    assert record["predicateResults"][0]["selectedEvidence"]["line"] == 4
+
+
 @pytest.mark.parametrize(("content", "reason"), [
     ("**Status:** In Progress\n**Status:** Completed\n", "STATUS_FIELD_AMBIGUOUS"),
+    ("**Status:**\n**Status:** Completed\n", "STATUS_FIELD_MALFORMED"),
+    ("**Status:**   \n", "STATUS_FIELD_MALFORMED"),
+    ("# Task\n## Context\n**Status:** Completed\n", "STATUS_FIELD_MISSING"),
     ("no status", "STATUS_FIELD_MISSING"),
 ])
 def test_ambiguous_or_missing_structured_field_fails_closed(
@@ -77,6 +311,86 @@ def test_ambiguous_or_missing_structured_field_fails_closed(
     with pytest.raises(PlanningEvidenceError, match=reason):
         evaluate_path_predicates(path="docs/task.md", content=content, repository_revision=REVISION,
             predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}], source_id="snapshot")
+
+
+@pytest.mark.parametrize("title", ["#", "# ###"])
+def test_empty_heading_is_not_a_leading_document_title(title: str) -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content=f"{title}\n**Status:** Completed\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+            source_id="snapshot",
+        )
+
+
+def test_non_heading_hash_text_prevents_later_status_from_becoming_leading() -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content="#not-a-heading\n\n**Status:** In Progress\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "In Progress"}],
+            source_id="snapshot",
+        )
+
+
+def test_unicode_whitespace_does_not_make_a_markdown_document_title() -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content="#\u00a0Narrative\n**Status:** Completed\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+            source_id="snapshot",
+        )
+
+
+def test_complete_status_scan_uses_only_cr_and_lf_line_boundaries() -> None:
+    record = evaluate_path_predicates(
+        path="docs/task.md",
+        content="**Status:** Completed\u2028Narrative",
+        repository_revision=REVISION,
+        predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+        source_id="snapshot",
+    )
+
+    assert record["predicateResults"][0]["result"] == "NO_MATCH"
+
+
+def test_markdown_structure_does_not_split_on_unicode_line_separators() -> None:
+    with pytest.raises(PlanningEvidenceError, match="REGION_MISSING"):
+        evaluate_path_predicates(
+            path="README.md",
+            content="narrative\u2028# Target\ninside\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+            source_id="snapshot",
+            region={"kind": "MARKDOWN_SECTION", "name": "Target"},
+        )
+
+
+def test_unicode_whitespace_is_not_blank_leading_metadata() -> None:
+    with pytest.raises(PlanningEvidenceError, match="STATUS_FIELD_MISSING"):
+        evaluate_path_predicates(
+            path="docs/task.md",
+            content="\u00a0\n**Status:** Completed\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "STATUS_EQUALS", "value": "Completed"}],
+            source_id="snapshot",
+        )
+
+
+def test_whitespace_only_region_name_is_malformed() -> None:
+    with pytest.raises(PlanningEvidenceError, match="REGION_SELECTOR_MALFORMED"):
+        evaluate_path_predicates(
+            path="README.md", content="# Target\ninside\n",
+            repository_revision=REVISION,
+            predicates=[{"kind": "TEXT_PRESENT", "value": "inside"}],
+            source_id="snapshot",
+            region={"kind": "MARKDOWN_SECTION", "name": "   "},
+        )
 
 
 def test_plan_contract_rejects_overlap_omission_and_stale_evidence() -> None:
@@ -174,6 +488,35 @@ def test_reconciliation_keeps_required_change_and_rejects_stale_target() -> None
             evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"})
 
 
+def test_reconciliation_uses_the_trusted_editable_target_byte_limit() -> None:
+    original = "original\n"
+    proposed = "x" * (65 * 1024) + "\nrequired value\n"
+    result = reconcile_dispositions(
+        plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["docs/task.md"],
+        targets=[{
+            "path": "docs/task.md", "content": original,
+            "preimageSha256": sha256(original.encode()).hexdigest(),
+            "repositoryRevision": REVISION, "provenance": {},
+        }],
+        dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}],
+        postconditions_by_path={
+            "docs/task.md": ({"kind": "TEXT_PRESENT", "value": "required value"},)
+        },
+        proposed_contents_by_path={"docs/task.md": proposed},
+        required_insertions_by_path={"docs/task.md": ("required value",)},
+        evaluator_ref={
+            "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+        },
+        max_bytes=128 * 1024,
+    )
+
+    assert result["effectiveRequiredPaths"] == ["docs/task.md"]
+    assert result["pathDispositions"][0]["requiredInsertionProof"] == [
+        {"value": "required value", "result": "MATCH"}
+    ]
+
+
 def test_no_change_requires_exact_required_insertions_to_be_present() -> None:
     content = "existing text\n"
     target = {"path": "docs/task.md", "content": content,
@@ -194,6 +537,61 @@ def test_no_change_requires_exact_required_insertions_to_be_present() -> None:
     ]
 
 
+def test_required_insertions_must_have_independent_occurrences() -> None:
+    content = "deploy/local/\n"
+    target = {
+        "path": "docs/task.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {},
+    }
+
+    with pytest.raises(PlanningEvidenceError, match="lacks a required insertion"):
+        reconcile_dispositions(
+            plan_id="artifact-1", repository_revision=REVISION,
+            original_required_paths=["docs/task.md"], targets=[target],
+            dispositions=[{"path": "docs/task.md", "disposition": "NO_CHANGE"}],
+            postconditions_by_path={
+                "docs/task.md": ({"kind": "TEXT_PRESENT", "value": "deploy/local/"},)
+            },
+            required_insertions_by_path={
+                "docs/task.md": ("deploy/", "deploy/local/")
+            },
+            evaluator_ref={
+                "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+            },
+        )
+
+
+def test_reconciliation_keeps_insertions_inside_the_trusted_region() -> None:
+    content = (
+        "# Repository Layout\n\n```text\nsrc/\n```\n\n"
+        "# Other\n\ndeploy/ outside\n"
+    )
+    target = {
+        "path": "README.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {},
+    }
+    common = dict(
+        plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["README.md"], targets=[target],
+        dispositions=[{"path": "README.md", "disposition": "NO_CHANGE"}],
+        postconditions_by_path={
+            "README.md": ({"kind": "TEXT_PRESENT", "value": "src/"},)
+        },
+        required_insertions_by_path={"README.md": ("deploy/",)},
+        regions_by_path={"README.md": {
+            "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
+        }},
+        evaluator_ref={
+            "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+        },
+    )
+
+    with pytest.raises(PlanningEvidenceError, match="lacks a required insertion"):
+        reconcile_dispositions(**common)
+
+
 def test_reconciliation_proves_an_authorized_deleted_post_state() -> None:
     content = "obsolete text\n"
     target = {"path": "docs/task.md", "content": content,
@@ -209,6 +607,39 @@ def test_reconciliation_proves_an_authorized_deleted_post_state() -> None:
     assert disposition["postState"] == "ABSENT"
     assert disposition["outputSha256"] is None
     assert disposition["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
+
+
+def test_reconciliation_rejects_whole_file_delete_from_scoped_evidence() -> None:
+    content = "# Target\n\nobsolete text\n\n# Other\n\nkeep me\n"
+    target = {
+        "path": "docs/task.md",
+        "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION,
+        "provenance": {},
+    }
+
+    with pytest.raises(
+        PlanningEvidenceError, match="cannot rely on region-scoped evidence"
+    ):
+        reconcile_dispositions(
+            plan_id="artifact-1",
+            repository_revision=REVISION,
+            original_required_paths=["docs/task.md"],
+            targets=[target],
+            dispositions=[{"path": "docs/task.md", "disposition": "CHANGE"}],
+            postconditions_by_path={
+                "docs/task.md": ({"kind": "TEXT_ABSENT", "value": "obsolete text"},)
+            },
+            proposed_contents_by_path={},
+            deleted_paths=["docs/task.md"],
+            regions_by_path={
+                "docs/task.md": {"kind": "MARKDOWN_SECTION", "name": "Target"}
+            },
+            evaluator_ref={
+                "kind": "Evaluation", "name": "reconcile", "version": "1.0.0"
+            },
+        )
 
 
 def test_reconciliation_targets_exactly_cover_original_required_paths() -> None:

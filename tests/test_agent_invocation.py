@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
-from aep.agent_invocation import invoke_agent
+from aep.agent_invocation import AgentInvocationContractError, invoke_agent
 from aep.model_invocation import (
     FakeModelAdapter,
     ModelConfiguration,
@@ -132,6 +132,50 @@ def test_provider_failure_persists_both_failed_records_with_classification() -> 
         "requestId": "fake-failed-1",
         "errorCode": "unavailable",
     }
+
+
+def test_output_validator_exception_terminalizes_both_invocations() -> None:
+    store = InMemoryRuntimeObjectStore()
+    logs = []
+    adapter = FakeModelAdapter([
+        ModelResponse(
+            output={"summary": "valid model output"},
+            usage=ModelUsage(input_tokens=3, output_tokens=2),
+            latency_ms=4,
+        )
+    ])
+
+    with pytest.raises(AgentInvocationContractError, match="output validator failed"):
+        invoke_agent(
+            store=store,
+            invocation_id=AGENT_ID,
+            model_invocation_id=MODEL_ID,
+            resolved_agent=resolved_agent(),
+            context_package=context_package(),
+            prompt=prompt(),
+            model_configuration=model_configuration(),
+            adapter=adapter,
+            started_at="2026-08-06T12:00:00Z",
+            completed_at="2026-08-06T12:00:01Z",
+            lifecycle_logger=StructuredLifecycleLogger(logs.append),
+            output_validator=lambda _output: (_ for _ in ()).throw(
+                OSError("artifact store unavailable")
+            ),
+        )
+
+    agent = store.get(AGENT_ID)
+    model = store.get(MODEL_ID)
+    assert agent is not None and agent["status"] == "FAILED"
+    assert model is not None and model["status"] == "FAILED"
+    assert agent["failure"] == model["failure"] == {
+        "class": "EVALUATION", "message": "output validator failed", "retryable": False
+    }
+    assert [entry["eventName"] for entry in logs] == [
+        "AgentInvocationStarted",
+        "ModelInvocationStarted",
+        "ModelInvocationFailed",
+        "AgentInvocationFailed",
+    ]
 
 
 def test_adapter_configuration_failure_terminalizes_both_invocations() -> None:

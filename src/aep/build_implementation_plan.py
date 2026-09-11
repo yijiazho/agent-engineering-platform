@@ -94,14 +94,56 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         canonical["pathEvidence"] = [item["selectionId"] for item in selected]
         return canonical
 
-    def _run_schema_evaluation(self, *, content: Any, **kwargs: Any):
-        self._validate_acceptance_criteria_accounting(
-            kwargs["task_execution"], content
-        )
-        return super()._run_schema_evaluation(content=content, **kwargs)
+    def _invocation_output_errors(
+        self, task_execution: Mapping[str, Any], context_package: Mapping[str, Any],
+        output: Any,
+    ) -> list[str]:
+        try:
+            evidence = [
+                item.get("content", {})
+                for item in context_package.get("elements", ())
+                if isinstance(item, Mapping)
+                and item.get("type") == "planning-evidence"
+                and isinstance(item.get("content"), Mapping)
+            ]
+            evidence_paths = {item.get("path") for item in evidence}
+            unsupported_evidence_paths = set()
+            for item in evidence:
+                states = [
+                    result.get("result")
+                    for result in item.get("predicateResults", ())
+                    if isinstance(result, Mapping)
+                ]
+                post_states = [
+                    result.get("result")
+                    for result in item.get("postconditionResults", ())
+                    if isinstance(result, Mapping)
+                ]
+                required = bool(states) and all(state == "MATCH" for state in states)
+                no_change = bool(post_states) and all(
+                    state == "MATCH" for state in post_states
+                )
+                if "UNSUPPORTED" in states or not (required or no_change):
+                    unsupported_evidence_paths.add(item.get("path"))
+            self._validate_acceptance_criteria_accounting(
+                task_execution, output,
+                unsupported_evidence_paths=unsupported_evidence_paths,
+            )
+            insertion_paths = {
+                item.get("path") for item in output.get("requiredInsertions", ())
+                if isinstance(item, Mapping)
+            } if isinstance(output, Mapping) else set()
+            if evidence_paths and not insertion_paths.issubset(evidence_paths):
+                raise BuildImplementationPlanContractError(
+                    "required insertions must target trusted authorized paths"
+                )
+        except BuildImplementationPlanContractError as error:
+            return [str(error)]
+        return []
 
     def _validate_acceptance_criteria_accounting(
-        self, task_execution: Mapping[str, Any], plan: Any
+        self, task_execution: Mapping[str, Any], plan: Any,
+        *, unsupported_evidence_paths: set[Any] | None = None,
     ) -> None:
         if not isinstance(plan, Mapping):
             return
@@ -116,6 +158,49 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             self._artifact_store.get_content(str(analyses[0]["id"])).decode("utf-8")
         )
         criteria = analysis.get("acceptanceCriteria", ())
+        expected_records = analysis.get("acceptanceCriterionInsertions", ())
+        if (
+            isinstance(expected_records, (str, bytes))
+            or not isinstance(expected_records, Sequence)
+        ):
+            raise BuildImplementationPlanContractError(
+                "issue analysis must provide per-criterion insertion requirements"
+            )
+        expected_by_criterion: dict[str, set[tuple[Any, Any]]] = {}
+        for record in expected_records:
+            if not isinstance(record, Mapping):
+                raise BuildImplementationPlanContractError(
+                    "issue analysis must provide per-criterion insertion requirements"
+                )
+            criterion = record.get("criterion")
+            values = record.get("requiredInsertions")
+            if (
+                not isinstance(criterion, str)
+                or not criterion
+                or criterion in expected_by_criterion
+                or isinstance(values, (str, bytes))
+                or not isinstance(values, Sequence)
+            ):
+                raise BuildImplementationPlanContractError(
+                    "issue analysis must provide per-criterion insertion requirements"
+                )
+            expected = []
+            for value in values:
+                if not isinstance(value, Mapping):
+                    raise BuildImplementationPlanContractError(
+                        "issue analysis must provide per-criterion insertion requirements"
+                    )
+                key = (value.get("path"), value.get("value"))
+                if any(not isinstance(part, str) or not part for part in key):
+                    raise BuildImplementationPlanContractError(
+                        "issue analysis must provide per-criterion insertion requirements"
+                    )
+                if key in expected:
+                    raise BuildImplementationPlanContractError(
+                        "issue analysis insertion requirements must be unique per criterion"
+                    )
+                expected.append(key)
+            expected_by_criterion[criterion] = set(expected)
         classifications = plan.get("acceptanceCriteriaClassifications", ())
         classified = [
             item.get("criterion") for item in classifications if isinstance(item, Mapping)
@@ -129,33 +214,125 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             raise BuildImplementationPlanContractError(
                 "implementation plan must classify every analyzed acceptance criterion exactly once"
             )
-        unsupported = set(plan.get("unsupportedAcceptanceCriteria", ()))
+        if set(expected_by_criterion) != set(criteria):
+            raise BuildImplementationPlanContractError(
+                "issue analysis must map every acceptance criterion exactly once"
+            )
+        unsupported_values = plan.get("unsupportedAcceptanceCriteria", ())
+        if (
+            isinstance(unsupported_values, (str, bytes))
+            or not isinstance(unsupported_values, Sequence)
+            or any(not isinstance(value, str) or not value for value in unsupported_values)
+            or len(set(unsupported_values)) != len(unsupported_values)
+        ):
+            raise BuildImplementationPlanContractError(
+                "unsupportedAcceptanceCriteria must contain unique criteria"
+            )
+        unsupported = set(unsupported_values)
         insertions = {
             (item.get("path"), item.get("value"))
             for item in plan.get("requiredInsertions", ())
             if isinstance(item, Mapping)
         }
+        bound_by_criterion: dict[str, list[tuple[Any, Any]]] = {}
         for item in classifications:
             disposition = item.get("classification")
             criterion = item.get("criterion")
+            plural = item.get("requiredInsertions")
+            legacy = item.get("requiredInsertion")
+            if plural is not None and legacy is not None:
+                raise BuildImplementationPlanContractError(
+                    "plural requiredInsertions cannot conflict with legacy requiredInsertion"
+                )
+            if plural is None and legacy is not None:
+                plural = [legacy]
+            if plural is None:
+                plural = []
+            if not isinstance(plural, Sequence) or isinstance(plural, (str, bytes)):
+                raise BuildImplementationPlanContractError(
+                    "required-insertion bindings must be an array"
+                )
+            bindings = []
+            for binding in plural:
+                if not isinstance(binding, Mapping):
+                    raise BuildImplementationPlanContractError(
+                        "each required-insertion classification must bind its own insertion evidence"
+                    )
+                key = (binding.get("path"), binding.get("value"))
+                if key in bindings:
+                    raise BuildImplementationPlanContractError(
+                        "required-insertion bindings must be unique"
+                    )
+                if key not in insertions:
+                    raise BuildImplementationPlanContractError(
+                        "each required-insertion classification must bind its own insertion evidence"
+                    )
+                bindings.append(key)
+            bound_by_criterion[str(criterion)] = bindings
+            if (
+                disposition == "REQUIRED_INSERTION"
+                and set(bindings) != expected_by_criterion[str(criterion)]
+            ):
+                raise BuildImplementationPlanContractError(
+                    "criterion insertion bindings must exactly match analyzed requirements"
+                )
+            if disposition == "REQUIRED_INSERTION":
+                expected_paths = {
+                    path for path, _value in expected_by_criterion[str(criterion)]
+                }
+                if (
+                    unsupported_evidence_paths is not None
+                    and expected_paths.intersection(unsupported_evidence_paths)
+                ):
+                    raise BuildImplementationPlanContractError(
+                        "required-insertion criterion cannot rely on unsupported path evidence"
+                    )
             if disposition == "UNSUPPORTED" and criterion not in unsupported:
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"
                 )
-            if disposition == "UNSUPPORTED" and item.get("requiredInsertion") is not None:
+            if disposition == "UNSUPPORTED" and bindings:
                 raise BuildImplementationPlanContractError(
-                    "unsupported criterion classification must set requiredInsertion to null"
+                    "unsupported criterion classification must have no insertion bindings"
                 )
-            if disposition == "REQUIRED_INSERTION" and (
-                not isinstance(item.get("requiredInsertion"), Mapping)
-                or (
-                    item["requiredInsertion"].get("path"),
-                    item["requiredInsertion"].get("value"),
-                ) not in insertions
-            ):
+            if disposition == "UNSUPPORTED" and expected_by_criterion[str(criterion)]:
+                expected_paths = {
+                    path for path, _value in expected_by_criterion[str(criterion)]
+                }
+                if (
+                    unsupported_evidence_paths is not None
+                    and not expected_paths.intersection(unsupported_evidence_paths)
+                ):
+                    raise BuildImplementationPlanContractError(
+                        "unsupported criterion requires trusted unsupported path evidence"
+                    )
+            if disposition == "REQUIRED_INSERTION" and not bindings:
                 raise BuildImplementationPlanContractError(
-                    "each required-insertion classification must bind its own insertion evidence"
+                    "each required-insertion classification must bind at least one insertion"
                 )
+        binders: dict[tuple[Any, Any], list[str]] = {}
+        for criterion, values in bound_by_criterion.items():
+            for value in values:
+                binders.setdefault(value, []).append(criterion)
+        # A shared canonical insertion may support multiple criteria. Its owner
+        # is derived deterministically without removing the non-owner bindings.
+        lexical_owners = {
+            value: min(criteria) for value, criteria in binders.items()
+        }
+        bound = set(lexical_owners)
+        if bound != insertions:
+            raise BuildImplementationPlanContractError(
+                "every required insertion must have deterministic criterion ownership"
+            )
+        classified_unsupported = {
+            str(item.get("criterion"))
+            for item in classifications
+            if item.get("classification") == "UNSUPPORTED"
+        }
+        if unsupported != classified_unsupported:
+            raise BuildImplementationPlanContractError(
+                "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
+            )
 
     def _context_arguments(
         self, task_execution: Mapping[str, Any], workflow: Mapping[str, Any]

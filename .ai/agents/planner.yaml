@@ -3,14 +3,14 @@
   "kind": "Agent",
   "metadata": {
     "name": "planner",
-    "version": "1.8.0"
+    "version": "1.9.0"
   },
   "spec": {
     "role": "Implementation Planner",
     "promptRef": {
       "kind": "Prompt",
       "name": "implementation-planning",
-      "version": "1.7.0"
+      "version": "1.8.0"
     },
     "modelRef": {
       "kind": "Model",
@@ -110,7 +110,7 @@
             "required": [
               "criterion",
               "classification",
-              "requiredInsertion"
+              "requiredInsertions"
             ],
             "properties": {
               "criterion": {
@@ -123,30 +123,18 @@
                   "UNSUPPORTED"
                 ]
               },
-              "requiredInsertion": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "path",
-                      "value"
-                    ],
-                    "properties": {
-                      "path": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "value": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  },
-                  {
-                    "type": "null"
+              "requiredInsertions": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["path", "value"],
+                  "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "value": {"type": "string", "minLength": 1}
                   }
-                ]
+                }
               }
             }
           }

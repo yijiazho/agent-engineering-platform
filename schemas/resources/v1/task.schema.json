@@ -65,6 +65,7 @@
               "pathPrefix": { "type": "string", "minLength": 1 },
               "predicate": { "$ref": "#/$defs/filePredicate" },
               "postcondition": { "$ref": "#/$defs/filePredicate" },
+              "region": { "$ref": "#/$defs/evidenceRegion" },
               "selectionReason": { "type": "string", "minLength": 1 },
               "maxBytes": { "type": "integer", "minimum": 1, "maximum": 262144 },
               "maxPaths": { "type": "integer", "minimum": 1, "maximum": 200 }
@@ -189,6 +190,15 @@
       "properties": {
         "kind": { "type": "string", "enum": ["STATUS_EQUALS", "TEXT_PRESENT", "TEXT_ABSENT", "UNSUPPORTED_SEMANTIC"] },
         "value": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidenceRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["MARKDOWN_SECTION", "MARKDOWN_FENCE"] },
+        "name": { "type": "string", "minLength": 1 }
       }
     }
   }

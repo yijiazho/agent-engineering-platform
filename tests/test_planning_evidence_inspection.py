@@ -72,6 +72,148 @@ def test_status_scanner_stops_matching_at_cumulative_search_bound(tmp_path: Path
     assert inspected.status_fields == (("In Progress", 1),)
 
 
+def test_status_scanner_detects_ambiguity_beyond_retained_prefix(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(
+        "**Status:** In Progress\n" + "\n" * 70_000
+        + "**Status:** Completed\n",
+        encoding="utf-8",
+    )
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100_000,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=64 * 1024,
+    )
+
+    assert inspected.content == ""
+    assert inspected.status_fields == (("In Progress", 1), ("Completed", 70_002))
+
+
+def test_status_scanner_rejects_an_overlong_unterminated_metadata_line(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(" " * 101, encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    with pytest.raises(
+        PlanningEvidenceInspectionError,
+        match="STATUS_FIELD_SCAN_LIMIT_EXCEEDED",
+    ) as captured:
+        _pinned_workspace_reader(tmp_path, revision).inspect(
+            "task.md", revision, max_bytes=200,
+            strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+        )
+
+    assert captured.value.metadata["appliedTrustedCeiling"] == 100
+    assert captured.value.metadata["evaluationComplete"] is False
+
+
+def test_status_scanner_recognizes_cr_only_line_boundaries(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_bytes(b"# Task\r**Status:** In Progress\rBody")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == (("In Progress", 2),)
+
+
+def test_status_scanner_handles_crlf_split_across_read_chunks(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    long_title = b"# " + b"x" * (64 * 1024 - 3)
+    target.write_bytes(long_title + b"\r\n**Status:** Completed\r\nBody")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100_000,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=70_000,
+    )
+
+    assert inspected.status_fields == (("Completed", 2),)
+
+
+def test_status_scanner_stops_retaining_after_leading_metadata_ends(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(
+        "**Status:** In Progress\n" + "x" * 1_000,
+        encoding="utf-8",
+    )
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=2_000,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == (("In Progress", 1),)
+
+
+def test_status_scanner_rejects_unicode_whitespace_as_title_separator(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text("#\u00a0Narrative\n**Status:** Completed\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == ()
+
+
+def test_status_scanner_supports_an_indented_markdown_title(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(" # Task\n**Status:** In Progress\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == (("In Progress", 2),)
+
+
+@pytest.mark.parametrize("title", ["#", "# ###"])
+def test_status_scanner_rejects_empty_heading_as_document_title(
+    tmp_path: Path, title: str,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(f"{title}\n**Status:** Completed\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == ()
+
+
+def test_status_scanner_rejects_unicode_whitespace_as_blank_metadata(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "task.md"
+    target.write_text("\u00a0\n**Status:** Completed\n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+    )
+
+    assert inspected.status_fields == ()
+
+
 def test_status_scanner_does_not_match_truncated_boundary_line(tmp_path: Path) -> None:
     target = tmp_path / "task.md"
     target.write_text("header\n**Status:** Completed but not verified\n", encoding="utf-8")
@@ -80,6 +222,51 @@ def test_status_scanner_does_not_match_truncated_boundary_line(tmp_path: Path) -
     inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
         "task.md", revision, max_bytes=100,
         strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=28,
+    )
+
+    assert inspected.status_fields == ()
+
+
+def test_status_scanner_rejects_malformed_leading_status_field(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(
+        "**Status:**\n**Status:** Completed\n", encoding="utf-8"
+    )
+    revision = commit_repository(tmp_path)
+
+    with pytest.raises(
+        PlanningEvidenceInspectionError, match="STATUS_FIELD_MALFORMED"
+    ):
+        _pinned_workspace_reader(tmp_path, revision).inspect(
+            "task.md", revision, max_bytes=100,
+            strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+        )
+
+
+def test_status_scanner_rejects_whitespace_only_status_value(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text("**Status:**   \n", encoding="utf-8")
+    revision = commit_repository(tmp_path)
+
+    with pytest.raises(
+        PlanningEvidenceInspectionError, match="STATUS_FIELD_MALFORMED"
+    ):
+        _pinned_workspace_reader(tmp_path, revision).inspect(
+            "task.md", revision, max_bytes=100,
+            strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
+        )
+
+
+def test_status_scanner_allows_only_one_document_title_before_status(tmp_path: Path) -> None:
+    target = tmp_path / "task.md"
+    target.write_text(
+        "# Task\n## Context\n**Status:** Completed\n", encoding="utf-8"
+    )
+    revision = commit_repository(tmp_path)
+
+    inspected = _pinned_workspace_reader(tmp_path, revision).inspect(
+        "task.md", revision, max_bytes=100,
+        strategy="STRUCTURED_STATUS_FIELD_SCAN", status_scan_bytes=100,
     )
 
     assert inspected.status_fields == ()

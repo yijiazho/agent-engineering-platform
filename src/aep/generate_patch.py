@@ -27,7 +27,11 @@ from aep.filesystem_tool import FilesystemTool
 from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
-from aep.planning_evidence import PlanningEvidenceError, reconcile_dispositions
+from aep.planning_evidence import (
+    PlanningEvidenceError,
+    evaluate_path_predicates,
+    reconcile_dispositions,
+)
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeStoreError
 from aep.task_execution import FailureClass
@@ -154,12 +158,15 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 raise GeneratePatchContractError(
                     "GeneratePatch requires a clean checkout at the recorded repository revision"
                 )
+            editable_target_max_bytes = max(
+                1, int(task_spec["inputContextTokenBudget"]) * 4
+            )
             editable_targets = self._read_editable_targets(
                 task_execution=task_execution,
                 repository_revision=str(workflow["repositoryRevision"]),
                 paths=allowed_paths,
                 tool_ref=filesystem_read_ref,
-                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+                max_bytes=editable_target_max_bytes,
             )
             self._verify_targets_at_revision(
                 task_execution=task_execution,
@@ -167,7 +174,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 paths=allowed_paths,
                 targets=editable_targets,
                 tool_ref=git_read_ref,
-                max_bytes=max(1, int(task_spec["inputContextTokenBudget"]) * 4),
+                max_bytes=editable_target_max_bytes,
             )
             if "authorizedPaths" in plan:
                 _verify_plan_evidence_targets(
@@ -179,11 +186,14 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 )
                 if insertion_no_change_paths:
                     _verify_no_change_targets(
-                        insertion_no_change_paths, required_insertions, editable_targets
+                        insertion_no_change_paths, required_insertions, editable_targets,
+                        regions_by_path=_regions_by_path(plan),
+                        max_bytes=editable_target_max_bytes,
                     )
             else:
                 _verify_no_change_targets(
-                    no_change_paths, required_insertions, editable_targets
+                    no_change_paths, required_insertions, editable_targets,
+                    max_bytes=editable_target_max_bytes,
                 )
             context_package = self._context_builder.build(
                 task=task,
@@ -272,6 +282,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         targets=[item for item in editable_targets if item["path"] in required_change_paths],
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
+                        regions_by_path=_regions_by_path(plan),
                         evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
                         proposed_contents_by_path={
                             item["path"]: item["content"] for item in changes
@@ -288,6 +299,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                             )
                             for path in required_change_paths
                         },
+                        max_bytes=editable_target_max_bytes,
                     )
                 except PlanningEvidenceError as error:
                     raise GeneratePatchContractError(str(error)) from error
@@ -1040,6 +1052,20 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
     return result
 
 
+def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
+    result = {}
+    for item in plan.get("_trustedPathEvidence", ()):
+        if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
+            continue
+        inspection = item.get("inspection")
+        region = inspection.get("region") if isinstance(inspection, Mapping) else None
+        if isinstance(region, Mapping):
+            kind, name = region.get("kind"), region.get("name")
+            if isinstance(kind, str) and isinstance(name, str):
+                result[item["path"]] = {"kind": kind, "name": name}
+    return result
+
+
 def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
     values = plan.get("unsupportedAcceptanceCriteria", ())
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or any(not isinstance(value, str) or not value for value in values):
@@ -1096,16 +1122,33 @@ def _verify_no_change_targets(
     no_change_paths: Sequence[str],
     required_insertions: Sequence[Mapping[str, str]],
     editable_targets: Sequence[JsonMapping],
+    *,
+    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    max_bytes: int = 64 * 1024,
 ) -> None:
     for path in no_change_paths:
         criteria = [item["value"] for item in required_insertions if item["path"] == path]
         target = next((item for item in editable_targets if item.get("path") == path), None)
         content = target.get("content") if isinstance(target, Mapping) else None
-        if (
-            not criteria
-            or not isinstance(content, str)
-            or any(value not in content for value in criteria)
-        ):
+        if not criteria or not isinstance(content, str):
+            raise GeneratePatchContractError(
+                f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
+            )
+        try:
+            evidence = evaluate_path_predicates(
+                path=path,
+                content=content,
+                repository_revision=str(target.get("repositoryRevision", "")),
+                predicates=[{"kind": "TEXT_PRESENT", "value": value}
+                            for value in criteria],
+                source_id="editable-target-no-change",
+                region=(regions_by_path or {}).get(path),
+                max_bytes=max_bytes,
+                distinct_text_matches=True,
+            )
+        except PlanningEvidenceError as error:
+            raise GeneratePatchContractError(str(error)) from error
+        if any(item.get("result") != "MATCH" for item in evidence["predicateResults"]):
             raise GeneratePatchContractError(
                 f"no-change target {path!r} is not deterministically satisfied by its exact editable content"
             )

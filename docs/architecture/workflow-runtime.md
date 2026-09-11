@@ -458,7 +458,10 @@ AgentInvocation and each ModelInvocation, including token, latency, cost, and
 provider metadata when supplied. A provider call may succeed while structured
 output validation fails; in that case the ModelInvocation remains successful
 with `schemaValidation: FAILED`, while the AgentInvocation terminates with an
-`EVALUATION` failure. No repository-knowledge query interface is exposed at
+`EVALUATION` failure. If the semantic output validator itself raises, both
+running invocation records instead terminalize as `FAILED` with a stable
+`EVALUATION` failure before the error propagates. No repository-knowledge query
+interface is exposed at
 this boundary. An atomic paired-identity claim binds the AgentInvocation to its
 ModelInvocation before runtime records are created, preventing concurrent
 reconciliation from repeating the external model call or substituting a child

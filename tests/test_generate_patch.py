@@ -18,7 +18,11 @@ from aep.filesystem_tool import (
     FILESYSTEM_OUTPUT_SCHEMA,
     FilesystemTool,
 )
-from aep.generate_patch import GeneratePatchContractError, GeneratePatchTaskHandler
+from aep.generate_patch import (
+    GeneratePatchContractError,
+    GeneratePatchTaskHandler,
+    _verify_no_change_targets,
+)
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.git_tool import (
     GIT_INPUT_SCHEMA,
@@ -51,6 +55,55 @@ PLAN_EVALUATION_ID = "evaluationresult-eeeeeeeeeeee"
 PLAN_ARTIFACT_ID = "generatedartifact-ffffffffffff"
 BRANCH = "agent/work"
 ROOT = Path(__file__).parents[1]
+
+
+def test_planning_no_change_insertions_remain_region_scoped() -> None:
+    content = "# Target\n\nsrc/\n\n# Other\n\ndeploy/ outside\n"
+    target = {
+        "path": "README.md",
+        "content": content,
+        "repositoryRevision": "a" * 40,
+    }
+
+    with pytest.raises(
+        GeneratePatchContractError, match="not deterministically satisfied"
+    ):
+        _verify_no_change_targets(
+            ["README.md"],
+            [{"path": "README.md", "value": "deploy/"}],
+            [target],
+            regions_by_path={
+                "README.md": {"kind": "MARKDOWN_SECTION", "name": "Target"}
+            },
+        )
+
+
+def test_planning_no_change_uses_editable_target_byte_limit() -> None:
+    content = "x" * (65 * 1024) + "\nrequired value\n"
+    _verify_no_change_targets(
+        ["README.md"],
+        [{"path": "README.md", "value": "required value"}],
+        [{
+            "path": "README.md", "content": content,
+            "repositoryRevision": "a" * 40,
+        }],
+        max_bytes=128 * 1024,
+    )
+
+
+def test_planning_no_change_requires_independent_insertions() -> None:
+    with pytest.raises(GeneratePatchContractError, match="not deterministically satisfied"):
+        _verify_no_change_targets(
+            ["README.md"],
+            [
+                {"path": "README.md", "value": "deploy/"},
+                {"path": "README.md", "value": "deploy/local/"},
+            ],
+            [{
+                "path": "README.md", "content": "deploy/local/\n",
+                "repositoryRevision": "a" * 40,
+            }],
+        )
 
 CHANGE_SCHEMA = {
     "type": "object",

@@ -705,9 +705,16 @@ only serialized body-free evidence does.
 
 Every repository reader used for planning evidence implements the typed
 inspection interface; legacy whole-file callables are rejected. Structured
-status matching stops at the cumulative `statusFieldScanBytes` offset while the
-reader continues streaming only to validate UTF-8 and compute complete blob
-identity. Complete scans recheck their ceiling before every buffer extension,
+status matching retains no body beyond `statusFieldScanBytes`, but the reader
+continues parsing leading metadata across the complete stream to detect later
+ambiguity while validating UTF-8 and computing complete blob identity. The
+ceiling bounds each retained unterminated metadata line; exceeding it fails
+closed without retaining the remainder, while newline-delimited blank metadata
+can still be streamed to detect later ambiguity. Streamed metadata recognizes
+LF, CRLF (including a delimiter split across chunks), and CR-only boundaries.
+Complete and region-scoped status scans use those same boundaries exclusively.
+Complete
+scans recheck their ceiling before every buffer extension,
 derive structured fields from their retained complete content when predicates
 are mixed, and reject unsafe exact or prefix paths before repository lookup.
 Aggregate-limit failures carry the same safe structured metadata as reader
@@ -716,6 +723,55 @@ a required change. Planning-time no-change is
 valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
+
+`STATUS_EQUALS` binds only the unique leading structured Status field. Blank
+lines containing only Markdown spaces or tabs and one initial level-one document
+title with nonempty content may precede it; the title uses only Markdown space
+or tab separators, not arbitrary Unicode whitespace. Later
+headings,
+narrative, example, whitespace-only values, and historical mentions are not
+status evidence. A status-prefixed line with no non-whitespace value fails as
+`STATUS_FIELD_MALFORMED`, distinct from a missing field, in both complete and
+streamed readers. For a selected Markdown section, its heading is the structural
+boundary rather than body content, so an immediately nested Status field is
+leading at any supported heading level. Planning predicates
+may also declare a uniquely selected `MARKDOWN_SECTION` or `MARKDOWN_FENCE` by
+name. Missing, duplicate, malformed, or unsupported regions fail closed, and
+all matching and insertion evidence is evaluated only inside that region. The
+body-free record retains its region identity, match count, completeness, and
+selection identity. Markdown ATX section names strip a trailing hash sequence
+only when whitespace-delimited as closing syntax; a literal trailing hash
+remains part of the section name. Empty headings remain structural boundaries
+even though they cannot be selected by a nonempty name. Fenced-region predicates
+evaluate only the
+content between delimiters; the opener and info string contribute identity but
+cannot satisfy text predicates. Tilde-fence info strings may contain backticks;
+the backtick restriction applies only to backtick fence openers, and closing
+fences permit only spaces or tabs after their delimiters. Whitespace-only region
+names are malformed rather than missing. ATX-like lines
+inside every CommonMark raw HTML block form, including generic block tags,
+processing instructions, declarations, comments, and CDATA, are not Markdown
+section headings. A single acceptance criterion binds zero, one, or many
+canonical `{path, value}` entries through `requiredInsertions`; shared entries
+remain bound to every criterion they support, are deduplicated in the canonical
+collection, and are owned deterministically by lexical criterion order, while
+unsupported criteria bind none. Reconciliation and planning-time no-change
+proofs require a distinct non-overlapping occurrence for every canonical value,
+so a longer insertion cannot prove a shorter overlapping insertion. The
+evaluated issue analysis records the
+independent expected set for every criterion in `acceptanceCriterionInsertions`;
+planner validation requires each classification to match that set exactly, so
+aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
+validates exact criterion-map coverage before publishing its artifact, and the
+Planner cross-field check runs inside invocation output validation before a
+successful AgentInvocation can be persisted.
+Every canonical insertion path must also have trusted planning evidence and
+therefore belong to the authoritative path set before planner success.
+An `UNSUPPORTED` criterion with expected insertions requires trusted evidence
+that at least one expected path is itself unsupported; supported path evidence
+cannot be discarded by classification alone. Symmetrically, a
+`REQUIRED_INSERTION` criterion is rejected if any expected path has unsupported
+evidence.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the
@@ -730,3 +786,6 @@ accept only the bounded diagnostic fields defined by the runtime schema;
 executor-supplied bodies or arbitrary detail keys are rejected before durable
 evidence is written. Paths exceeding the diagnostic text bound are represented
 by a deterministic SHA-256 identifier before failure metadata is attached.
+GeneratePatch applies the editable-target byte ceiling derived from the trusted
+Task token budget to target loading, late no-change predicate checks, and both
+postcondition and insertion reconciliation proofs.

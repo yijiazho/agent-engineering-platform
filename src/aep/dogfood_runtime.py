@@ -637,6 +637,7 @@ def _pinned_workspace_reader(
                     strategy: str, status_scan_bytes: int):
             from aep.planning_evidence import (
                 PlanningEvidenceInspection, PlanningEvidenceInspectionError,
+                _is_nonempty_document_title,
             )
             if revision != expected_revision:
                 raise PlanningEvidenceInspectionError(
@@ -668,9 +669,102 @@ def _pinned_workspace_reader(
                     applied_ceiling=max_bytes)
             digest = sha256()
             data = bytearray() if strategy == "COMPLETE_BLOB_SCAN" else None
-            status_prefix = bytearray()
             inspected = 0
             decoder = codecs.getincrementaldecoder("utf-8")()
+            status_pattern = re.compile(
+                r"^\*\*Status:\*\*[^\S\r\n]*(?P<value>\S(?:[^\r\n]*\S)?)[^\S\r\n]*$"
+            )
+            status_prefix_pattern = re.compile(r"^\*\*Status:\*\*")
+            status_fields: list[tuple[str, int]] = []
+            status_buffer = ""
+            status_line = 1
+            status_active = data is None
+            status_after_cr = False
+            title_seen = False
+            status_seen = False
+
+            def consume_status_line(line: str) -> None:
+                nonlocal status_active, title_seen, status_seen, status_line
+                text = line.removesuffix("\r")
+                if text and not all(character in " \t" for character in text):
+                    match = status_pattern.fullmatch(text)
+                    if match:
+                        status_fields.append((match.group("value"), status_line))
+                        status_seen = True
+                    elif status_prefix_pattern.match(text):
+                        raise PlanningEvidenceInspectionError(
+                            "STATUS_FIELD_MALFORMED", path=path, blob_size=size,
+                            applied_ceiling=max_bytes, strategy=strategy,
+                            evaluation_complete=True,
+                        )
+                    elif not title_seen and not status_seen and _is_nonempty_document_title(text):
+                        title_seen = True
+                    else:
+                        status_active = False
+                status_line += 1
+
+            def retain_status_fragment(fragment: str) -> None:
+                nonlocal status_active, status_buffer
+                candidate = status_buffer + fragment
+                if candidate and not all(
+                    character in " \t" for character in candidate
+                ):
+                    status_prefix = "**Status:**"
+                    if candidate.startswith(status_prefix):
+                        possible_metadata = True
+                    elif status_prefix.startswith(candidate):
+                        possible_metadata = True
+                    elif not title_seen and not status_seen:
+                        possible_metadata = bool(
+                            re.match(
+                                r"^ {0,3}#(?:[ \t].*)?$", candidate
+                            )
+                        )
+                    else:
+                        possible_metadata = False
+                    if not possible_metadata:
+                        status_active = False
+                        status_buffer = ""
+                        return
+                retained_bytes = len(status_buffer.encode("utf-8"))
+                fragment_bytes = len(fragment.encode("utf-8"))
+                if retained_bytes + fragment_bytes > status_scan_bytes:
+                    raise PlanningEvidenceInspectionError(
+                        "STATUS_FIELD_SCAN_LIMIT_EXCEEDED", path=path,
+                        blob_size=size, applied_ceiling=status_scan_bytes,
+                        strategy=strategy, evaluation_complete=False,
+                    )
+                status_buffer = candidate
+
+            def consume_status_text(value: str) -> None:
+                nonlocal status_after_cr, status_buffer
+                remainder = value
+                if status_after_cr:
+                    if remainder.startswith("\n"):
+                        remainder = remainder[1:]
+                    status_after_cr = False
+                while remainder and status_active:
+                    cr_boundary = remainder.find("\r")
+                    lf_boundary = remainder.find("\n")
+                    boundaries = tuple(
+                        item for item in (cr_boundary, lf_boundary) if item >= 0
+                    )
+                    if not boundaries:
+                        retain_status_fragment(remainder)
+                        return
+                    boundary = min(boundaries)
+                    retain_status_fragment(remainder[:boundary])
+                    if not status_active:
+                        return
+                    consume_status_line(status_buffer)
+                    status_buffer = ""
+                    delimiter = remainder[boundary]
+                    remainder = remainder[boundary + 1:]
+                    if delimiter == "\r":
+                        if remainder.startswith("\n"):
+                            remainder = remainder[1:]
+                        elif not remainder:
+                            status_after_cr = True
             process = subprocess.Popen(
                 ["git", "-C", str(root), "cat-file", "blob", object_name],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -689,22 +783,25 @@ def _pinned_workspace_reader(
                             "BINARY_CONTENT", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy)
                     try:
-                        decoder.decode(chunk, final=False)
+                        decoded = decoder.decode(chunk, final=False)
                     except UnicodeDecodeError as error:
                         raise PlanningEvidenceInspectionError(
                             "INVALID_UTF8", path=path, blob_size=size,
                             applied_ceiling=max_bytes, strategy=strategy) from error
                     if data is not None:
                         data.extend(chunk)
-                    elif len(status_prefix) < status_scan_bytes:
-                        remaining = status_scan_bytes - len(status_prefix)
-                        status_prefix.extend(chunk[:remaining])
+                    elif status_active:
+                        consume_status_text(decoded)
             try:
-                decoder.decode(b"", final=True)
+                final_text = decoder.decode(b"", final=True)
             except UnicodeDecodeError as error:
                 raise PlanningEvidenceInspectionError(
                     "INVALID_UTF8", path=path, blob_size=size,
                     applied_ceiling=max_bytes, strategy=strategy) from error
+            if data is None and status_active:
+                consume_status_text(final_text)
+                if status_buffer:
+                    consume_status_line(status_buffer)
             assert process.stderr is not None
             stderr = process.stderr.read()
             return_code = process.wait()
@@ -717,19 +814,6 @@ def _pinned_workspace_reader(
                     "CONCURRENT_SIZE_DRIFT", path=path, blob_size=inspected,
                     applied_ceiling=max_bytes)
             raw = bytes(data) if data is not None else b""
-            status_fields: list[tuple[str, int]] = []
-            if data is None:
-                prefix = bytes(status_prefix)
-                if size > len(prefix) and not prefix.endswith((b"\n", b"\r")):
-                    prefix = prefix.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in prefix else b""
-                prefix_text = prefix.decode("utf-8")
-                status_fields = [
-                    (match.group("value"), prefix_text.count("\n", 0, match.start()) + 1)
-                    for match in re.finditer(
-                        r"^\*\*Status:\*\*\s*(?P<value>[^\r\n]+?)\s*$",
-                        prefix_text, re.MULTILINE,
-                    )
-                ]
             try:
                 content = raw.decode("utf-8") if data is not None else ""
             except UnicodeDecodeError as error:

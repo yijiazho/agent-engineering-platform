@@ -540,6 +540,37 @@ def test_planning_predicates_are_derived_from_prior_issue_analysis() -> None:
     assert declarations[0]["maxPaths"] == 20
 
 
+def test_planning_evidence_rejects_mixed_scoped_and_unscoped_declarations() -> None:
+    task_resource = task("plan", ["planning-evidence"])
+    common = {
+        "path": "README.md",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "old"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "new"},
+        "selectionReason": "requested transition",
+    }
+    task_resource["spec"]["planningPredicates"] = [
+        common,
+        {**common, "region": {
+            "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
+        }},
+    ]
+
+    with pytest.raises(RequiredContextError, match="inconsistent region selectors"):
+        ContextBuilder(
+            repository_knowledge=knowledge_provider(),
+            artifact_store=InMemoryGeneratedArtifactStore(),
+            repository_file_reader=InspectionReader(
+                lambda _path, _revision, _limit: "old"
+            ),
+        ).build(
+            task=task_resource,
+            task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(),
+            event=event(),
+            created_at=CREATED_AT,
+        )
+
+
 def task_execution(task_resource: dict) -> dict:
     execution = {
         "apiVersion": "aep.dev/v1alpha1",

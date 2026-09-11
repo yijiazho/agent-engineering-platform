@@ -382,6 +382,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
+                regions: list[Mapping[str, Any] | None] = []
                 declared_max_bytes: int | None = None
                 for declaration in declarations:
                     if not isinstance(declaration, Mapping):
@@ -398,6 +399,14 @@ class ContextBuilder:
                     predicates.append(dict(predicate))
                     postconditions.append(dict(postcondition))
                     reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
+                    declared_region = declaration.get("region")
+                    if declared_region is not None and not isinstance(
+                        declared_region, Mapping
+                    ):
+                        raise RequiredContextError(
+                            f"planning-evidence target {path!r} has malformed region selector"
+                        )
+                    regions.append(declared_region)
                     hint = declaration.get("maxBytes")
                     if hint is not None:
                         hint = int(hint)
@@ -417,7 +426,16 @@ class ContextBuilder:
                 total_ceiling = int(inspection["maxTotalBytes"])
                 status_ceiling = int(inspection["statusFieldScanBytes"])
                 kinds = {str(item.get("kind")) for item in (*predicates, *postconditions)}
-                strategy = "STRUCTURED_STATUS_FIELD_SCAN" if kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
+                region = regions[0] if regions else None
+                if any(item != region for item in regions):
+                    raise RequiredContextError(
+                        f"planning-evidence target {path!r} has inconsistent region selectors"
+                    )
+                strategy = (
+                    "STRUCTURED_STATUS_FIELD_SCAN"
+                    if region is None and kinds <= {"STATUS_EQUALS"}
+                    else "COMPLETE_BLOB_SCAN"
+                )
                 applied_ceiling = trusted_ceiling
                 inspected_so_far = sum(
                     int(item[1]["content"].get("inspection", {}).get("inspectedBytes", 0))
@@ -470,7 +488,8 @@ class ContextBuilder:
                         inspection_strategy=strategy,
                         status_fields=(status_fields if strategy ==
                             "STRUCTURED_STATUS_FIELD_SCAN" else None),
-                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling)
+                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
+                        region=region)
                     postcondition_record = evaluate_path_predicates(
                         path=path, content=content,
                         repository_revision=repository_revision,
@@ -481,6 +500,7 @@ class ContextBuilder:
                         status_fields=(status_fields if strategy ==
                             "STRUCTURED_STATUS_FIELD_SCAN" else None),
                         inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
+                        region=region,
                     )
                 except (OSError, UnicodeError, ValueError) as error:
                     reason = getattr(error, "reason", None) or {
