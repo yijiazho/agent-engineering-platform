@@ -36,6 +36,19 @@ def test_execution_json_summary_and_context_redaction(tmp_path, capsys):
     assert context["elements"][0]["tokenCount"] == 4
 
 
+def test_execution_list_discovers_ids_in_deterministic_order_and_filters_status(tmp_path, capsys):
+    records = _records()
+    later = dict(records[0])
+    later.update({"id": "wf-2", "status": "FAILED", "createdAt": "2026-01-02T00:00:00Z"})
+    records.append(later)
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "executions", "list"]) == 0
+    listed = json.loads(capsys.readouterr().out)["workflowExecutions"]
+    assert [item["id"] for item in listed] == ["wf-1", "wf-2"]
+    assert main(["--state-file", str(state), "--output", "json", "executions", "list", "--status", "FAILED"]) == 0
+    assert [item["id"] for item in json.loads(capsys.readouterr().out)["workflowExecutions"]] == ["wf-2"]
+
+
 def test_explain_has_deterministic_policy_and_approval_precedence(tmp_path, capsys):
     state = _checkpoint(tmp_path, _records(status="FAILED", policy="DENY"))
     assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0

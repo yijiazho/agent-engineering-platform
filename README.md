@@ -575,6 +575,8 @@ After activating the virtual environment with
 `PATH`.
 
 ```powershell
+aep --output json executions list
+aep --output json executions list --status FAILED
 aep --output json executions show workflowexecution-...
 aep explain workflowexecution-...
 aep contexts show contextpackage-...
@@ -582,8 +584,10 @@ aep artifacts show generatedartifact-...
 ```
 
 By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; use
-`--state-file <path>` for an offline backup. `aep executions show` traces the
-Workflow, revision, task DAG, elapsed time, and linked evidence. `aep explain`
+`--state-file <path>` for an offline backup. `aep executions list` discovers
+execution IDs in creation order and optionally filters by runtime status.
+`aep executions show` traces the Workflow, revision, task DAG, elapsed time,
+and linked evidence. `aep explain`
 uses deterministic runtime evidence, prioritizing pending approvals, policy
 denials, failed evaluations, and failed Tasks rather than generating text with
 a model. Drill-down families are `tasks`, `contexts`, `invocations`,

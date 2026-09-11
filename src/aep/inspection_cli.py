@@ -64,6 +64,18 @@ class ExecutionInspector:
             return self.execution(object_id, unsafe=unsafe)
         return self._safe(value, unsafe=unsafe)
 
+    def list_executions(self, *, status: str | None = None) -> dict[str, Any]:
+        """Return deterministic, safe execution discovery records."""
+
+        if status is not None and not status.strip():
+            raise InspectionError("INVALID_STATUS_FILTER", "status filter must be a non-empty string")
+        executions = [
+            value for value in self._objects.values()
+            if value.get("kind") == "WorkflowExecution"
+            and (status is None or value.get("status") == status)
+        ]
+        return {"workflowExecutions": [_summary(value) for value in _ordered(executions)]}
+
     def execution(self, execution_id: str, *, unsafe: bool = False) -> dict[str, Any]:
         workflow = self._get(execution_id)
         if workflow.get("kind") != "WorkflowExecution":
@@ -182,10 +194,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
+        if command == "executions":
+            listing = group.add_parser("list")
+            listing.add_argument("--status")
     args = parser.parse_args(argv)
     try:
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
+        elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
         else: result = inspector.show(args.id, KIND_COMMANDS[args.command], unsafe=args.unsafe_debug)
     except InspectionError as error:
         print(json.dumps({"error": {"code": error.code, "message": str(error)}}, sort_keys=True), file=sys.stderr)

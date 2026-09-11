@@ -28,6 +28,7 @@ The CLI must support at least execution, task, context, invocation, artifact, ev
 ## Acceptance Criteria
 
 * `aep executions show <id>` renders the WorkflowExecution state, repository revision, resolved Workflow version, task DAG status, and elapsed execution information without requiring direct runtime-store access.
+* `aep executions list` discovers persisted WorkflowExecution identifiers deterministically, with an optional status filter, so operators do not need direct checkpoint access before inspection.
 * Operators can inspect referenced TaskExecution, ContextPackage, AgentInvocation, ModelInvocation, ToolInvocation, EvaluationResult, PolicyDecision, Approval, and GeneratedArtifact objects by immutable identifier when present.
 * Inspection output includes immutable Resource references and runtime provenance needed to determine which Workflow, Task, Agent, Prompt, Model, Tool, Evaluation, and Policy versions contributed to an execution.
 * `aep explain <id>` produces a deterministic explanation for successful, failed, denied, blocked, and approval-pending executions and identifies the decisive runtime evidence rather than generating an LLM-authored explanation.
