@@ -107,6 +107,7 @@ class ExecutionInspector:
             task_value = self._get(str(task["id"]))
             self._validate_owner(task_value, workflow, task_id=None)
             self._validate_task_references(task_value, workflow)
+        tasks.extend(_blocked_plan_nodes(workflow, [self._get(str(task["id"])) for task in tasks]))
         related = [item for item in self._objects.values() if _belongs_to_workflow(item, execution_id)]
         return self._safe({
             "workflowExecution": workflow,
@@ -119,6 +120,7 @@ class ExecutionInspector:
         execution = self._get(execution_id)
         if execution.get("kind") != "WorkflowExecution":
             raise InspectionError("RUNTIME_KIND_MISMATCH", "runtime object is not a WorkflowExecution")
+        self.execution(execution_id)
         related = _ordered(item for item in self._objects.values() if _belongs_to_workflow(item, execution_id))
         approvals = [item for item in related if item.get("kind") == "Approval"]
         policies = [item for item in related if item.get("kind") == "PolicyDecision"]
@@ -154,7 +156,7 @@ class ExecutionInspector:
         else:
             decisive, outcome, reason = execution, str(execution.get("status", "UNKNOWN")), "workflow has no more specific terminal evidence"
         return {"workflowExecutionId": execution_id, "outcome": outcome, "reason": reason,
-                "decisiveEvidence": _summary(decisive), "evidence": self._safe(decisive, unsafe=False)}
+                "decisiveEvidence": self._safe(_summary(decisive), unsafe=False), "evidence": self._safe(decisive, unsafe=False)}
 
     def _get(self, object_id: str) -> dict[str, Any]:
         if not isinstance(object_id, str) or not object_id.strip():
