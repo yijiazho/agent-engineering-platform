@@ -12,11 +12,11 @@ def _checkpoint(tmp_path, objects):
 
 
 def _records(status="SUCCEEDED", policy="ALLOW", approval=None):
-    workflow = {"id": "wf-1", "kind": "WorkflowExecution", "status": status, "createdAt": "2026-01-01T00:00:00Z", "startedAt": "2026-01-01T00:00:00Z", "completedAt": "2026-01-01T00:00:01Z", "workflowRef": {"kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0"}, "repositoryRevision": "a" * 40, "taskExecutionIds": ["task-1"]}
-    task = {"id": "task-1", "kind": "TaskExecution", "workflowExecutionId": "wf-1", "status": "FAILED" if status == "FAILED" else "SUCCEEDED", "taskRef": {"kind": "Task", "name": "validate", "version": "1.0.0"}, "createdAt": "2026-01-01T00:00:00Z"}
-    context = {"id": "ctx-1", "kind": "ContextPackage", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "createdAt": "2026-01-01T00:00:00Z", "elements": [{"type": "repository", "content": "private source", "provenance": {"source": "test"}, "tokenCount": 4}], "selection": {"selected": ["repository"], "discarded": []}, "tokenEstimate": {"count": 4}, "truncation": "NONE"}
-    artifact = {"id": "artifact-1", "kind": "GeneratedArtifact", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "artifactType": "PATCH", "mediaType": "text/x-diff", "contentAddress": "sha256:" + "b" * 64, "repositoryRevision": "a" * 40, "createdAt": "2026-01-01T00:00:00Z"}
-    decision = {"id": "policy-1", "kind": "PolicyDecision", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "decision": policy, "reason": "publication denied", "createdAt": "2026-01-01T00:00:00Z"}
+    workflow = {"id": "wf-1", "kind": "WorkflowExecution", "traceId": "trace-1", "status": status, "createdAt": "2026-01-01T00:00:00Z", "startedAt": "2026-01-01T00:00:00Z", "completedAt": "2026-01-01T00:00:01Z", "workflowRef": {"kind": "Workflow", "name": "issue-to-pr", "version": "1.0.0"}, "repositoryRevision": "a" * 40, "taskExecutionIds": ["task-1"]}
+    task = {"id": "task-1", "kind": "TaskExecution", "traceId": "trace-1", "workflowExecutionId": "wf-1", "status": "FAILED" if status == "FAILED" else "SUCCEEDED", "taskRef": {"kind": "Task", "name": "validate", "version": "1.0.0"}, "createdAt": "2026-01-01T00:00:00Z"}
+    context = {"id": "ctx-1", "kind": "ContextPackage", "traceId": "trace-1", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "createdAt": "2026-01-01T00:00:00Z", "elements": [{"type": "repository", "content": "private source", "provenance": {"source": "test"}, "tokenCount": 4}], "selection": {"selected": ["repository"], "discarded": []}, "tokenEstimate": {"count": 4}, "truncation": "NONE"}
+    artifact = {"id": "artifact-1", "kind": "GeneratedArtifact", "traceId": "trace-1", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "artifactType": "PATCH", "mediaType": "text/x-diff", "contentAddress": "sha256:" + "b" * 64, "repositoryRevision": "a" * 40, "createdAt": "2026-01-01T00:00:00Z"}
+    decision = {"id": "policy-1", "kind": "PolicyDecision", "traceId": "trace-1", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "decision": policy, "reason": "publication denied", "createdAt": "2026-01-01T00:00:00Z"}
     records = [workflow, task, context, artifact, decision]
     if status == "FAILED":
         records.append({"id": "evaluation-1", "kind": "EvaluationResult", "workflowExecutionId": "wf-1", "taskExecutionId": "task-1", "status": "SUCCEEDED", "outcome": "FAIL", "evaluationRef": {"kind": "Evaluation", "name": "tests", "version": "1.0.0"}, "createdAt": "2026-01-01T00:00:00Z"})
@@ -124,6 +124,33 @@ def test_execution_checks_task_references_and_redacts_evaluation_logs(tmp_path, 
     state = _checkpoint(tmp_path, records)
     assert main(["--state-file", str(state), "--output", "json", "evaluations", "show", "evaluation-1"]) == 0
     assert json.loads(capsys.readouterr().out)["logs"] == "[REDACTED]"
+
+
+def test_explain_reports_blocked_dependency_and_rejects_foreign_evidence(tmp_path, capsys):
+    records = _records(status="FAILED")
+    records[1]["status"] = "FAILED"
+    blocked = dict(records[1])
+    blocked.update({"id": "task-2", "taskRef": {"kind": "Task", "name": "publish", "version": "1.0.0"}, "status": "PENDING", "dependencyTaskExecutionIds": ["task-1"]})
+    records[0]["taskExecutionIds"].append("task-2")
+    records.append(blocked)
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
+    assert json.loads(capsys.readouterr().out)["outcome"] == "BLOCKED"
+    records = _records()
+    records[1]["contextPackageId"] = "ctx-1"
+    records[2]["workflowExecutionId"] = "other-workflow"
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
+
+
+def test_execution_keeps_prompt_reference_metadata_visible(tmp_path, capsys):
+    records = _records()
+    records.append({"id": "agent-1", "kind": "ResolvedAgent", "traceId": "trace-1", "taskExecutionId": "task-1", "promptRef": {"kind": "Prompt", "name": "safe-prompt", "version": "1.0.0"}, "provenance": {"workflowExecutionId": "wf-1"}})
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "--output", "json", "executions", "show", "wf-1"]) == 0
+    related = json.loads(capsys.readouterr().out)["relatedObjects"]
+    assert next(item for item in related if item["id"] == "agent-1")["promptRef"]["version"] == "1.0.0"
 
 
 def test_runtime_checkpoint_fixture_is_schema_valid():

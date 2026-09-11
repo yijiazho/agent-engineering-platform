@@ -104,7 +104,9 @@ class ExecutionInspector:
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "WorkflowExecution task references are malformed")
         tasks = [self._reference(item, "TaskExecution") for item in task_ids]
         for task in tasks:
-            self._validate_task_references(self._get(str(task["id"])))
+            task_value = self._get(str(task["id"]))
+            self._validate_owner(task_value, workflow, task_id=None)
+            self._validate_task_references(task_value, workflow)
         related = [item for item in self._objects.values() if _belongs_to_workflow(item, execution_id)]
         return self._safe({
             "workflowExecution": workflow,
@@ -129,6 +131,10 @@ class ExecutionInspector:
         effective_ids = {item["id"] for item in effective_tasks}
         failed_tasks = [item for item in effective_tasks if item.get("status") == "FAILED"]
         failed_evaluations = [item for item in related if item.get("kind") == "EvaluationResult" and item.get("outcome") == "FAIL" and item.get("taskExecutionId") in effective_ids]
+        blocked = [item for item in effective_tasks if item.get("status") in {"PENDING", "QUEUED"} and any(
+            self._objects.get(dependency_id, {}).get("status") == "FAILED"
+            for dependency_id in item.get("dependencyTaskExecutionIds", ())
+        )]
         if denials:
             decisive, outcome, reason = denials[0], "DENIED", str(denials[0].get("reason", "policy denied action"))
         elif rejected:
@@ -138,6 +144,8 @@ class ExecutionInspector:
             decisive, outcome, reason = approval or unresolved[0], "APPROVAL_PENDING", "policy requires approval"
         elif execution.get("status") == "SUCCEEDED":
             decisive, outcome, reason = execution, "SUCCEEDED", "all recorded tasks completed successfully"
+        elif blocked:
+            decisive, outcome, reason = blocked[0], "BLOCKED", "a prerequisite task failed"
         elif failed_evaluations:
             decisive, outcome, reason = failed_evaluations[0], "FAILED", "evaluation failed"
         elif failed_tasks:
@@ -170,7 +178,7 @@ class ExecutionInspector:
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference has an unexpected kind")
         return _summary(value)
 
-    def _validate_task_references(self, task: Mapping[str, Any]) -> None:
+    def _validate_task_references(self, task: Mapping[str, Any], workflow: Mapping[str, Any]) -> None:
         for field, kind in TASK_REFERENCE_FIELDS.items():
             value = task.get(field)
             if value is None:
@@ -180,6 +188,19 @@ class ExecutionInspector:
                 raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "task runtime reference is malformed")
             for object_id in references:
                 self._reference(object_id, kind)
+                self._validate_owner(self._get(object_id), workflow, task_id=None if kind == "TaskExecution" else str(task["id"]))
+
+    def _validate_owner(self, value: Mapping[str, Any], workflow: Mapping[str, Any], *, task_id: str | None) -> None:
+        provenance = value.get("provenance")
+        workflow_id = value.get("workflowExecutionId") or (provenance.get("workflowExecutionId") if isinstance(provenance, Mapping) else None)
+        trace_id = value.get("traceId")
+        if workflow_id != workflow.get("id") or trace_id != workflow.get("traceId"):
+            raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference belongs to another execution")
+        if task_id is None:
+            return
+        owner_task_id = value.get("taskExecutionId") or (provenance.get("taskExecutionId") if isinstance(provenance, Mapping) else None)
+        if owner_task_id != task_id:
+            raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference belongs to another task")
 
     def _safe(self, value: Any, *, unsafe: bool) -> Any:
         if unsafe:
@@ -205,7 +226,7 @@ def _belongs_to_workflow(value: Mapping[str, Any], workflow_execution_id: str) -
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("_", "").replace("-", "")
-    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit"}:
+    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "promptref"}:
         return False
     return normalized in SENSITIVE_FIELDS or normalized == "logs" or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")
