@@ -135,6 +135,7 @@ class ExecutionInspector:
             self._objects.get(dependency_id, {}).get("status") == "FAILED"
             for dependency_id in item.get("dependencyTaskExecutionIds", ())
         )]
+        blocked.extend(_blocked_plan_nodes(execution, effective_tasks))
         if denials:
             decisive, outcome, reason = denials[0], "DENIED", str(denials[0].get("reason", "policy denied action"))
         elif rejected:
@@ -213,7 +214,7 @@ class ExecutionInspector:
 
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = ("id", "kind", "status", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
+    fields = ("id", "kind", "status", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
     return {field: deepcopy(value[field]) for field in fields if field in value}
 
 
@@ -228,7 +229,7 @@ def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("_", "").replace("-", "")
     if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "promptref"}:
         return False
-    return normalized in SENSITIVE_FIELDS or normalized == "logs" or any(
+    return normalized in SENSITIVE_FIELDS or normalized in {"logs", "message"} or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")
     )
 
@@ -250,6 +251,24 @@ def _effective_tasks(values: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]
     return _ordered(latest.values())
 
 
+def _blocked_plan_nodes(execution: Mapping[str, Any], tasks: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    plan = execution.get("resolvedTaskPlan")
+    if not isinstance(plan, list):
+        return []
+    by_ref = {json.dumps(item.get("taskRef"), sort_keys=True): item for item in tasks}
+    blocked: list[dict[str, Any]] = []
+    for node in plan:
+        if not isinstance(node, Mapping) or not isinstance(node.get("taskRef"), Mapping):
+            continue
+        key = json.dumps(node["taskRef"], sort_keys=True)
+        if key in by_ref:
+            continue
+        dependencies = node.get("dependencies", ())
+        if any(by_ref.get(json.dumps(dependency, sort_keys=True), {}).get("status") == "FAILED" for dependency in dependencies if isinstance(dependency, Mapping)):
+            blocked.append({"id": f"blocked:{key}", "kind": "TaskExecution", "taskRef": dict(node["taskRef"]), "status": "BLOCKED"})
+    return blocked
+
+
 def _elapsed(value: Mapping[str, Any]) -> dict[str, Any]:
     started, completed = value.get("startedAt", value.get("createdAt")), value.get("completedAt")
     result: dict[str, Any] = {"startedAt": started, "completedAt": completed}
@@ -263,7 +282,7 @@ def _elapsed(value: Mapping[str, Any]) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
-    json_errors = any(arguments[index:index + 2] == ["--output", "json"] for index in range(len(arguments)))
+    json_errors = any(arguments[index:index + 2] == ["--output", "json"] or arguments[index] == "--output=json" for index in range(len(arguments)))
     _ArgumentParser._json_errors_default = json_errors
     parser = _ArgumentParser(prog="aep", json_errors=json_errors)
     parser.add_argument("--state-file", type=Path, default=_default_state_file())
@@ -303,7 +322,9 @@ def _human(value: Any) -> str:
         ) if records else "- none")
     if isinstance(value, Mapping) and "workflowExecution" in value:
         workflow = value["workflowExecution"]
-        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", "Tasks:"]
+        workflow_ref = workflow.get("workflowRef", {})
+        elapsed = value.get("elapsed", {})
+        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Workflow: {workflow_ref.get('name', '')}:{workflow_ref.get('version', '')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", f"Elapsed: {elapsed.get('milliseconds', 'in progress')} ms", "Tasks:"]
         lines.extend(f"- {item['id']}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(item.get('dependencyTaskExecutionIds', ())) or 'none'}" for item in value.get("tasks", ()))
         return "\n".join(lines)
     if isinstance(value, Mapping) and "decisiveEvidence" in value:

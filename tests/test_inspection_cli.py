@@ -101,6 +101,8 @@ def test_missing_or_wrong_kind_identifier_has_stable_json_error(tmp_path, capsys
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_KIND_MISMATCH"
     assert main(["--state-file", str(state), "--output", "json", "tasks", "show"]) == 2
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "INVALID_ARGUMENT"
+    assert main(["--state-file", str(state), "--output=json", "tasks", "show"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "INVALID_ARGUMENT"
 
 
 def test_artifact_metadata_is_safe_and_unsafe_debug_is_explicit(tmp_path, capsys):
@@ -121,18 +123,21 @@ def test_execution_checks_task_references_and_redacts_evaluation_logs(tmp_path, 
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
     records = _records(status="FAILED")
     records[-1]["logs"] = ["private rejected output"]
+    records[1]["failure"] = {"message": "private model output", "class": "EVALUATION"}
     state = _checkpoint(tmp_path, records)
     assert main(["--state-file", str(state), "--output", "json", "evaluations", "show", "evaluation-1"]) == 0
     assert json.loads(capsys.readouterr().out)["logs"] == "[REDACTED]"
+    assert main(["--state-file", str(state), "--output", "json", "tasks", "show", "task-1"]) == 0
+    assert json.loads(capsys.readouterr().out)["failure"]["message"] == "[REDACTED]"
 
 
 def test_explain_reports_blocked_dependency_and_rejects_foreign_evidence(tmp_path, capsys):
     records = _records(status="FAILED")
     records[1]["status"] = "FAILED"
-    blocked = dict(records[1])
-    blocked.update({"id": "task-2", "taskRef": {"kind": "Task", "name": "publish", "version": "1.0.0"}, "status": "PENDING", "dependencyTaskExecutionIds": ["task-1"]})
-    records[0]["taskExecutionIds"].append("task-2")
-    records.append(blocked)
+    records[0]["resolvedTaskPlan"] = [
+        {"taskRef": records[1]["taskRef"], "dependencies": []},
+        {"taskRef": {"kind": "Task", "name": "publish", "version": "1.0.0"}, "dependencies": [records[1]["taskRef"]]},
+    ]
     state = _checkpoint(tmp_path, records)
     assert main(["--state-file", str(state), "--output", "json", "explain", "wf-1"]) == 0
     assert json.loads(capsys.readouterr().out)["outcome"] == "BLOCKED"
@@ -146,11 +151,15 @@ def test_explain_reports_blocked_dependency_and_rejects_foreign_evidence(tmp_pat
 
 def test_execution_keeps_prompt_reference_metadata_visible(tmp_path, capsys):
     records = _records()
-    records.append({"id": "agent-1", "kind": "ResolvedAgent", "traceId": "trace-1", "taskExecutionId": "task-1", "promptRef": {"kind": "Prompt", "name": "safe-prompt", "version": "1.0.0"}, "provenance": {"workflowExecutionId": "wf-1"}})
+    records.append({"id": "agent-1", "kind": "ResolvedAgent", "traceId": "trace-1", "taskExecutionId": "task-1", "promptRef": {"kind": "Prompt", "name": "safe-prompt", "version": "1.0.0"}, "toolRefs": [{"kind": "Tool", "name": "unused-tool", "version": "1.0.0"}], "provenance": {"workflowExecutionId": "wf-1"}})
     state = _checkpoint(tmp_path, records)
     assert main(["--state-file", str(state), "--output", "json", "executions", "show", "wf-1"]) == 0
     related = json.loads(capsys.readouterr().out)["relatedObjects"]
     assert next(item for item in related if item["id"] == "agent-1")["promptRef"]["version"] == "1.0.0"
+    assert next(item for item in related if item["id"] == "agent-1")["toolRefs"][0]["name"] == "unused-tool"
+    assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 0
+    human = capsys.readouterr().out
+    assert "Workflow: issue-to-pr:1.0.0" in human and "Elapsed: 1000 ms" in human
 
 
 def test_runtime_checkpoint_fixture_is_schema_valid():

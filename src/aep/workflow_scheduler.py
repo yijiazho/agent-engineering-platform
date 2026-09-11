@@ -275,6 +275,15 @@ class WorkflowScheduler:
                 event_type = "TaskExecutionFailed"
             self._emit(terminal, event_type, sequence=3, timestamp=timestamp)
 
+        if "resolvedTaskPlan" not in workflow_execution:
+            self._store.update_status(
+                workflow_id, str(workflow_execution["status"]),
+                expected_status=str(workflow_execution["status"]), updated_at=timestamp,
+                changes={"resolvedTaskPlan": [
+                    {"taskRef": _ref_record(node.task_ref), "dependencies": [_ref_record(ref) for ref in node.dependencies]}
+                    for node in plan.nodes
+                ]},
+            )
         persisted = tuple(
             self._store.get(str(attempt["id"])) for attempt in scheduled
         )
