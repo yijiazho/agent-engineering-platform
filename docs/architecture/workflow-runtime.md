@@ -440,6 +440,11 @@ preimage. Replace, partial delete, and existing-file rewrite remain fail-closed
 until immutable per-operation plan evidence and AEP-059 artifact approval are
 available; replacement size never creates authority.
 
+Required insertions are verified against the aggregate materialized postimage
+inside the authorized region. They do not prescribe how a model partitions an
+otherwise authorized edit: a single subtree insertion may satisfy several
+literal values, and several safe operations may jointly satisfy one value.
+
 The `RunValidation` handler requires that successful patch evidence at the same
 repository revision and performs no Agent or model invocation. Its versioned
 Task configuration identifies the immutable Docker Tool, digest-pinned image,

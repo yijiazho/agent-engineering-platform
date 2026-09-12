@@ -166,3 +166,16 @@ def test_generate_patch_accepts_each_required_insertion_for_one_path() -> None:
         required_insertions=({"path": "README.md", "value": "one\n"}, {"path": "README.md", "value": "two\n"}),
     )
     assert changes[0]["content"] == "first\none\nsecond\ntwo\n"
+
+
+def test_generate_patch_accepts_one_subtree_insert_for_many_required_values() -> None:
+    preimage = "## Repository Layout\nexisting\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    subtree = "deploy/\ndeploy/local/\ndeploy/self-hosting/\ndeploy/validation/\n"
+    changes = _validated_changes(
+        {"changes": [operation(preimage, content=subtree)]}, ("README.md",),
+        ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION,
+        required_insertions=tuple({"path": "README.md", "value": value} for value in subtree.splitlines()),
+    )
+    assert all(value in changes[0]["content"] for value in subtree.splitlines())

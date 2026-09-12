@@ -1163,18 +1163,11 @@ def _validated_changes(
                 len(operations) == 1 and operations[0].get("operation") == "delete"
                 and operations[0].get("anchor") == content
             )
-            expected_insertions = {
-                item["value"] for item in required_insertions
-                if item.get("path") == path
-            }
-            if expected_insertions and (
-                len(operations) != len(expected_insertions)
-                or any(item.get("operation") != "insert" for item in operations)
-                or {item.get("content") for item in operations} != expected_insertions
-            ):
-                raise GeneratePatchContractError(
-                    "localized operation is not bound to an immutable required insertion"
-                )
+            # Required insertions authorize and verify the aggregate postimage,
+            # not a model-selected partition of operations.  Reconciliation
+            # below proves every value in its trusted region after deterministic
+            # application, allowing one safe subtree insertion to satisfy many
+            # literal values (or several operations to satisfy one value).
             if any(item.get("operation") == "replace" for item in operations) or (
                 any(item.get("operation") == "delete" for item in operations)
                 and not whole_file_delete_request

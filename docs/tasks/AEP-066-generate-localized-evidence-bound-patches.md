@@ -73,6 +73,53 @@ hidden model reasoning.
 Preserve issue #88 and its failed WorkflowExecution as immutable historical
 evidence. Do not replay or rewrite the execution.
 
+## Subsequent Dogfood Discovery
+
+A later controlled MTP-09/MTP-10 execution, WorkflowExecution
+`workflowexecution-5f315522-c2d6-59ca-90d6-25d9d57ee7de`, revealed that the
+localized-operation generation now has an inverse failure mode. AnalyzeIssue
+and BuildImplementationPlan succeeded at repository revision
+`4db056a6b9aa83b2a9b33ea35baa7c6250b7ca43`, but GeneratePatch
+`1.14.0` failed before it could create a patch, EvaluationResult, or
+RunValidation TaskExecution. The inspection summary consequently reported
+RunValidation as blocked by a prerequisite; RunValidation and its Docker
+validation image were not the failure source.
+
+The plan authorized `README.md`, the `Repository Layout` region, and four
+required values: `deploy/`, `deploy/local/`, `deploy/self-hosting/`, and
+`deploy/validation/`. The model proposed one revision-bound, anchored,
+region-scoped insertion containing the complete `deploy/` subtree. That is a
+reasonable implementation of the issue's requested outcome. It did not alter
+an unauthorized path, request a rewrite, replacement, or deletion, or evade
+the supplied preimage and anchor controls.
+
+GeneratePatch nevertheless rejected the proposal with the non-retryable
+`CONFIGURATION` error `localized operation is not bound to an immutable
+required insertion`. The current guard requires the number of `insert`
+operations to equal the number of required values and the set of each
+operation's complete `content` strings to equal the set of required values.
+A single multiline operation therefore cannot satisfy multiple required
+values, even when deterministic application would make every value present in
+the authorized final region.
+
+This rule was added in commit `1214934` (`Bind localized inserts to plan
+evidence`) and made one-to-one in commit `e93271a` (`Support multi-insertion
+localized edits`). It is an operation-shape constraint, not a safety property
+or an issue acceptance criterion. It also conflicts with the localized-edit
+goal of this task: an issue author should state intended outcomes and safety
+boundaries, not predict an agent's exact operation partitioning or final code
+shape.
+
+The replacement contract must retain immutable plan authorization, exact
+preimage/revision binding, unique anchors, region confinement, preservation
+checks, and deterministic evaluation. It must instead prove required
+insertions and other literal outcomes against the applied postimage. One or
+more ordered localized operations may jointly satisfy any number of planned
+values, provided their aggregate postimage satisfies every authorized
+postcondition and does not introduce an unauthorized mutation. A
+schema-valid-but-unsatisfied candidate is a rejected proposal with evaluation
+evidence, not a configuration failure of the immutable Resource graph.
+
 ## Reproduction
 
 Create credential-free regressions derived from issue #88:
@@ -90,7 +137,13 @@ Create credential-free regressions derived from issue #88:
 6. Include deterministic preservation and validation criteria currently
    classified as unsupported and demonstrate how they become actionable
    evaluator responsibilities.
-7. Demonstrate the corrected localized-edit representation, application,
+7. Create a plan that requires the four `deploy/` layout values in one
+   authorized README region, then return one safe multiline insert operation
+   containing the complete subtree.
+8. Demonstrate that the current one-to-one operation/content comparison
+   rejects that proposal before patch application, despite its satisfying the
+   intended final layout.
+9. Demonstrate the corrected postimage-based representation, application,
    evaluation, rejected-artifact retention, and terminal explanation.
 
 Add adjacent cases for a legitimate explicit rewrite, a small replacement, an
@@ -111,6 +164,9 @@ deterministic patch disposition model that:
 * binds each operation to normalized repository path, immutable revision,
   preimage digest, supported region or anchor identity, expected match count,
   and the applicable plan/postcondition identities;
+* treats those immutable plan identities as authorization and verification
+  boundaries, rather than as a prescribed number, ordering, or textual
+  partitioning of model operations;
 * applies model-proposed operations in deterministic control-plane code and
   fails closed on missing, ambiguous, overlapping, out-of-order, stale, unsafe,
   or non-UTF-8 targets;
@@ -124,6 +180,11 @@ deterministic patch disposition model that:
   content, reconciliation evidence, unified-diff added blocks, LF, CRLF, a
   final newline, and no-final-newline cases without weakening exact content
   requirements;
+* verifies each literal required insertion and other deterministic acceptance
+  criterion against the aggregate applied postimage in its authorized region;
+  permits one or more safe localized operations to jointly satisfy multiple
+  values, and records which operations and postimage spans supplied that
+  proof;
 * maps preservation, allowed-scope, formatting, and configured validation
   criteria to their owning deterministic evaluators instead of classifying
   them as unsupported merely because they are not literal insertions;
@@ -152,8 +213,9 @@ deterministic patch disposition model that:
 
 Do not implement this task by increasing the destructive-rewrite threshold,
 silently ignoring unsupported criteria, assuming a schema-valid model response
-preserved unrelated content, or pushing a rejected patch solely so a human can
-inspect it.
+preserved unrelated content, reintroducing a one-operation-per-required-value
+or exact-operation-content rule, or pushing a rejected patch solely so a human
+can inspect it.
 
 ## Dependencies
 
@@ -181,6 +243,16 @@ inspect it.
 * The issue #88 regression expresses the README change as localized operations
   and produces a four-line addition without requiring the model to reproduce
   the other 710 preimage lines.
+* The `workflowexecution-5f315522-c2d6-59ca-90d6-25d9d57ee7de` regression
+  accepts one anchored, revision-bound insertion of the complete `deploy/`
+  subtree when its applied README postimage contains all four planned layout
+  values in the authorized `Repository Layout` region.
+* The same regression rejects a candidate only when the aggregate postimage
+  lacks a required value, changes an unauthorized path or region, violates
+  anchor/preimage/revision binding, overlaps another edit, or fails a relevant
+  deterministic evaluator. It does not reject solely because several required
+  values are supplied by one operation or one value is supplied by multiple
+  operations.
 * Deterministic application of a localized operation produces the expected
   postimage digest and proves that all content outside the authorized spans is
   unchanged.
@@ -206,6 +278,10 @@ inspect it.
   as generic unsupported criteria when the platform has an owning check.
 * Genuinely unsupported criteria retain stable explicit evidence and continue
   to block publication; they are not silently treated as satisfied.
+* A structurally valid candidate that fails postimage reconciliation records a
+  rejected-candidate Evaluation or Policy outcome with the decisive missing or
+  violated condition. It is not classified as `CONFIGURATION` unless the
+  immutable Resource graph itself is inconsistent or unusable.
 * AEP-056 explains the issue #88 failure using runtime evidence: complete input,
   completed provider response, four inserted lines, 121 unexpected deleted
   lines, decisive rejection checks, rollback, and absence of remote mutation.
@@ -228,6 +304,10 @@ inspect it.
 * GitHub issue #88 and WorkflowExecution
   `workflowexecution-9d286f5a-769a-5b8e-bda4-6644aca452ea` remain immutable
   historical evidence and are not replayed or rewritten.
+* WorkflowExecution `workflowexecution-5f315522-c2d6-59ca-90d6-25d9d57ee7de`
+  remains immutable diagnostic evidence. A later controlled issue, rather than
+  replaying that execution, verifies the corrected contract through
+  GeneratePatch and then RunValidation.
 * `README.md`, relevant ADRs and architecture documents, Resource authoring,
   evaluation and policy guidance, schemas, fixtures, the self-hosting runbook,
   this task, and `docs/execution-plan.md` describe the same localized patch and
