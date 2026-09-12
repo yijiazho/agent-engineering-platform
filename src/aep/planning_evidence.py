@@ -326,7 +326,13 @@ def evaluate_path_predicates(
         elif kind in {"TEXT_PRESENT", "TEXT_ABSENT"}:
             if not isinstance(expected, str) or not expected:
                 raise PlanningEvidenceError("text predicates require a non-empty value")
-            positions = [match.start() for match in re.finditer(re.escape(expected), scoped_content)]
+            # The same logical multiline insertion can be represented by a
+            # CRLF checkout or by unified-diff added records without the final
+            # newline.  Preserve exact characters otherwise, but compare this
+            # transport boundary consistently with Patch Evaluation.
+            expected_text = _canonical_insertion(expected)
+            scoped_text = _canonical_insertion(scoped_content)
+            positions = [match.start() for match in re.finditer(re.escape(expected_text), scoped_text)]
             actual = bool(positions)
             satisfied = actual if kind == "TEXT_PRESENT" else not actual
             selected = {"kind": "TEXT_MATCH", "occurrences": len(positions)}
@@ -379,6 +385,11 @@ def evaluate_path_predicates(
         json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:20]
     return record
+
+
+def _canonical_insertion(value: str) -> str:
+    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
+    return normalized[:-1] if normalized.endswith("\n") else normalized
 
 
 def _independent_text_positions(
