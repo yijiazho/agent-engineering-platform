@@ -74,7 +74,9 @@ def apply_localized_operations(
         if not isinstance(content, str) or "\x00" in content or not _utf8(content):
             raise LocalizedPatchError("UNSAFE_CONTENT", "operation content must be UTF-8 text without NUL")
         if operation == "rewrite":
-            if not allow_rewrite or rewrite_seen or len(operations) != 1:
+            # An empty immutable preimage is the distinct, bounded file-create
+            # case.  Existing-file rewrite remains unavailable until AEP-059.
+            if (not allow_rewrite and preimage) or rewrite_seen or len(operations) != 1:
                 raise LocalizedPatchError("REWRITE_NOT_AUTHORIZED", "full-file rewrite requires one explicit authorized operation")
             rewrite_seen = True
             edits.append((0, len(preimage), content, {"ordinal": ordinal, "operation": operation, "span": [0, len(preimage)]}))
@@ -100,6 +102,11 @@ def apply_localized_operations(
         elif operation == "delete":
             if content:
                 raise LocalizedPatchError("INVALID_OPERATION", "delete must not include content")
+            if anchor != preimage or len(operations) != 1:
+                raise LocalizedPatchError(
+                    "DELETE_NOT_AUTHORIZED",
+                    "localized deletion requires plan-operation evidence; only an exact whole-file delete is available",
+                )
         if region is not None:
             region_start, region_end = _region_bounds(preimage, region)
             if start < region_start or end > region_end:
@@ -155,6 +162,9 @@ def _positions(content: str, needle: str) -> list[int]:
 def _safe_path(value: str) -> None:
     if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
         raise LocalizedPatchError("UNSAFE_PATH", "operation path is unsafe")
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts or str(path) != value or path.parts[0].casefold() == ".git":
+        raise LocalizedPatchError("UNSAFE_PATH", "operation path is unsafe")
 
 
 def _utf8(value: str) -> bool:
@@ -166,18 +176,10 @@ def _utf8(value: str) -> bool:
 
 
 def _region_bounds(content: str, region: Mapping[str, Any]) -> tuple[int, int]:
-    """Resolve the supported trusted Markdown section boundary locally."""
-    if region.get("kind") != "MARKDOWN_SECTION" or not isinstance(region.get("name"), str):
-        raise LocalizedPatchError("REGION_MISMATCH", "trusted region is unsupported")
-    import re
-    heading = re.compile(r"(?m)^#{1,6}[ \t]+" + re.escape(region["name"]) + r"[ \t]*$")
-    matches = list(heading.finditer(content))
-    if len(matches) != 1:
-        raise LocalizedPatchError("REGION_MISMATCH", "trusted region does not resolve uniquely")
-    start = matches[0].start()
-    level = len(matches[0].group().split()[0])
-    next_heading = re.compile(rf"(?m)^#{{1,{level}}}[ \t]+.*$").search(content, matches[0].end())
-    return start, next_heading.start() if next_heading else len(content)
-    path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts or str(path) != value or path.parts[0].casefold() == ".git":
-        raise LocalizedPatchError("UNSAFE_PATH", "operation path is unsafe")
+    """Use the exact planning selector resolver for section and fence spans."""
+    from aep.planning_evidence import PlanningEvidenceError, _region_span
+    try:
+        start, end, _identity, _matches = _region_span(content, region)
+    except PlanningEvidenceError as error:
+        raise LocalizedPatchError("REGION_MISMATCH", "trusted region does not resolve uniquely") from error
+    return start, end

@@ -1160,7 +1160,12 @@ def _validated_changes(
                 )
             except LocalizedPatchError as error:
                 raise GeneratePatchContractError(str(error)) from error
-            changes.append({"path": path, "content": applied.content, "operation": "write",
+            whole_file_delete = (
+                len(operations) == 1 and operations[0].get("operation") == "delete"
+                and operations[0].get("anchor") == content
+            )
+            changes.append({"path": path, "content": applied.content,
+                            "operation": "delete" if whole_file_delete else "write",
                             "localizedPreservation": json.dumps(applied.preservation, sort_keys=True)})
         return tuple(changes)
     changes: list[dict[str, str]] = []

@@ -436,8 +436,9 @@ materializes the postimage before one compare-and-write request; missing,
 ambiguous, stale, overlapping, out-of-order, non-UTF-8, or unauthorized edits
 fail before filesystem mutation. It records content-addressed unchanged-region
 statistics with the operation evidence. A full-file `rewrite` is accepted only
-when the immutable plan explicitly authorizes that path; replacement size never
-creates that authority.
+when the immutable plan explicitly authorizes that path and AEP-059 binds human
+approval to the exact patch artifact. Until that approval contract is deployed,
+existing-file rewrites fail closed; replacement size never creates authority.
 
 The `RunValidation` handler requires that successful patch evidence at the same
 repository revision and performs no Agent or model invocation. Its versioned

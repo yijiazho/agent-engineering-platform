@@ -73,23 +73,34 @@ def test_out_of_order_and_non_utf8_operations_have_stable_diagnostics() -> None:
         apply(preimage, [invalid])
 
 
-def test_localized_delete_and_region_boundary_are_enforced() -> None:
+def test_delete_requires_whole_file_and_region_boundary_is_enforced() -> None:
     preimage = "# Repository Layout\ninside\n# Elsewhere\noutside\n"
     digest = sha256(preimage.encode()).hexdigest()
     delete = operation(preimage, operation="delete", anchor="inside", content="", expectedMatchCount=1)
-    result = apply_localized_operations(
-        path="README.md", preimage=preimage, preimage_sha256=digest,
-        repository_revision=REVISION, operations=[delete], region_id="repository-layout",
-        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
-    )
-    assert "inside" not in result.content
-    outside = operation(preimage, operation="delete", anchor="outside", content="", expectedMatchCount=1)
+    with pytest.raises(LocalizedPatchError, match="DELETE_NOT_AUTHORIZED"):
+        apply_localized_operations(
+            path="README.md", preimage=preimage, preimage_sha256=digest,
+            repository_revision=REVISION, operations=[delete], region_id="repository-layout",
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+    outside = operation(preimage, operation="replace", anchor="outside", content="changed", expectedMatchCount=1)
     with pytest.raises(LocalizedPatchError, match="OUT_OF_REGION"):
         apply_localized_operations(
             path="README.md", preimage=preimage, preimage_sha256=digest,
             repository_revision=REVISION, operations=[outside], region_id="repository-layout",
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
+
+
+def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
+    preimage = ""
+    result = apply_localized_operations(
+        path="new.md", preimage=preimage, preimage_sha256=sha256(b"").hexdigest(),
+        repository_revision=REVISION,
+        operations=[{"operation": "rewrite", "path": "new.md", "repositoryRevision": REVISION,
+                     "preimageSha256": sha256(b"").hexdigest(), "regionId": "new-file", "content": "created\n"}],
+    )
+    assert result.content == "created\n"
 
 
 def test_explicit_rewrite_is_never_inferred_from_size() -> None:
