@@ -514,6 +514,11 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             self._attach(task_execution["id"], {"evaluationResultIds": [evaluation_id]})
             if evaluation_result["outcome"] != "PASS":
                 details = "; ".join(evaluation_result.get("logs", ()))
+                rejected_metadata = dict(metadata)
+                rejected_metadata["retentionState"] = "REJECTED_NON_PUBLISHABLE"
+                rejected_metadata["publicationEligibility"] = "REJECT"
+                rejected = self._artifact_store.publish(rejected_metadata, patch_text)
+                self._attach(task_execution["id"], {"generatedArtifactIds": [rejected["id"]]})
                 self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION,
