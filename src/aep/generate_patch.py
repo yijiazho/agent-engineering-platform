@@ -273,6 +273,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 repository_revision=str(workflow["repositoryRevision"]),
                 regions_by_path=_regions_by_path(plan),
                 rewrite_authorized_paths=_rewrite_authorized_paths(plan, allowed_paths),
+                required_insertions=required_insertions,
             )
             reconciliation = None
             reconciliation_id = None
@@ -1116,6 +1117,7 @@ def _validated_changes(
     *, repository_revision: str | None = None,
     regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
     rewrite_authorized_paths: Sequence[str] = (),
+    required_insertions: Sequence[Mapping[str, str]] = (),
 ) -> tuple[dict[str, str], ...]:
     if not isinstance(output, Mapping):
         raise GeneratePatchContractError("Code Generator output must be an object")
@@ -1161,6 +1163,17 @@ def _validated_changes(
                 len(operations) == 1 and operations[0].get("operation") == "delete"
                 and operations[0].get("anchor") == content
             )
+            expected_insertions = {
+                item["value"] for item in required_insertions
+                if item.get("path") == path
+            }
+            if expected_insertions and (
+                len(operations) != 1 or operations[0].get("operation") != "insert"
+                or operations[0].get("content") not in expected_insertions
+            ):
+                raise GeneratePatchContractError(
+                    "localized operation is not bound to an immutable required insertion"
+                )
             if any(item.get("operation") == "replace" for item in operations) or (
                 any(item.get("operation") == "delete" for item in operations)
                 and not whole_file_delete_request
