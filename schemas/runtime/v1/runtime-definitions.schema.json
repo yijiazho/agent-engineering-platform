@@ -199,6 +199,22 @@
               "items": { "$ref": "#/$defs/runtimeId" },
               "uniqueItems": true
             },
+            "resolvedTaskPlan": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["taskRef", "dependencies"],
+                "properties": {
+                  "taskRef": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/taskRef" },
+                  "dependencies": {
+                    "type": "array",
+                    "items": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/taskRef" },
+                    "uniqueItems": true
+                  }
+                }
+              }
+            },
             "failure": { "$ref": "#/$defs/failure" }
           },
           "additionalProperties": true

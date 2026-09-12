@@ -169,6 +169,7 @@ class WorkflowScheduler:
         ) = _validate_inputs(
             plan, workflow_execution, self._store
         )
+        self._ensure_resolved_task_plan(workflow_id, plan, timestamp)
         self._repair_attempt_evidence(workflow_id, timestamp)
         attempts_by_ref = _attempts_by_task(
             self._store.list_by_workflow_execution(workflow_id)
@@ -283,6 +284,36 @@ class WorkflowScheduler:
                 attempt for attempt in persisted if attempt is not None
             )
         )
+
+    def _ensure_resolved_task_plan(
+        self, workflow_id: str, plan: TaskDagPlan, timestamp: str
+    ) -> None:
+        """Persist one immutable plan, rejecting any stale reconciler's plan."""
+
+        expected = _resolved_task_plan(plan)
+        persisted = self._store.get(workflow_id)
+        if persisted is None:
+            raise InvalidSchedulerInputError("WorkflowExecution must exist in the runtime store")
+        existing = persisted.get("resolvedTaskPlan")
+        if existing is not None:
+            if existing != expected:
+                raise InvalidSchedulerInputError("resolved task plan does not match persisted evidence")
+            return
+        candidate = dict(persisted)
+        candidate["resolvedTaskPlan"] = expected
+        candidate["updatedAt"] = timestamp
+        _validate_runtime_record(candidate, "workflowexecution.schema.json")
+        try:
+            self._store.update_status(
+                workflow_id, str(persisted["status"]),
+                expected_status=str(persisted["status"]), updated_at=timestamp,
+                changes={"resolvedTaskPlan": expected},
+            )
+        except ValueError:
+            # A concurrent reconciler may have persisted the write-once field.
+            persisted = self._store.get(workflow_id)
+            if persisted is None or persisted.get("resolvedTaskPlan") != expected:
+                raise InvalidSchedulerInputError("resolved task plan does not match persisted evidence") from None
 
     def _create_attempt(
         self,
@@ -501,6 +532,16 @@ def _validate_inputs(
         repository_revision,
         persisted.get("knowledgeGraphVersion"),
     )
+
+
+def _resolved_task_plan(plan: TaskDagPlan) -> list[dict[str, Any]]:
+    return [
+        {
+            "taskRef": _ref_record(node.task_ref),
+            "dependencies": [_ref_record(ref) for ref in node.dependencies],
+        }
+        for node in plan.nodes
+    ]
 
 
 def _validate_runtime_record(record: Mapping[str, Any], schema_name: str) -> None:

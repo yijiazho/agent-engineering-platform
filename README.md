@@ -555,6 +555,54 @@ filesystem content-addressed store, and accepted outbox rows are retired only
 after terminal workflow evidence. AEP-043 remains in progress until an
 authorized operator completes and records the credentialed live pilot.
 
+### Inspecting Execution Evidence
+
+The installed `aep` command reads the durable runtime checkpoint without
+starting a worker or materializing artifact bodies. It redacts prompt, source,
+event, Tool input/output, and artifact content by default; `--unsafe-debug` is
+an explicit, controlled local-investigation switch.
+
+Install the repository package into the local virtual environment to register
+the `aep` command:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,yaml]"
+.\.venv\Scripts\aep.exe --help
+```
+
+After activating the virtual environment with
+`.\.venv\Scripts\Activate.ps1`, `aep --help` is available directly on
+`PATH`.
+
+```powershell
+aep --output json executions list
+aep --output json executions list --status FAILED
+aep --output json executions show workflowexecution-...
+aep explain workflowexecution-...
+aep contexts show contextpackage-...
+aep artifacts show generatedartifact-...
+aep policy-decisions show policydecision-...
+```
+
+By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; use
+`--state-file <path>` for an offline backup. `aep executions list` discovers
+execution IDs in creation order and optionally filters by runtime status.
+`aep executions show` traces the Workflow, revision, task DAG, elapsed time,
+and linked evidence. `aep explain`
+uses deterministic runtime evidence, prioritizing pending approvals, policy
+denials, failed evaluations, and failed Tasks rather than generating text with
+a model. Drill-down families are `tasks`, `contexts`, `invocations`,
+`artifacts`, `evaluations`, `policy-decisions`, and `approvals`, each followed
+by `show <immutable-id>`.
+
+To trace an issue-to-PR run, start with `aep executions list`, select the
+WorkflowExecution whose `eventId` corresponds to the normalized Event, and run
+`aep executions show <id>`. Follow each task's attached ContextPackage,
+invocation, artifact, and EvaluationResult IDs, then inspect the final
+`PolicyDecision` ID before treating publication as authorized. `aep explain
+<id>` identifies the decisive terminal evidence. The CLI never renders an Event
+body by default; use the persisted Event ID only as the correlation key.
+
 ## Key Documents
 
 * [Product Requirements](docs/prd.md)
@@ -569,7 +617,7 @@ authorized operator completes and records the credentialed live pilot.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 43 of the 66 implementation tasks are complete.
+contracts are established, and 44 of the 66 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 

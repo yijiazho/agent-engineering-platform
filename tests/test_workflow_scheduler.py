@@ -8,6 +8,7 @@ import pytest
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
 from aep.runtime_store import InMemoryRuntimeObjectStore
 from aep.task_dag import resolve_task_dag
+from aep.task_dag import TaskDagPlan
 from aep.task_execution import FailureClass
 from aep.workflow_execution import _runtime_validator
 from aep.workflow_scheduler import TaskExecutionResult, WorkflowScheduler
@@ -141,6 +142,25 @@ def test_permanent_failure_blocks_dependents_and_does_not_retry() -> None:
     assert {task["taskRef"]["name"] for task in task_executions(store)} == {
         "analyze"
     }
+
+
+def test_reconciliation_rejects_a_plan_that_differs_from_persisted_evidence() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze"), node("publish", ("analyze",))])
+    runtime = scheduler(store, FakeExecutor())
+    runtime.reconcile(plan, execution)
+    stale_plan = TaskDagPlan(
+        workflow_ref=plan.workflow_ref, nodes=plan.nodes[:1], ready_groups=((plan.nodes[0].task_ref,),)
+    )
+
+    with pytest.raises(InvalidSchedulerInputError, match="resolved task plan"):
+        runtime.reconcile(stale_plan, execution)
+
+    assert [entry["taskRef"]["name"] for entry in store.get(WORKFLOW_ID)["resolvedTaskPlan"]] == ["analyze", "publish"]
+    with pytest.raises(ValueError, match="resolvedTaskPlan"):
+        store.update_status(
+            WORKFLOW_ID, "RUNNING", expected_status="RUNNING", updated_at=TIMESTAMP,
+            changes={"resolvedTaskPlan": []},
+        )
 
 
 def test_failure_persists_safe_structured_details() -> None:
@@ -546,7 +566,7 @@ class FallibleStore(InMemoryRuntimeObjectStore):
         self.failed = False
 
     def update_status(self, object_id, status, **kwargs):
-        if not self.failed and self.failure_mode == "start_after_commit" and status == "RUNNING":
+        if not self.failed and self.failure_mode == "start_after_commit" and status == "RUNNING" and "resolvedTaskPlan" not in kwargs.get("changes", {}):
             self.failed = True
             super().update_status(object_id, status, **kwargs)
             raise OSError("injected start failure")
