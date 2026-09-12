@@ -352,6 +352,7 @@ def test_required_insertion_newline_does_not_match_a_prefix() -> None:
 
     assert _insertion_matches("admin=false\n", "admin=false")
     assert not _insertion_matches("admin=false\n", "admin=falsehood")
+    assert not _insertion_matches("admin=false\n", "notadmin=false")
 
 
 def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:

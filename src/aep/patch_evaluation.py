@@ -524,7 +524,9 @@ def _insertion_matches(required: str, block: str) -> bool:
         start = block.find(candidate)
         while start >= 0:
             end = start + len(candidate)
-            if candidate.endswith("\n") or end == len(block) or block[end] == "\n":
+            if (start == 0 or block[start - 1] == "\n") and (
+                candidate.endswith("\n") or end == len(block) or block[end] == "\n"
+            ):
                 return True
             start = block.find(candidate, start + 1)
     return False

@@ -401,7 +401,9 @@ def _logical_text_positions(content: str, expected: str) -> list[int]:
         start = content.find(candidate)
         while start >= 0:
             end = start + len(candidate)
-            if candidate.endswith("\n") or end == len(content) or content[end] == "\n":
+            if (start == 0 or content[start - 1] == "\n") and (
+                candidate.endswith("\n") or end == len(content) or content[end] == "\n"
+            ):
                 positions.append(start)
             start = content.find(candidate, start + 1)
         if positions:
