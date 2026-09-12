@@ -229,7 +229,7 @@ def evaluate_patch(
             {"path": item["path"], "value": item["value"]}
             for item in required_insertions
             if not any(
-                _canonical_insertion(item["value"]) in _canonical_insertion(block)
+                _insertion_matches(item["value"], block)
                 for block in added_blocks_by_path.get(item["path"], ())
             )
         ),
@@ -515,10 +515,23 @@ def _added_blocks_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
     return {path: tuple(blocks) for path, blocks in values.items()}
 
 
+def _insertion_matches(required: str, block: str) -> bool:
+    """Normalize transport newlines without weakening a logical-line boundary."""
+    required = _canonical_insertion(required)
+    block = _canonical_insertion(block)
+    candidates = (required, required[:-1]) if required.endswith("\n") else (required,)
+    for candidate in candidates:
+        start = block.find(candidate)
+        while start >= 0:
+            end = start + len(candidate)
+            if candidate.endswith("\n") or end == len(block) or block[end] == "\n":
+                return True
+            start = block.find(candidate, start + 1)
+    return False
+
+
 def _canonical_insertion(value: str) -> str:
-    """Normalize unified-diff and editable-target newline representation."""
-    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
-    return normalized[:-1] if normalized.endswith("\n") else normalized
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _replaced_paths(content: bytes) -> set[str]:

@@ -342,7 +342,7 @@ def evaluate_path_predicates(
         result_index = len(results)
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
         if distinct_text_matches and kind == "TEXT_PRESENT":
-            distinct_candidates.append((result_index, expected, positions))
+            distinct_candidates.append((result_index, expected_text, positions))
     if distinct_candidates:
         selected_positions = _independent_text_positions(distinct_candidates)
         for result_index, _value, positions in distinct_candidates:
@@ -388,8 +388,7 @@ def evaluate_path_predicates(
 
 
 def _canonical_insertion(value: str) -> str:
-    normalized = value.replace("\r\n", "\n").replace("\r", "\n")
-    return normalized[:-1] if normalized.endswith("\n") else normalized
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _independent_text_positions(

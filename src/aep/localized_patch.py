@@ -33,7 +33,8 @@ class LocalizedPatch:
 def apply_localized_operations(
     *, path: str, preimage: str, preimage_sha256: str,
     repository_revision: str, operations: Sequence[Mapping[str, Any]],
-    region_id: str | None = None, allow_rewrite: bool = False,
+    region_id: str | None = None, region: Mapping[str, Any] | None = None,
+    allow_rewrite: bool = False,
 ) -> LocalizedPatch:
     """Apply ordered operations to *preimage* without mutating a workspace.
 
@@ -43,7 +44,7 @@ def apply_localized_operations(
     of implementation details such as incremental string offsets.
     """
     _safe_path(path)
-    if not isinstance(preimage, str) or "\x00" in preimage:
+    if not isinstance(preimage, str) or "\x00" in preimage or not _utf8(preimage):
         raise LocalizedPatchError("NON_UTF8_TARGET", "target must be UTF-8 text without NUL")
     if sha256(preimage.encode("utf-8")).hexdigest() != preimage_sha256:
         raise LocalizedPatchError("STALE_PREIMAGE", "preimage digest does not bind target content")
@@ -70,7 +71,7 @@ def apply_localized_operations(
         if region_id is not None and declared_region != region_id:
             raise LocalizedPatchError("REGION_MISMATCH", "operation is not bound to the planned region")
         content = raw.get("content", "")
-        if not isinstance(content, str) or "\x00" in content:
+        if not isinstance(content, str) or "\x00" in content or not _utf8(content):
             raise LocalizedPatchError("UNSAFE_CONTENT", "operation content must be UTF-8 text without NUL")
         if operation == "rewrite":
             if not allow_rewrite or rewrite_seen or len(operations) != 1:
@@ -80,12 +81,12 @@ def apply_localized_operations(
             continue
         anchor = raw.get("anchor")
         expected = raw.get("expectedMatchCount")
-        if not isinstance(anchor, str) or not anchor:
+        if not isinstance(anchor, str) or not anchor or not _utf8(anchor):
             raise LocalizedPatchError("MISSING_ANCHOR", "localized operation requires a non-empty anchor")
         if not isinstance(expected, int) or isinstance(expected, bool) or expected < 1:
             raise LocalizedPatchError("INVALID_MATCH_COUNT", "expectedMatchCount must be a positive integer")
         positions = _positions(preimage, anchor)
-        if len(positions) != expected:
+        if expected != 1 or len(positions) != 1:
             code = "ANCHOR_MISSING" if not positions else "ANCHOR_AMBIGUOUS"
             raise LocalizedPatchError(code, f"anchor matched {len(positions)} times; expected {expected}")
         start = positions[0]
@@ -99,12 +100,19 @@ def apply_localized_operations(
         elif operation == "delete":
             if content:
                 raise LocalizedPatchError("INVALID_OPERATION", "delete must not include content")
+        if region is not None:
+            region_start, region_end = _region_bounds(preimage, region)
+            if start < region_start or end > region_end:
+                raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
         edits.append((start, end, content, {"ordinal": ordinal, "operation": operation, "span": [start, end], "anchorSha256": sha256(anchor.encode()).hexdigest()}))
 
-    prior_end = -1
+    prior_start = prior_end = -1
     for start, end, _content, _record in edits:
+        if start < prior_start:
+            raise LocalizedPatchError("OUT_OF_ORDER_EDITS", "operation spans are not source ordered")
         if start < prior_end:
-            raise LocalizedPatchError("OVERLAPPING_EDITS", "operation spans overlap or are out of order")
+            raise LocalizedPatchError("OVERLAPPING_EDITS", "operation spans overlap")
+        prior_start = start
         prior_end = max(prior_end, end)
     output: list[str] = []
     cursor = 0
@@ -147,6 +155,29 @@ def _positions(content: str, needle: str) -> list[int]:
 def _safe_path(value: str) -> None:
     if not isinstance(value, str) or not value or "\\" in value or "\x00" in value:
         raise LocalizedPatchError("UNSAFE_PATH", "operation path is unsafe")
+
+
+def _utf8(value: str) -> bool:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _region_bounds(content: str, region: Mapping[str, Any]) -> tuple[int, int]:
+    """Resolve the supported trusted Markdown section boundary locally."""
+    if region.get("kind") != "MARKDOWN_SECTION" or not isinstance(region.get("name"), str):
+        raise LocalizedPatchError("REGION_MISMATCH", "trusted region is unsupported")
+    import re
+    heading = re.compile(r"(?m)^#{1,6}[ \t]+" + re.escape(region["name"]) + r"[ \t]*$")
+    matches = list(heading.finditer(content))
+    if len(matches) != 1:
+        raise LocalizedPatchError("REGION_MISMATCH", "trusted region does not resolve uniquely")
+    start = matches[0].start()
+    level = len(matches[0].group().split()[0])
+    next_heading = re.compile(rf"(?m)^#{{1,{level}}}[ \t]+.*$").search(content, matches[0].end())
+    return start, next_heading.start() if next_heading else len(content)
     path = PurePosixPath(value)
     if path.is_absolute() or ".." in path.parts or str(path) != value or path.parts[0].casefold() == ".git":
         raise LocalizedPatchError("UNSAFE_PATH", "operation path is unsafe")

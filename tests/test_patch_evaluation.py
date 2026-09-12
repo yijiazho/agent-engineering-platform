@@ -347,6 +347,13 @@ def test_multiline_insertions_normalize_line_endings_and_final_newline(repositor
     assert result["outcome"] == "PASS"
 
 
+def test_required_insertion_newline_does_not_match_a_prefix() -> None:
+    from aep.patch_evaluation import _insertion_matches
+
+    assert _insertion_matches("admin=false\n", "admin=false")
+    assert not _insertion_matches("admin=false\n", "admin=falsehood")
+
+
 def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:
     from aep.patch_evaluation import _added_blocks_by_path
 

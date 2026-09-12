@@ -62,6 +62,36 @@ def test_overlapping_and_out_of_order_operations_fail_before_output() -> None:
         apply(preimage, [first, second])
 
 
+def test_out_of_order_and_non_utf8_operations_have_stable_diagnostics() -> None:
+    preimage = "## Repository Layout\nfirst\nsecond\n"
+    later = operation(preimage, operation="replace", anchor="second", content="two")
+    earlier = operation(preimage, operation="replace", anchor="first", content="one")
+    with pytest.raises(LocalizedPatchError, match="OUT_OF_ORDER_EDITS"):
+        apply(preimage, [later, earlier])
+    invalid = operation(preimage, content="\ud800")
+    with pytest.raises(LocalizedPatchError, match="UNSAFE_CONTENT"):
+        apply(preimage, [invalid])
+
+
+def test_localized_delete_and_region_boundary_are_enforced() -> None:
+    preimage = "# Repository Layout\ninside\n# Elsewhere\noutside\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    delete = operation(preimage, operation="delete", anchor="inside", content="", expectedMatchCount=1)
+    result = apply_localized_operations(
+        path="README.md", preimage=preimage, preimage_sha256=digest,
+        repository_revision=REVISION, operations=[delete], region_id="repository-layout",
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+    assert "inside" not in result.content
+    outside = operation(preimage, operation="delete", anchor="outside", content="", expectedMatchCount=1)
+    with pytest.raises(LocalizedPatchError, match="OUT_OF_REGION"):
+        apply_localized_operations(
+            path="README.md", preimage=preimage, preimage_sha256=digest,
+            repository_revision=REVISION, operations=[outside], region_id="repository-layout",
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+
+
 def test_explicit_rewrite_is_never_inferred_from_size() -> None:
     preimage = "## Repository Layout\n" + "old\n" * 100
     item = operation(preimage, operation="rewrite", content="new\n")
@@ -82,12 +112,12 @@ def test_line_endings_and_repeated_application_are_deterministic() -> None:
 def test_generate_patch_materializes_localized_operations_before_write() -> None:
     preimage = "## Repository Layout\nbody\n"
     digest = sha256(preimage.encode()).hexdigest()
-    operations = [operation(preimage)]
+    operations = [operation(preimage, regionId="Repository Layout")]
     changes = _validated_changes(
         {"changes": operations}, ("README.md",),
         ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION,
-        regions_by_path={"README.md": {"name": "repository-layout"}},
+        regions_by_path={"README.md": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"}},
     )
     assert changes[0]["operation"] == "write"
     assert changes[0]["content"] == "## Repository Layout\nsrc/    runtime\ntests/  tests\nbody\n"

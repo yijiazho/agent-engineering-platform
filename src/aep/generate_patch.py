@@ -462,6 +462,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 + sha256(patch_text.encode("utf-8")).hexdigest(),
                 "evaluationResultIds": ([reconciliation_id] if reconciliation_id else []) + [evaluation_id],
                 "changedFiles": changed_files,
+                "localizedPreservation": [
+                    json.loads(item["localizedPreservation"])
+                    for item in changes if "localizedPreservation" in item
+                ],
             }
             evaluation_result = evaluate_patch(
                 store=self._runtime_store,
@@ -1117,7 +1121,10 @@ def _validated_changes(
     # write/delete decoder for persisted pre-AEP-066 invocation evidence and
     # direct regression fixtures; it is not reachable through the new schema.
     localized = any(
-        isinstance(value, Mapping) and value.get("operation") in {"insert", "replace", "rewrite"}
+        isinstance(value, Mapping) and (
+            value.get("operation") in {"insert", "replace", "rewrite"}
+            or (value.get("operation") == "delete" and "anchor" in value)
+        )
         for value in values
     )
     if localized:
@@ -1146,8 +1153,10 @@ def _validated_changes(
                 applied = apply_localized_operations(
                     path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
                     repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
-                    operations=operations, region_id=region_id,
-                    allow_rewrite=path in rewrite_authorized_paths,
+                    operations=operations, region_id=region_id, region=region,
+                    # AEP-059's exact-artifact approval does not exist yet.
+                    # Keep rewrites rejected rather than allowing publication.
+                    allow_rewrite=False,
                 )
             except LocalizedPatchError as error:
                 raise GeneratePatchContractError(str(error)) from error
