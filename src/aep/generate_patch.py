@@ -290,7 +290,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
                         regions_by_path=_regions_by_path(plan),
-                        evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
+                        evaluator_ref=_ref_record(reconciliation_evaluation.ref),
                         proposed_contents_by_path={
                             item["path"]: item["content"] for item in changes
                             if item["operation"] == "write"
@@ -1168,8 +1168,9 @@ def _validated_changes(
                 if item.get("path") == path
             }
             if expected_insertions and (
-                len(operations) != 1 or operations[0].get("operation") != "insert"
-                or operations[0].get("content") not in expected_insertions
+                len(operations) != len(expected_insertions)
+                or any(item.get("operation") != "insert" for item in operations)
+                or {item.get("content") for item in operations} != expected_insertions
             ):
                 raise GeneratePatchContractError(
                     "localized operation is not bound to an immutable required insertion"

@@ -151,3 +151,18 @@ def test_generate_patch_rejects_replace_without_plan_operation_identity() -> Non
             ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
             repository_revision=REVISION,
         )
+
+
+def test_generate_patch_accepts_each_required_insertion_for_one_path() -> None:
+    preimage = "first\nsecond\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    changes = _validated_changes(
+        {"changes": [
+            {**operation(preimage, path="README.md", anchor="first\n", content="one\n"), "regionId": "r"},
+            {**operation(preimage, path="README.md", anchor="second\n", content="two\n"), "regionId": "r"},
+        ]},
+        ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION,
+        required_insertions=({"path": "README.md", "value": "one\n"}, {"path": "README.md", "value": "two\n"}),
+    )
+    assert changes[0]["content"] == "first\none\nsecond\ntwo\n"
