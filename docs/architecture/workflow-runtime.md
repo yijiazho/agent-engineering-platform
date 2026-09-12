@@ -428,6 +428,18 @@ changed-file list on the immutable `PATCH` GeneratedArtifact. Patch Evaluation
 runs against a separate clean checkout pinned to the same repository revision;
 the patch is published only after applicability and path-boundary checks pass.
 
+For this Resource generation, the Code Generator supplies preimage-bound
+`insert` operations rather than a reconstructed file. Every
+operation names its normalized path, immutable revision, preimage digest,
+region identity, exact anchor, and expected match count. The control plane
+materializes the postimage before one compare-and-write request; missing,
+ambiguous, stale, overlapping, out-of-order, non-UTF-8, or unauthorized edits
+fail before filesystem mutation. It records content-addressed unchanged-region
+statistics with the operation evidence. New files use their explicit absent
+preimage. Replace, partial delete, and existing-file rewrite remain fail-closed
+until immutable per-operation plan evidence and AEP-059 artifact approval are
+available; replacement size never creates authority.
+
 The `RunValidation` handler requires that successful patch evidence at the same
 repository revision and performs no Agent or model invocation. Its versioned
 Task configuration identifies the immutable Docker Tool, digest-pinned image,

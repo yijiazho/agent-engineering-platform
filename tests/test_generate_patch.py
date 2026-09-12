@@ -324,7 +324,7 @@ def test_empty_diff_is_an_evaluation_failure_without_patch_artifact(
     assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
-def test_patch_evaluation_git_denial_is_persisted_and_blocks_artifact(
+def test_patch_evaluation_git_denial_retains_non_publishable_artifact(
     tmp_path: Path,
 ) -> None:
     store, handler, task, artifact_store, _workspace, _adapter = setup_handler(
@@ -345,7 +345,13 @@ def test_patch_evaluation_git_denial_is_persisted_and_blocks_artifact(
     assert check["resultStatus"] == "DENIED"
     assert check["failure"]["class"] == "POLICY"
     validate_runtime("ToolInvocation", check)
-    assert artifact_store.list_by_task_execution(TASK_EXECUTION_ID) == ()
+    artifacts = artifact_store.list_by_task_execution(TASK_EXECUTION_ID)
+    assert len(artifacts) == 1
+    artifact = artifacts[0]
+    assert artifact["retentionState"] == "REJECTED_NON_PUBLISHABLE"
+    assert artifact["publicationEligibility"] == "REJECT"
+    evaluation = store.get(execution["evaluationResultIds"][-1])
+    assert evaluation["target"] == {"type": "GeneratedArtifact", "id": artifact["id"]}
 
 
 def test_filesystem_tool_failure_is_classified_and_persisted(tmp_path: Path) -> None:

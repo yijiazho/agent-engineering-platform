@@ -278,6 +278,12 @@ deletion-heavy diff while remaining visible in EvaluationResult evidence.
 Unsupported semantic acceptance criteria are recorded explicitly and prevent
 the change-compliance result from passing.
 
+Required multiline insertions are compared as logical text: LF and CRLF, and
+the unified diff's omitted terminal newline, normalize at this one evidence
+boundary. This does not permit altered content; it prevents a representation
+difference between reconciliation and Patch Evaluation from creating a false
+missing-insertion result.
+
 For patch artifacts, deterministic evaluation first verifies the
 GeneratedArtifact content address and immutable repository revision. It then
 uses the repository-bound Git adapter's non-mutating applicability check and

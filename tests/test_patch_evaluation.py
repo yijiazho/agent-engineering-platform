@@ -341,6 +341,20 @@ def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
     assert added["tracked.txt"] == ("first line\nsecond line",)
 
 
+@pytest.mark.parametrize("required", ["updated\n", "updated\r\n"])
+def test_multiline_insertions_normalize_line_endings_and_final_newline(repository, required) -> None:
+    _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": required},))
+    assert result["outcome"] == "PASS"
+
+
+def test_required_insertion_newline_does_not_match_a_prefix() -> None:
+    from aep.patch_evaluation import _insertion_matches
+
+    assert _insertion_matches("admin=false\n", "admin=false")
+    assert not _insertion_matches("admin=false\n", "admin=falsehood")
+    assert not _insertion_matches("admin=false\n", "notadmin=false")
+
+
 def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:
     from aep.patch_evaluation import _added_blocks_by_path
 

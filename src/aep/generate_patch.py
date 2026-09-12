@@ -26,6 +26,7 @@ from aep.context_builder import ContextBuilderError
 from aep.filesystem_tool import FilesystemTool
 from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
+from aep.localized_patch import LocalizedPatchError, apply_localized_operations
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
 from aep.planning_evidence import (
     PlanningEvidenceError,
@@ -267,7 +268,13 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     str(failure.get("message") or "Code Generator invocation failed"),
                 )
 
-            changes = _validated_changes(invocation.get("output"), allowed_paths, editable_targets)
+            changes = _validated_changes(
+                invocation.get("output"), allowed_paths, editable_targets,
+                repository_revision=str(workflow["repositoryRevision"]),
+                regions_by_path=_regions_by_path(plan),
+                rewrite_authorized_paths=_rewrite_authorized_paths(plan, allowed_paths),
+                required_insertions=required_insertions,
+            )
             reconciliation = None
             reconciliation_id = None
             if "authorizedPaths" in plan:
@@ -283,7 +290,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
                         regions_by_path=_regions_by_path(plan),
-                        evaluator_ref={"kind": "Evaluation", "name": "plan-reconciliation", "version": "1.0.0"},
+                        evaluator_ref=_ref_record(reconciliation_evaluation.ref),
                         proposed_contents_by_path={
                             item["path"]: item["content"] for item in changes
                             if item["operation"] == "write"
@@ -456,6 +463,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 + sha256(patch_text.encode("utf-8")).hexdigest(),
                 "evaluationResultIds": ([reconciliation_id] if reconciliation_id else []) + [evaluation_id],
                 "changedFiles": changed_files,
+                "localizedPreservation": [
+                    json.loads(item["localizedPreservation"])
+                    for item in changes if "localizedPreservation" in item
+                ],
             }
             evaluation_result = evaluate_patch(
                 store=self._runtime_store,
@@ -504,6 +515,11 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             self._attach(task_execution["id"], {"evaluationResultIds": [evaluation_id]})
             if evaluation_result["outcome"] != "PASS":
                 details = "; ".join(evaluation_result.get("logs", ()))
+                rejected_metadata = dict(metadata)
+                rejected_metadata["retentionState"] = "REJECTED_NON_PUBLISHABLE"
+                rejected_metadata["publicationEligibility"] = "REJECT"
+                rejected = self._artifact_store.publish(rejected_metadata, patch_text)
+                self._attach(task_execution["id"], {"generatedArtifactIds": [rejected["id"]]})
                 self._rollback_applied_changes(task_execution=task_execution, invocation_id=invocation_id, tool_ref=tools["filesystem"]["ref"], targets=targets_by_path, applied=applied)
                 return TaskExecutionResult.failure(
                     FailureClass.EVALUATION,
@@ -983,6 +999,27 @@ def _deletion_authorized_paths(
     return tuple(sorted(paths, key=lambda value: (value.casefold(), value)))
 
 
+def _rewrite_authorized_paths(
+    plan: JsonMapping, allowed_paths: Sequence[str]
+) -> tuple[str, ...]:
+    """Full-file replacement is a plan permission, never a size heuristic."""
+    values = plan.get("rewriteAuthorizedPaths", ())
+    if values is None:
+        return ()
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.rewriteAuthorizedPaths must be an array"
+        )
+    paths = tuple(values)
+    if len(set(paths)) != len(paths) or any(
+        not isinstance(path, str) or path not in allowed_paths for path in paths
+    ):
+        raise GeneratePatchContractError(
+            "IMPLEMENTATION_PLAN.rewriteAuthorizedPaths must be unique allowed paths"
+        )
+    return paths
+
+
 def _required_insertions(
     plan: JsonMapping, allowed_paths: Sequence[str]
 ) -> tuple[dict[str, str], ...]:
@@ -1077,12 +1114,90 @@ def _validated_changes(
     output: object,
     allowed_paths: Sequence[str],
     editable_targets: Sequence[JsonMapping],
+    *, repository_revision: str | None = None,
+    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    rewrite_authorized_paths: Sequence[str] = (),
+    required_insertions: Sequence[Mapping[str, str]] = (),
 ) -> tuple[dict[str, str], ...]:
     if not isinstance(output, Mapping):
         raise GeneratePatchContractError("Code Generator output must be an object")
     values = output.get("changes")
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
         raise GeneratePatchContractError("Code Generator output must contain changes")
+    # Current Resources only permit the localized form.  Keep the historic
+    # write/delete decoder for persisted pre-AEP-066 invocation evidence and
+    # direct regression fixtures; it is not reachable through the new schema.
+    localized = any(
+        isinstance(value, Mapping) and (
+            value.get("operation") in {"insert", "replace", "rewrite"}
+            or (value.get("operation") == "delete" and "anchor" in value)
+        )
+        for value in values
+    )
+    if localized:
+        by_path: dict[str, list[Mapping[str, Any]]] = {}
+        for value in values:
+            if not isinstance(value, Mapping):
+                raise GeneratePatchContractError("each Code Generator change must be an object")
+            path = value.get("path")
+            if not isinstance(path, str) or not _safe_path(path):
+                raise GeneratePatchContractError("Code Generator change path is unsafe")
+            if not any(path == rule or path.startswith(f"{rule}/") for rule in allowed_paths):
+                raise DisallowedPatchPathError(
+                    f"Code Generator path {path!r} is outside IMPLEMENTATION_PLAN.intendedFiles"
+                )
+            by_path.setdefault(path, []).append(value)
+        changes: list[dict[str, str]] = []
+        targets = {str(item.get("path")): item for item in editable_targets}
+        for path, operations in by_path.items():
+            target = targets.get(path)
+            content = target.get("content") if isinstance(target, Mapping) else None
+            if target is None or not isinstance(content, str):
+                raise GeneratePatchContractError(f"localized operation target {path!r} is unavailable or non-UTF-8")
+            region = (regions_by_path or {}).get(path)
+            region_id = region.get("name") if isinstance(region, Mapping) else None
+            # The current plan format binds postconditions, not per-operation
+            # replace/delete identities.  Do not let an otherwise valid
+            # insertion smuggle an unrelated mutation into the same region.
+            whole_file_delete_request = (
+                len(operations) == 1 and operations[0].get("operation") == "delete"
+                and operations[0].get("anchor") == content
+            )
+            expected_insertions = {
+                item["value"] for item in required_insertions
+                if item.get("path") == path
+            }
+            if expected_insertions and (
+                len(operations) != len(expected_insertions)
+                or any(item.get("operation") != "insert" for item in operations)
+                or {item.get("content") for item in operations} != expected_insertions
+            ):
+                raise GeneratePatchContractError(
+                    "localized operation is not bound to an immutable required insertion"
+                )
+            if any(item.get("operation") == "replace" for item in operations) or (
+                any(item.get("operation") == "delete" for item in operations)
+                and not whole_file_delete_request
+            ):
+                raise GeneratePatchContractError(
+                    "localized replace/delete requires immutable plan-operation evidence"
+                )
+            try:
+                applied = apply_localized_operations(
+                    path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
+                    repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
+                    operations=operations, region_id=region_id, region=region,
+                    # AEP-059's exact-artifact approval does not exist yet.
+                    # Keep rewrites rejected rather than allowing publication.
+                    allow_rewrite=False, target_exists=bool(target.get("exists", True)),
+                )
+            except LocalizedPatchError as error:
+                raise GeneratePatchContractError(str(error)) from error
+            whole_file_delete = whole_file_delete_request
+            changes.append({"path": path, "content": applied.content,
+                            "operation": "delete" if whole_file_delete else "write",
+                            "localizedPreservation": json.dumps(applied.preservation, sort_keys=True)})
+        return tuple(changes)
     changes: list[dict[str, str]] = []
     seen: set[str] = set()
     for value in values:

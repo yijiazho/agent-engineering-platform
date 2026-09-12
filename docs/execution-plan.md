@@ -180,7 +180,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 52 | [AEP-053: Bind Planning Decisions To Exact Repository Evidence](tasks/AEP-053-bind-planning-decisions-to-exact-repository-evidence.md) | In Progress |
 | 53 | [AEP-054: Derive Planning Evidence Read Budgets](tasks/AEP-054-derive-planning-evidence-read-budgets.md) | In Progress |
 | 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | In Progress |
-| 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | Not Started |
+| 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | In Progress |
 | 56 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 | 57 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
 | 58 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |

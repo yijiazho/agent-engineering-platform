@@ -326,7 +326,13 @@ def evaluate_path_predicates(
         elif kind in {"TEXT_PRESENT", "TEXT_ABSENT"}:
             if not isinstance(expected, str) or not expected:
                 raise PlanningEvidenceError("text predicates require a non-empty value")
-            positions = [match.start() for match in re.finditer(re.escape(expected), scoped_content)]
+            # The same logical multiline insertion can be represented by a
+            # CRLF checkout or by unified-diff added records without the final
+            # newline.  Preserve exact characters otherwise, but compare this
+            # transport boundary consistently with Patch Evaluation.
+            expected_text = _canonical_insertion(expected)
+            scoped_text = _canonical_insertion(scoped_content)
+            positions = _logical_text_positions(scoped_text, expected_text)
             actual = bool(positions)
             satisfied = actual if kind == "TEXT_PRESENT" else not actual
             selected = {"kind": "TEXT_MATCH", "occurrences": len(positions)}
@@ -336,7 +342,7 @@ def evaluate_path_predicates(
         result_index = len(results)
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
         if distinct_text_matches and kind == "TEXT_PRESENT":
-            distinct_candidates.append((result_index, expected, positions))
+            distinct_candidates.append((result_index, expected_text, positions))
     if distinct_candidates:
         selected_positions = _independent_text_positions(distinct_candidates)
         for result_index, _value, positions in distinct_candidates:
@@ -379,6 +385,30 @@ def evaluate_path_predicates(
         json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()[:20]
     return record
+
+
+def _canonical_insertion(value: str) -> str:
+    return value.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _logical_text_positions(content: str, expected: str) -> list[int]:
+    """Match diff's optional terminal newline without accepting a prefix."""
+    if not expected.endswith("\n"):
+        return [match.start() for match in re.finditer(re.escape(expected), content)]
+    candidates = (expected, expected[:-1])
+    positions: list[int] = []
+    for candidate in candidates:
+        start = content.find(candidate)
+        while start >= 0:
+            end = start + len(candidate)
+            if (start == 0 or content[start - 1] == "\n") and (
+                candidate.endswith("\n") or end == len(content) or content[end] == "\n"
+            ):
+                positions.append(start)
+            start = content.find(candidate, start + 1)
+        if positions:
+            return positions
+    return positions
 
 
 def _independent_text_positions(
