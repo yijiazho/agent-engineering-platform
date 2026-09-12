@@ -34,7 +34,7 @@ def apply_localized_operations(
     *, path: str, preimage: str, preimage_sha256: str,
     repository_revision: str, operations: Sequence[Mapping[str, Any]],
     region_id: str | None = None, region: Mapping[str, Any] | None = None,
-    allow_rewrite: bool = False,
+    allow_rewrite: bool = False, target_exists: bool = True,
 ) -> LocalizedPatch:
     """Apply ordered operations to *preimage* without mutating a workspace.
 
@@ -76,7 +76,7 @@ def apply_localized_operations(
         if operation == "rewrite":
             # An empty immutable preimage is the distinct, bounded file-create
             # case.  Existing-file rewrite remains unavailable until AEP-059.
-            if (not allow_rewrite and preimage) or rewrite_seen or len(operations) != 1:
+            if (not allow_rewrite and target_exists) or rewrite_seen or len(operations) != 1:
                 raise LocalizedPatchError("REWRITE_NOT_AUTHORIZED", "full-file rewrite requires one explicit authorized operation")
             rewrite_seen = True
             edits.append((0, len(preimage), content, {"ordinal": ordinal, "operation": operation, "span": [0, len(preimage)]}))
@@ -156,7 +156,7 @@ def _positions(content: str, needle: str) -> list[int]:
         if index < 0:
             return positions
         positions.append(index)
-        offset = index + len(needle)
+        offset = index + 1
 
 
 def _safe_path(value: str) -> None:

@@ -99,8 +99,16 @@ def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
         repository_revision=REVISION,
         operations=[{"operation": "rewrite", "path": "new.md", "repositoryRevision": REVISION,
                      "preimageSha256": sha256(b"").hexdigest(), "regionId": "new-file", "content": "created\n"}],
+        target_exists=False,
     )
     assert result.content == "created\n"
+
+
+def test_overlapping_anchor_occurrences_are_ambiguous() -> None:
+    preimage = "aaa"
+    item = operation(preimage, anchor="aa", content="x")
+    with pytest.raises(LocalizedPatchError, match="ANCHOR_AMBIGUOUS"):
+        apply(preimage, [item])
 
 
 def test_explicit_rewrite_is_never_inferred_from_size() -> None:

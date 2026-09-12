@@ -1170,7 +1170,7 @@ def _validated_changes(
                     operations=operations, region_id=region_id, region=region,
                     # AEP-059's exact-artifact approval does not exist yet.
                     # Keep rewrites rejected rather than allowing publication.
-                    allow_rewrite=False,
+                    allow_rewrite=False, target_exists=bool(target.get("exists", True)),
                 )
             except LocalizedPatchError as error:
                 raise GeneratePatchContractError(str(error)) from error
