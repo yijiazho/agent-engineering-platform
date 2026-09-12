@@ -132,3 +132,14 @@ def test_generate_patch_materializes_localized_operations_before_write() -> None
     )
     assert changes[0]["operation"] == "write"
     assert changes[0]["content"] == "## Repository Layout\nsrc/    runtime\ntests/  tests\nbody\n"
+
+
+def test_generate_patch_rejects_replace_without_plan_operation_identity() -> None:
+    preimage = "## Repository Layout\nbody\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    with pytest.raises(Exception, match="plan-operation evidence"):
+        _validated_changes(
+            {"changes": [operation(preimage, operation="replace", anchor="body", content="other")]},
+            ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+            repository_revision=REVISION,
+        )

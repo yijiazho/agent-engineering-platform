@@ -1149,6 +1149,20 @@ def _validated_changes(
                 raise GeneratePatchContractError(f"localized operation target {path!r} is unavailable or non-UTF-8")
             region = (regions_by_path or {}).get(path)
             region_id = region.get("name") if isinstance(region, Mapping) else None
+            # The current plan format binds postconditions, not per-operation
+            # replace/delete identities.  Do not let an otherwise valid
+            # insertion smuggle an unrelated mutation into the same region.
+            whole_file_delete_request = (
+                len(operations) == 1 and operations[0].get("operation") == "delete"
+                and operations[0].get("anchor") == content
+            )
+            if any(item.get("operation") == "replace" for item in operations) or (
+                any(item.get("operation") == "delete" for item in operations)
+                and not whole_file_delete_request
+            ):
+                raise GeneratePatchContractError(
+                    "localized replace/delete requires immutable plan-operation evidence"
+                )
             try:
                 applied = apply_localized_operations(
                     path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
@@ -1160,10 +1174,7 @@ def _validated_changes(
                 )
             except LocalizedPatchError as error:
                 raise GeneratePatchContractError(str(error)) from error
-            whole_file_delete = (
-                len(operations) == 1 and operations[0].get("operation") == "delete"
-                and operations[0].get("anchor") == content
-            )
+            whole_file_delete = whole_file_delete_request
             changes.append({"path": path, "content": applied.content,
                             "operation": "delete" if whole_file_delete else "write",
                             "localizedPreservation": json.dumps(applied.preservation, sort_keys=True)})
