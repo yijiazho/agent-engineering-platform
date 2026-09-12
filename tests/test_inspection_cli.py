@@ -46,6 +46,7 @@ def test_execution_json_summary_and_context_redaction(tmp_path, capsys):
 
 def test_execution_list_discovers_ids_in_deterministic_order_and_filters_status(tmp_path, capsys):
     records = _records()
+    records[0]["failure"] = {"message": "private rejected output"}
     later = dict(records[0])
     later.update({"id": "wf-2", "status": "FAILED", "createdAt": "2026-01-02T00:00:00Z"})
     records.append(later)
@@ -53,6 +54,7 @@ def test_execution_list_discovers_ids_in_deterministic_order_and_filters_status(
     assert main(["--state-file", str(state), "--output", "json", "executions", "list"]) == 0
     listed = json.loads(capsys.readouterr().out)["workflowExecutions"]
     assert [item["id"] for item in listed] == ["wf-1", "wf-2"]
+    assert listed[0]["failure"]["message"] == "[REDACTED]"
     assert main(["--state-file", str(state), "--output", "json", "executions", "list", "--status", "FAILED"]) == 0
     assert [item["id"] for item in json.loads(capsys.readouterr().out)["workflowExecutions"]] == ["wf-2"]
 
@@ -185,6 +187,29 @@ def test_execution_rejects_broken_nested_runtime_reference(tmp_path, capsys):
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
 
 
+def test_execution_rejects_agent_invocation_bindings_that_differ_from_task(tmp_path, capsys):
+    records = _records()
+    records[1].update({
+        "agentInvocationIds": ["invocation-1"], "contextPackageId": "ctx-1",
+        "resolvedAgentId": "resolved-agent-1",
+    })
+    for identifier in ("resolved-agent-1", "resolved-agent-2"):
+        records.append({
+            "id": identifier, "kind": "ResolvedAgent", "traceId": "trace-1",
+            "workflowExecutionId": "wf-1", "taskExecutionId": "task-1",
+            "createdAt": "2026-01-01T00:00:00Z",
+        })
+    records.append({
+        "id": "invocation-1", "kind": "AgentInvocation", "traceId": "trace-1",
+        "workflowExecutionId": "wf-1", "taskExecutionId": "task-1",
+        "resolvedAgentId": "resolved-agent-2", "contextPackageId": "ctx-1",
+        "modelInvocationIds": [], "toolInvocationIds": [], "createdAt": "2026-01-01T00:00:00Z",
+    })
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
+
+
 def test_execution_allows_cross_task_publication_evidence(tmp_path, capsys):
     records = _records()
     records[1]["policyDecisionIds"] = ["policy-1"]
@@ -225,11 +250,19 @@ def test_human_execution_view_includes_evidence_ids_and_synthetic_edges(tmp_path
     assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 0
     human = capsys.readouterr().out
     assert "contextPackageId=ctx-1" in human and "policyDecisionIds=policy-1" in human
-    assert "depends on validate:1.0.0" in human
+    assert "Task/publish:1.0.0" in human and "depends on Task/validate:1.0.0" in human
     assert main(["--state-file", str(state), "--output", "json", "executions", "show", "wf-1"]) == 0
     tasks = json.loads(capsys.readouterr().out)["tasks"]
     publish = next(item for item in tasks if item["taskRef"]["name"] == "publish")
     assert publish["dependencyTaskRefs"] == [records[1]["taskRef"]]
+
+
+def test_human_execution_view_includes_retry_attempt(tmp_path, capsys):
+    records = _records()
+    records[1]["attempt"] = 2
+    state = _checkpoint(tmp_path, records)
+    assert main(["--state-file", str(state), "executions", "show", "wf-1"]) == 0
+    assert "Task/validate:1.0.0 attempt 2" in capsys.readouterr().out
 
 
 def test_runtime_checkpoint_fixture_is_schema_valid():

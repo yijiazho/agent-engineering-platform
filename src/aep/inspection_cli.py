@@ -109,7 +109,7 @@ class ExecutionInspector:
             if value.get("kind") == "WorkflowExecution"
             and (status is None or value.get("status") == status)
         ]
-        return {"workflowExecutions": [_summary(value) for value in _ordered(executions)]}
+        return {"workflowExecutions": [self._safe(_summary(value), unsafe=False) for value in _ordered(executions)]}
 
     def execution(self, execution_id: str, *, unsafe: bool = False) -> dict[str, Any]:
         workflow = self._get(execution_id)
@@ -210,7 +210,20 @@ class ExecutionInspector:
                 referenced = self._get(object_id)
                 owner_task_id = None if kind == "TaskExecution" else str(task["id"])
                 self._validate_owner(referenced, workflow, task_id=owner_task_id)
+                if kind == "AgentInvocation":
+                    self._validate_agent_invocation_bindings(referenced, task, workflow)
                 self._validate_nested_references(referenced, workflow, owner_task_id, visited=set())
+
+    def _validate_agent_invocation_bindings(
+        self, invocation: Mapping[str, Any], task: Mapping[str, Any], workflow: Mapping[str, Any]
+    ) -> None:
+        for field, kind in (("resolvedAgentId", "ResolvedAgent"), ("contextPackageId", "ContextPackage")):
+            reference_id = invocation.get(field)
+            self._reference(reference_id, kind)
+            referenced = self._get(reference_id)
+            self._validate_owner(referenced, workflow, task_id=str(task["id"]))
+            if task.get(field) != reference_id:
+                raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "AgentInvocation binding differs from its task")
 
     def _validate_nested_references(
         self,
@@ -268,7 +281,7 @@ class ExecutionInspector:
 
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = ("id", "kind", "status", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
+    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
     return {field: deepcopy(value[field]) for field in fields if field in value}
 
 
@@ -421,7 +434,9 @@ def _human(value: Any) -> str:
         for item in value.get("tasks", ()):
             dependencies = item.get("dependencyTaskExecutionIds") or _human_refs(item.get("dependencyTaskRefs"))
             evidence = _human_task_evidence(item)
-            line = f"- {item['id']}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(dependencies) or 'none'}"
+            task_ref = _human_ref(item.get("taskRef")) or "unknown task"
+            attempt = f" attempt {item['attempt']}" if "attempt" in item else ""
+            line = f"- {item['id']}  {task_ref}{attempt}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(dependencies) or 'none'}"
             lines.append(f"{line}\n  evidence: {evidence}" if evidence else line)
         return "\n".join(lines)
     if isinstance(value, Mapping) and "decisiveEvidence" in value:
@@ -436,9 +451,15 @@ def _human_refs(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [
-        f"{item.get('name', '')}:{item.get('version', '')}"
+        _human_ref(item)
         for item in value if isinstance(item, Mapping)
     ]
+
+
+def _human_ref(value: Any) -> str:
+    if not isinstance(value, Mapping):
+        return ""
+    return f"{value.get('kind', '')}/{value.get('name', '')}:{value.get('version', '')}"
 
 
 def _human_task_evidence(task: Mapping[str, Any]) -> str:
