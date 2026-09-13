@@ -445,10 +445,20 @@ class ContextBuilder:
                     and kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
                 )
                 applied_ceiling = trusted_ceiling
-                inspected_so_far = sum(
-                    int(item[1]["content"].get("inspection", {}).get("inspectedBytes", 0))
-                    for item in evidence_target if item[0] == "planning-evidence"
-                )
+                # A blob is read once even when it yields several scope
+                # records. Charge the inspection budget once per path/blob.
+                inspected_sources: dict[tuple[str, str], int] = {}
+                for kind, element in evidence_target:
+                    if kind != "planning-evidence":
+                        continue
+                    evidence = element.get("content", {})
+                    provenance = evidence.get("sourceProvenance", {})
+                    key = (str(evidence.get("path", "")), str(provenance.get("sourceId", "")))
+                    inspected_sources[key] = max(
+                        inspected_sources.get(key, 0),
+                        int(evidence.get("inspection", {}).get("inspectedBytes", 0)),
+                    )
+                inspected_so_far = sum(inspected_sources.values())
                 applied_ceiling = min(applied_ceiling, total_ceiling - inspected_so_far)
                 if applied_ceiling <= 0:
                     failure = RequiredContextError(

@@ -111,6 +111,15 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
     )
     assert "updated" in change[0]["content"]
     assert '"selectionId": "second"' in change[0]["localizedOperations"]
+    combined = _validated_changes(
+        {"changes": [
+            operation(preimage, anchor="one", content="first", regionId="first"),
+            operation(preimage, anchor="two", content="second", regionId="second"),
+        ]}, ("README.md",),
+        ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION, regions_by_path=regions,
+    )
+    assert "first" in combined[0]["content"] and "second" in combined[0]["content"]
     with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
         _validated_changes(
             {"changes": [operation(preimage, anchor="three", content="updated")]},

@@ -7,7 +7,9 @@ import json
 from typing import Any
 
 from aep.analyze_issue import AnalyzeIssueContractError, AnalyzeIssueTaskHandler
-from aep.planning_evidence import PlanningEvidenceError, validate_plan_path_contract
+from aep.planning_evidence import (
+    PlanningEvidenceError, scope_disposition, validate_plan_path_contract,
+)
 
 
 class BuildImplementationPlanContractError(AnalyzeIssueContractError):
@@ -68,15 +70,12 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             editable = [record for record in records
                         if record.get("authorizationRole") != "EVALUATOR_ONLY"]
             deciding = editable or records
-            states = [state for record in deciding for state in
-                      (item.get("result") for item in record.get("predicateResults", ()))]
-            postcondition_states = [item.get("result") for record in deciding
-                                    for item in record.get("postconditionResults", ())]
-            if "UNSUPPORTED" in states:
+            dispositions = [scope_disposition(record) for record in deciding]
+            if "UNSUPPORTED" in dispositions:
                 unsupported.append(path)
-            elif states and all(state == "MATCH" for state in states):
+            elif "CHANGE" in dispositions:
                 required.append(path)
-            elif postcondition_states and all(state == "MATCH" for state in postcondition_states):
+            elif dispositions and all(value == "NO_CHANGE" for value in dispositions):
                 no_change.append(path)
             else:
                 unsupported.append(path)
@@ -115,6 +114,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             evidence_paths = {item.get("path") for item in evidence}
             unsupported_evidence_paths = set()
             for item in evidence:
+                # Whole-file evaluator evidence is deliberately not planning
+                # authorization. Its evaluator owns the criterion result and
+                # it must not poison a scoped insertion on the same path.
+                if item.get("authorizationRole") == "EVALUATOR_ONLY":
+                    continue
                 states = [
                     result.get("result")
                     for result in item.get("predicateResults", ())

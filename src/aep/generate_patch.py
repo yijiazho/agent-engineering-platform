@@ -1154,13 +1154,20 @@ def _validated_dispositions(output: object, allowed_paths: Sequence[str], change
 
 
 def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
-    result = {}
+    """Retain every postcondition with its own trusted selector."""
+    result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
         if isinstance(item, Mapping) and isinstance(item.get("path"), str):
             values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
-                result[item["path"]] = tuple(value for value in values if isinstance(value, Mapping))
-    return result
+                inspection = item.get("inspection", {})
+                region = inspection.get("region") if isinstance(inspection, Mapping) else None
+                result.setdefault(item["path"], []).append({
+                    "predicates": tuple(value for value in values if isinstance(value, Mapping)),
+                    "region": region,
+                    "selectionId": item.get("selectionId"),
+                })
+    return {path: tuple(values) for path, values in result.items()}
 
 
 def _regions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
@@ -1289,21 +1296,59 @@ def _validated_changes(
                 raise RejectedPatchCandidateError(
                     "TRUSTED_REGION_MISSING: localized operation requires a server-derived region selector"
                 )
-            applied = None
-            failures: list[LocalizedPatchError] = []
-            for region in regions:
-                try:
-                    applied = apply_localized_operations(
-                        path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
-                        repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
-                        operations=operations, region=region, allow_rewrite=False,
-                        target_exists=bool(target.get("exists", True)),
-                    )
-                    break
-                except LocalizedPatchError as error:
-                    failures.append(error)
-            if applied is None:
-                error = failures[-1]
+            resolved: list[tuple[Mapping[str, Any], Any]] = []
+            for operation in operations:
+                matches = []
+                failures: list[LocalizedPatchError] = []
+                for region in regions:
+                    try:
+                        matches.append(apply_localized_operations(
+                            path=path, preimage=content,
+                            preimage_sha256=str(target.get("preimageSha256", "")),
+                            repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
+                            operations=[operation], region=region, allow_rewrite=False,
+                            target_exists=bool(target.get("exists", True)),
+                        ))
+                    except LocalizedPatchError as error:
+                        failures.append(error)
+                if len(matches) != 1:
+                    if len(matches) > 1:
+                        raise RejectedPatchCandidateError(
+                            "AMBIGUOUS_TRUSTED_REGION: operation resolves in multiple trusted regions"
+                        )
+                    error = failures[-1]
+                    if error.code in {
+                        "TRUSTED_REGION_MISSING", "TRUSTED_REGION_UNRESOLVED",
+                    }:
+                        raise GeneratePatchContractError(str(error)) from error
+                    raise RejectedPatchCandidateError(str(error)) from error
+                resolved.append((operation, matches[0]))
+            # Every operation was checked against exactly one immutable span.
+            # Reassemble them from the common preimage so anchors retain their
+            # original-preimage semantics across separately authorized scopes.
+            spans = [(patch.operations[0]["span"], operation, patch.operations[0])
+                     for operation, patch in resolved]
+            if [span for span, _operation, _record in spans] != sorted(span for span, _operation, _record in spans):
+                raise RejectedPatchCandidateError("OUT_OF_ORDER_EDITS: operation spans are not source ordered")
+            cursor = 0
+            output: list[str] = []
+            operation_records = []
+            for (start, end), operation, record in spans:
+                if start < cursor:
+                    raise RejectedPatchCandidateError("OVERLAPPING_EDITS: operation spans overlap")
+                output.extend((content[cursor:start], str(operation.get("content", ""))))
+                cursor = end
+                operation_records.append(record)
+            output.append(content[cursor:])
+            postimage = "".join(output)
+            applied_content = postimage
+            preservation = {
+                "preimageSha256": sha256(content.encode()).hexdigest(),
+                "postimageSha256": sha256(postimage.encode()).hexdigest(),
+                "authorizedSpans": [record["span"] for record in operation_records],
+            }
+            if not resolved:
+                error = LocalizedPatchError("MISSING_OPERATION", "localized operations are required")
                 if error.code in {
                     "TRUSTED_REGION_MISSING",
                     "TRUSTED_REGION_UNRESOLVED",
@@ -1311,10 +1356,10 @@ def _validated_changes(
                     raise GeneratePatchContractError(str(error)) from error
                 raise RejectedPatchCandidateError(str(error)) from error
             whole_file_delete = whole_file_delete_request
-            changes.append({"path": path, "content": applied.content,
+            changes.append({"path": path, "content": applied_content,
                             "operation": "delete" if whole_file_delete else "write",
-                            "localizedPreservation": json.dumps(applied.preservation, sort_keys=True),
-                            "localizedOperations": json.dumps(applied.operations, sort_keys=True)})
+                            "localizedPreservation": json.dumps(preservation, sort_keys=True),
+                            "localizedOperations": json.dumps(operation_records, sort_keys=True)})
         return tuple(changes)
     changes: list[dict[str, str]] = []
     seen: set[str] = set()
