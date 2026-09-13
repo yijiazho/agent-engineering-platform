@@ -549,7 +549,8 @@ def test_planning_evidence_keeps_mixed_scoped_and_unscoped_declarations_separate
         "selectionReason": "requested transition",
     }
     task_resource["spec"]["planningPredicates"] = [
-        common,
+        {**common, "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"},
+         "postcondition": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"}},
         {**common, "region": {
             "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
         }},

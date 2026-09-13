@@ -34,6 +34,7 @@ from aep.planning_evidence import (
     PlanningEvidenceInspectionError,
     evaluate_path_predicates,
     reconcile_dispositions,
+    scope_disposition,
     _region_span,
 )
 from aep.resource_loader import Resource, ResourceRef
@@ -1189,6 +1190,8 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ..
                 selection_id = item.get("selectionId")
                 if not isinstance(selection_id, str) or not selection_id:
                     raise GeneratePatchContractError("trusted planning evidence has no selection identity")
+                if item.get("authorizationRole") == "EVALUATOR_ONLY" or scope_disposition(item) != "CHANGE":
+                    continue
                 result.setdefault(item["path"], []).append({
                     "kind": kind, "name": name, "selectionId": selection_id,
                     "planArtifactId": plan.get("_artifactId"),
@@ -1198,8 +1201,8 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ..
                     "trusted planning evidence region selector is malformed"
                 )
         elif region is None:
-            # Whole-file evidence can prove evaluator-owned requirements but
-            # is deliberately absent from localized edit authorization.
+            # Null scopes are evaluator-owned by contract. Explicit
+            # WHOLE_FILE selectors above retain ordinary-file authorization.
             continue
         else:
             raise GeneratePatchContractError(
@@ -1354,8 +1357,8 @@ def _validated_changes(
                 ) from error
             assembled_digest = sha256(postimage.encode()).hexdigest()
             operation_records = [
-                {**record, "postimageSha256": assembled_digest}
-                for record in operation_records
+                {**record, "ordinal": ordinal, "postimageSha256": assembled_digest}
+                for ordinal, record in enumerate(operation_records)
             ]
             applied_content = postimage
             preservation = {

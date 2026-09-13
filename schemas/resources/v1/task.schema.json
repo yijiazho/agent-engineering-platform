@@ -197,7 +197,7 @@
       "additionalProperties": false,
       "required": ["kind", "name"],
       "properties": {
-        "kind": { "type": "string", "enum": ["MARKDOWN_SECTION", "MARKDOWN_FENCE"] },
+        "kind": { "type": "string", "enum": ["MARKDOWN_SECTION", "MARKDOWN_FENCE", "WHOLE_FILE"] },
         "name": { "type": "string", "minLength": 1 }
       }
     }

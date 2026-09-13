@@ -549,9 +549,13 @@ class ContextBuilder:
                     raise failure from error
                 for record in scope_records:
                     region = record["inspection"]["region"]
-                    record["scopeClass"] = "EDITABLE_REGION" if region is not None else "WHOLE_FILE_EVALUATOR"
-                    record["authorizationRole"] = "LOCALIZED_EDIT" if region is not None else "EVALUATOR_ONLY"
-                    record["owningEvaluator"] = None if region is not None else "deterministic-evaluator"
+                    evaluator_owned = region is None and any(
+                        result.get("result") == "UNSUPPORTED"
+                        for result in record.get("predicateResults", ())
+                    )
+                    record["scopeClass"] = "WHOLE_FILE_EVALUATOR" if evaluator_owned else "EDITABLE_REGION"
+                    record["authorizationRole"] = "EVALUATOR_ONLY" if evaluator_owned else "LOCALIZED_EDIT"
+                    record["owningEvaluator"] = "deterministic-evaluator" if evaluator_owned else None
                     # The role is part of the trusted selection identity.
                     record = finalize_planning_evidence(
                         record, postconditions=record["postconditions"],
