@@ -1,4 +1,5 @@
 from hashlib import sha256
+import json
 
 import pytest
 
@@ -120,6 +121,10 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
         repository_revision=REVISION, regions_by_path=regions,
     )
     assert "first" in combined[0]["content"] and "second" in combined[0]["content"]
+    combined_records = json.loads(combined[0]["localizedOperations"])
+    assert {record["postimageSha256"] for record in combined_records} == {
+        sha256(combined[0]["content"].encode()).hexdigest()
+    }
     with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
         _validated_changes(
             {"changes": [operation(preimage, anchor="three", content="updated")]},

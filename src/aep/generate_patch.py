@@ -34,6 +34,7 @@ from aep.planning_evidence import (
     PlanningEvidenceInspectionError,
     evaluate_path_predicates,
     reconcile_dispositions,
+    _region_span,
 )
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeStoreError
@@ -1341,10 +1342,25 @@ def _validated_changes(
                 operation_records.append(record)
             output.append(content[cursor:])
             postimage = "".join(output)
+            # Per-operation checks are insufficient when adjacent insertions
+            # jointly alter Markdown structure. Re-resolve every immutable
+            # trusted selector against the assembled postimage.
+            try:
+                for region in regions:
+                    _region_span(postimage, region)
+            except PlanningEvidenceError as error:
+                raise RejectedPatchCandidateError(
+                    "OUT_OF_REGION: assembled postimage invalidates a trusted region"
+                ) from error
+            assembled_digest = sha256(postimage.encode()).hexdigest()
+            operation_records = [
+                {**record, "postimageSha256": assembled_digest}
+                for record in operation_records
+            ]
             applied_content = postimage
             preservation = {
                 "preimageSha256": sha256(content.encode()).hexdigest(),
-                "postimageSha256": sha256(postimage.encode()).hexdigest(),
+                "postimageSha256": assembled_digest,
                 "authorizedSpans": [record["span"] for record in operation_records],
             }
             if not resolved:

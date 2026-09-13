@@ -616,7 +616,16 @@ def reconcile_dispositions(
                     raise PlanningEvidenceError(
                         f"DELETE for {path!r} cannot rely on region-scoped evidence"
                     )
-                postconditions = postconditions_by_path.get(path, ())
+                raw_postconditions = postconditions_by_path.get(path, ())
+                postconditions = (
+                    tuple(predicate for scope in raw_postconditions
+                          if isinstance(scope, Mapping)
+                          for predicate in scope.get("predicates", ())
+                          if isinstance(predicate, Mapping))
+                    if raw_postconditions and isinstance(raw_postconditions[0], Mapping)
+                    and "predicates" in raw_postconditions[0]
+                    else raw_postconditions
+                )
                 if not postconditions or any(
                     item.get("kind") != "TEXT_ABSENT"
                     for item in postconditions
