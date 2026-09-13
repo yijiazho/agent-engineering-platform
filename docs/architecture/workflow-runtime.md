@@ -431,8 +431,11 @@ the patch is published only after applicability and path-boundary checks pass.
 For this Resource generation, the Code Generator supplies preimage-bound
 `insert` operations rather than a reconstructed file. Every
 operation names its normalized path, immutable revision, preimage digest,
-region identity, exact anchor, and expected match count. The control plane
-materializes the postimage before one compare-and-write request; missing,
+exact anchor, and expected match count. A model-provided region label is
+diagnostic only: the control plane derives the selector, planning-selection
+identity, and resolved span from immutable planning evidence, then proves the
+anchor/edit span lies within it before materializing a postimage or issuing a
+write. It persists those trusted fields separately from the model label. Missing,
 ambiguous, stale, overlapping, out-of-order, non-UTF-8, or unauthorized edits
 fail before filesystem mutation. It records content-addressed unchanged-region
 statistics with the operation evidence. New files use their explicit absent

@@ -126,8 +126,10 @@ def test_context_and_agent_boundaries_are_explicit(
     assert change_items["properties"]["operation"] == {
         "type": "string", "enum": ["insert", "replace", "delete", "rewrite"]
     }
-    assert {"repositoryRevision", "preimageSha256", "regionId", "anchor",
+    assert {"repositoryRevision", "preimageSha256", "anchor",
             "expectedMatchCount", "placement", "content"} <= set(change_items["required"])
+    assert "regionId" not in change_items["required"]
+    assert "regionId" not in change_items["properties"]
     planner = resources.get(ResourceRef(
         "Agent", "planner", EXPECTED["resourceVersions"]["plannerAgent"]
     ))

@@ -874,10 +874,13 @@ updating the Workflow, never by rewriting historical analysis evidence.
   created from the pinned checkout. Inspect each record's path, revision,
   digest, predicate result, postcondition, selection reason, and selection ID;
   full file bodies are intentionally absent.
-* `generate-patch:1.13.0` uses `code-generator:1.13.0` and requires one exact
+* `generate-patch:1.15.0` uses `code-generator:1.15.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
-  reconciliation and patch EvaluationResults for original/effective sets,
+  reconciliation and patch EvaluationResults for original/effective sets.
+  Localized-operation evidence records the server-derived plan selection,
+  selector, resolved span, and digests separately from any diagnostic
+  model-declared region label; a label never authorizes an edit.
   terminal dispositions, and change statistics before authorizing publication.
   Missing or failing reconciliation evidence must prevent both push and PR
   creation.
