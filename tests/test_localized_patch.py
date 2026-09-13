@@ -3,7 +3,7 @@ from hashlib import sha256
 import pytest
 
 from aep.localized_patch import LocalizedPatchError, apply_localized_operations
-from aep.generate_patch import _validated_changes
+from aep.generate_patch import RejectedPatchCandidateError, _validated_changes
 
 
 REVISION = "a" * 40
@@ -140,6 +140,59 @@ def test_generate_patch_materializes_localized_operations_before_write() -> None
     )
     assert changes[0]["operation"] == "write"
     assert changes[0]["content"] == "## Repository Layout\nsrc/    runtime\ntests/  tests\nbody\n"
+
+
+@pytest.mark.parametrize("label", ["readme-repository-layout:add-deploy", "Repository Layout", None])
+def test_model_region_label_is_diagnostic_and_trusted_span_is_evidence(label) -> None:
+    preimage = "## Repository Layout\nbody\n## Elsewhere\noutside\n"
+    item = operation(preimage)
+    if label is None:
+        item.pop("regionId")
+    else:
+        item["regionId"] = label
+    result = apply_localized_operations(
+        path="README.md", preimage=preimage, preimage_sha256=sha256(preimage.encode()).hexdigest(),
+        repository_revision=REVISION, operations=[item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout", "selectionId": "planselection-1", "planArtifactId": "artifact-1"},
+    )
+    evidence = result.operations[0]
+    assert evidence["modelDeclaredRegionId"] == label
+    assert evidence["trustedRegion"] == {"kind": "MARKDOWN_SECTION", "name": "Repository Layout", "selectionId": "planselection-1", "planArtifactId": "artifact-1", "span": [0, len("## Repository Layout\nbody\n")]}
+
+
+def test_matching_model_label_cannot_bypass_trusted_region() -> None:
+    preimage = "## Repository Layout\ninside\n## Elsewhere\noutside\n"
+    item = operation(preimage, anchor="outside", content="changed", regionId="Repository Layout")
+    with pytest.raises(LocalizedPatchError) as error:
+        apply_localized_operations(
+            path="README.md", preimage=preimage, preimage_sha256=sha256(preimage.encode()).hexdigest(),
+            repository_revision=REVISION, operations=[item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+    assert error.value.code == "OUT_OF_REGION"
+
+
+def test_region_candidate_failure_is_not_an_immutable_resource_configuration_error() -> None:
+    preimage = "## Repository Layout\ninside\n## Elsewhere\noutside\n"
+    with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
+        _validated_changes(
+            {"changes": [operation(preimage, anchor="outside", regionId="Repository Layout")]},
+            ("README.md",),
+            ({"path": "README.md", "content": preimage, "preimageSha256": sha256(preimage.encode()).hexdigest()},),
+            repository_revision=REVISION,
+            regions_by_path={"README.md": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"}},
+        )
+
+
+def test_unresolvable_trusted_selector_fails_before_operations() -> None:
+    preimage = "## Repository Layout\nbody\n## Repository Layout\nother\n"
+    with pytest.raises(LocalizedPatchError) as error:
+        apply_localized_operations(
+            path="README.md", preimage=preimage, preimage_sha256=sha256(preimage.encode()).hexdigest(),
+            repository_revision=REVISION, operations=[operation(preimage)],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+    assert error.value.code == "TRUSTED_REGION_UNRESOLVED"
 
 
 def test_generate_patch_rejects_replace_without_plan_operation_identity() -> None:

@@ -58,6 +58,10 @@ class DisallowedPatchPathError(GeneratePatchContractError):
     """Raised before mutation when model output exceeds the plan boundary."""
 
 
+class RejectedPatchCandidateError(GeneratePatchContractError):
+    """A syntactically formed model candidate failed deterministic safety proof."""
+
+
 class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
     """Author scoped workspace changes and publish an evaluated patch."""
 
@@ -541,6 +545,9 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
         except DisallowedPatchPathError as error:
             self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
+        except RejectedPatchCandidateError as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
+            return TaskExecutionResult.failure(FailureClass.EVALUATION, str(error))
         except (
             AgentResolutionError,
             AgentInvocationContractError,
@@ -1099,7 +1106,13 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
         if isinstance(region, Mapping):
             kind, name = region.get("kind"), region.get("name")
             if isinstance(kind, str) and isinstance(name, str):
-                result[item["path"]] = {"kind": kind, "name": name}
+                selection_id = item.get("selectionId")
+                if not isinstance(selection_id, str) or not selection_id:
+                    raise GeneratePatchContractError("trusted planning evidence has no selection identity")
+                result[item["path"]] = {
+                    "kind": kind, "name": name, "selectionId": selection_id,
+                    "planArtifactId": plan.get("_artifactId"),
+                }
     return result
 
 
@@ -1155,7 +1168,6 @@ def _validated_changes(
             if target is None or not isinstance(content, str):
                 raise GeneratePatchContractError(f"localized operation target {path!r} is unavailable or non-UTF-8")
             region = (regions_by_path or {}).get(path)
-            region_id = region.get("name") if isinstance(region, Mapping) else None
             # The current plan format binds postconditions, not per-operation
             # replace/delete identities.  Do not let an otherwise valid
             # insertion smuggle an unrelated mutation into the same region.
@@ -1179,13 +1191,13 @@ def _validated_changes(
                 applied = apply_localized_operations(
                     path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
                     repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
-                    operations=operations, region_id=region_id, region=region,
+                    operations=operations, region=region,
                     # AEP-059's exact-artifact approval does not exist yet.
                     # Keep rewrites rejected rather than allowing publication.
                     allow_rewrite=False, target_exists=bool(target.get("exists", True)),
                 )
             except LocalizedPatchError as error:
-                raise GeneratePatchContractError(str(error)) from error
+                raise RejectedPatchCandidateError(str(error)) from error
             whole_file_delete = whole_file_delete_request
             changes.append({"path": path, "content": applied.content,
                             "operation": "delete" if whole_file_delete else "write",

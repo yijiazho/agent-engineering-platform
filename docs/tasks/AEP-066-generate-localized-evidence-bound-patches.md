@@ -75,6 +75,11 @@ evidence. Do not replay or rewrite the execution.
 
 ## Subsequent Dogfood Discovery
 
+The server-derived trusted-region authorization follow-up is tracked by
+[AEP-067](AEP-067-derive-trusted-region-authorization-server-side.md). It
+removes the residual model-label equality constraint while retaining AEP-066's
+aggregate postimage reconciliation and preservation boundaries.
+
 A later controlled MTP-09/MTP-10 execution, WorkflowExecution
 `workflowexecution-5f315522-c2d6-59ca-90d6-25d9d57ee7de`, revealed that the
 localized-operation generation now has an inverse failure mode. AnalyzeIssue

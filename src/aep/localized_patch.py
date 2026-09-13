@@ -53,6 +53,20 @@ def apply_localized_operations(
     if isinstance(operations, (str, bytes)) or not isinstance(operations, Sequence) or not operations:
         raise LocalizedPatchError("MISSING_OPERATION", "localized operations are required")
 
+    # ``region_id`` was accepted by the original operation shape.  It is a
+    # model declaration, not an authorization input: only the selector from
+    # immutable planning evidence below may determine mutable scope.
+    trusted_region: dict[str, Any] | None = None
+    region_start, region_end = 0, len(preimage)
+    if region is not None:
+        region_start, region_end = _region_bounds(preimage, region)
+        trusted_region = {
+            "kind": region.get("kind"), "name": region.get("name"),
+            "selectionId": region.get("selectionId"),
+            "planArtifactId": region.get("planArtifactId"),
+            "span": [region_start, region_end],
+        }
+
     edits: list[tuple[int, int, str, dict[str, Any]]] = []
     rewrite_seen = False
     for ordinal, raw in enumerate(operations):
@@ -68,8 +82,8 @@ def apply_localized_operations(
         if raw.get("preimageSha256") != preimage_sha256:
             raise LocalizedPatchError("STALE_PREIMAGE", "operation digest differs from target")
         declared_region = raw.get("regionId")
-        if region_id is not None and declared_region != region_id:
-            raise LocalizedPatchError("REGION_MISMATCH", "operation is not bound to the planned region")
+        if declared_region is not None and not isinstance(declared_region, str):
+            raise LocalizedPatchError("INVALID_OPERATION", "regionId must be a diagnostic string when present")
         content = raw.get("content", "")
         if not isinstance(content, str) or "\x00" in content or not _utf8(content):
             raise LocalizedPatchError("UNSAFE_CONTENT", "operation content must be UTF-8 text without NUL")
@@ -107,11 +121,14 @@ def apply_localized_operations(
                     "DELETE_NOT_AUTHORIZED",
                     "localized deletion requires plan-operation evidence; only an exact whole-file delete is available",
                 )
-        if region is not None:
-            region_start, region_end = _region_bounds(preimage, region)
-            if start < region_start or end > region_end:
-                raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
-        edits.append((start, end, content, {"ordinal": ordinal, "operation": operation, "span": [start, end], "anchorSha256": sha256(anchor.encode()).hexdigest()}))
+        if start < region_start or end > region_end:
+            raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
+        record = {"ordinal": ordinal, "operation": operation, "span": [start, end],
+                  "anchorSha256": sha256(anchor.encode()).hexdigest(),
+                  "modelDeclaredRegionId": declared_region}
+        if trusted_region is not None:
+            record["trustedRegion"] = trusted_region
+        edits.append((start, end, content, record))
 
     prior_start = prior_end = -1
     for start, end, _content, _record in edits:
@@ -181,5 +198,5 @@ def _region_bounds(content: str, region: Mapping[str, Any]) -> tuple[int, int]:
     try:
         start, end, _identity, _matches = _region_span(content, region)
     except PlanningEvidenceError as error:
-        raise LocalizedPatchError("REGION_MISMATCH", "trusted region does not resolve uniquely") from error
+        raise LocalizedPatchError("TRUSTED_REGION_UNRESOLVED", "trusted region does not resolve uniquely") from error
     return start, end
