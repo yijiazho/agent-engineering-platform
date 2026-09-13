@@ -201,6 +201,63 @@ def test_outside_anchor_cannot_collapse_to_trusted_boundary() -> None:
     assert error.value.code == "OUT_OF_REGION"
 
 
+def test_insert_before_first_fence_body_line_stays_inside_trusted_region() -> None:
+    preimage = "before\n```layout\nfirst\n```\nafter\n"
+    item = operation(
+        preimage,
+        anchor="first\n",
+        placement="before",
+        content="added\n",
+    )
+
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_FENCE", "name": "layout"},
+    )
+
+    assert result.content == "before\n```layout\nadded\nfirst\n```\nafter\n"
+
+
+def test_section_end_insert_must_preserve_next_heading_boundary() -> None:
+    preimage = "## Repository Layout\nlast\n## Elsewhere\noutside\n"
+    item = operation(
+        preimage,
+        anchor="last\n",
+        placement="after",
+        content="joined",
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(
+            preimage,
+            [item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+
+    assert error.value.code == "OUT_OF_REGION"
+
+
+def test_section_end_insert_with_line_break_preserves_next_heading() -> None:
+    preimage = "## Repository Layout\nlast\n## Elsewhere\noutside\n"
+    item = operation(
+        preimage,
+        anchor="last\n",
+        placement="after",
+        content="added\n",
+    )
+
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert result.content == (
+        "## Repository Layout\nlast\nadded\n## Elsewhere\noutside\n"
+    )
+
+
 def test_nonrewrite_requires_explicit_trusted_region() -> None:
     preimage = "## Repository Layout\nbody\n"
     with pytest.raises(LocalizedPatchError) as error:

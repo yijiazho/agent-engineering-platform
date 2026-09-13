@@ -156,7 +156,17 @@ def apply_localized_operations(
                 and raw.get("placement", "after") == "before"
                 and start == region_start
                 and trusted_region is not None
-                and trusted_region.get("kind") != "WHOLE_FILE"
+                and trusted_region.get("kind") == "MARKDOWN_SECTION"
+            )
+            or (
+                operation == "insert"
+                and raw.get("placement", "after") == "after"
+                and start == region_end
+                and trusted_region is not None
+                and trusted_region.get("kind") == "MARKDOWN_SECTION"
+                and region_end < len(preimage)
+                and bool(content)
+                and not content.endswith(("\r", "\n"))
             )
         ):
             raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
