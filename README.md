@@ -643,7 +643,8 @@ from immutable planning evidence. Model region labels are not authorization;
 the persisted operation evidence records the trusted selector, selection, and
 resolved span separately from any legacy diagnostic label. The strict model
 shape uses nullable `regionId`, while the runtime records whole-file authority
-with an explicit server-derived `WHOLE_FILE` selector.
+with an explicit server-derived `WHOLE_FILE` selector. Diagnostic labels are
+bounded identifiers and cannot persist arbitrary model-copied source text.
 
 Implemented foundations currently include:
 

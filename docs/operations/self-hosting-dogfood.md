@@ -882,7 +882,8 @@ updating the Workflow, never by rewriting historical analysis evidence.
   selector, resolved span, and digests separately from any diagnostic
   model-declared region label; a label never authorizes an edit. A nullable
   `regionId` is required only for strict provider-schema compatibility, and
-  `null` means no diagnostic label. Whole-file planning authority is persisted
+  `null` means no diagnostic label. Non-null values are bounded identifier
+  strings, not unrestricted text. Whole-file planning authority is persisted
   as an explicit `WHOLE_FILE` runtime selector.
   terminal dispositions, and change statistics before authorizing publication.
   Missing or failing reconciliation evidence must prevent both push and PR

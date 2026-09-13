@@ -438,7 +438,9 @@ anchor/edit span lies within it before materializing a postimage or issuing a
 write. A trusted `region: null` planning record becomes an explicit
 `WHOLE_FILE` runtime selector rather than an implicit absence of bounds. The
 strict model schema represents an absent diagnostic label as `regionId: null`.
-The PATCH artifact persists the trusted fields separately from that label. Missing,
+Non-null labels are bounded to 128 identifier characters before persistence;
+they cannot carry arbitrary source text. The PATCH artifact persists the
+trusted fields separately from that label. Missing,
 ambiguous, stale, overlapping, out-of-order, non-UTF-8, or unauthorized edits
 fail before filesystem mutation. It records content-addressed unchanged-region
 statistics with the operation evidence. New files use their explicit absent

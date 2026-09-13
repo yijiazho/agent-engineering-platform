@@ -13,6 +13,7 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.context_builder import ContextBuilder
+import aep.generate_patch as generate_patch_module
 from aep.filesystem_tool import (
     FILESYSTEM_INPUT_SCHEMA,
     FILESYSTEM_OUTPUT_SCHEMA,
@@ -35,6 +36,7 @@ from aep.git_tool import (
 )
 from aep.model_invocation import FakeModelAdapter, ModelResponse, ModelUsage
 from aep.planning_evidence import evaluate_path_predicates, finalize_planning_evidence
+from aep.planning_evidence import PlanningEvidenceInspectionError
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
     RepositoryFile,
@@ -711,6 +713,66 @@ def test_evidence_bound_change_must_satisfy_declared_postcondition(tmp_path: Pat
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
     evaluation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
     assert evaluation["outcome"] == "FAIL"
+
+
+def test_postimage_selector_failure_is_rejected_candidate_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "content": "value = 2\n"}],
+         "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}]},
+        evidence_bound=True,
+        postcondition_value="value = 2",
+    )
+
+    def ambiguous_postimage(**_kwargs):
+        raise PlanningEvidenceInspectionError(
+            "REGION_AMBIGUOUS", path="src/app.py", evaluation_complete=False
+        )
+
+    monkeypatch.setattr(
+        generate_patch_module, "reconcile_dispositions", ambiguous_postimage
+    )
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    evaluation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+    assert evaluation["evidence"]["reason"] == "CANDIDATE_POSTIMAGE_REJECTED"
+
+
+def test_localized_candidate_rejection_persists_evaluation(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {
+            "changes": [{
+                "operation": "insert", "path": "src/app.py",
+                "regionId": None, "anchor": "missing anchor",
+                "expectedMatchCount": 1, "placement": "after", "content": "x\n",
+            }],
+            "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}],
+        },
+        evidence_bound=True,
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    assert (workspace / "src/app.py").read_bytes() == b"value = 1\n"
+    execution = store.get(TASK_EXECUTION_ID)
+    evaluation = store.get(execution["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+    assert evaluation["evidence"] == {
+        "repositoryRevision": evaluation["provenance"]["repositoryRevision"],
+        "reason": "LOCALIZED_CANDIDATE_REJECTED",
+        "diagnostic": "ANCHOR_MISSING",
+    }
+    assert artifacts.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
 def test_evidence_bound_change_persists_passing_generated_content_proof(

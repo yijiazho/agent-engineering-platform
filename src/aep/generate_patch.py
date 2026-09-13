@@ -31,6 +31,7 @@ from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
 from aep.planning_evidence import (
     CandidateReconciliationError,
     PlanningEvidenceError,
+    PlanningEvidenceInspectionError,
     evaluate_path_predicates,
     reconcile_dispositions,
 )
@@ -319,7 +320,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         },
                         max_bytes=editable_target_max_bytes,
                     )
-                except CandidateReconciliationError as error:
+                except (
+                    CandidateReconciliationError,
+                    PlanningEvidenceInspectionError,
+                ) as error:
                     self._runtime_store.create({
                         "apiVersion": "aep.dev/v1alpha1", "kind": "EvaluationResult",
                         "id": reconciliation_id, "traceId": task_execution["traceId"],
@@ -579,6 +583,37 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
         except RejectedPatchCandidateError as error:
             self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
+            current = self._runtime_store.get(str(task_execution["id"]))
+            if not current or not current.get("evaluationResultIds"):
+                candidate_evaluation = reconciliation_evaluation or patch_evaluation
+                candidate_ref = _ref_record(candidate_evaluation.ref)
+                candidate_id = self._runtime_id(
+                    "evaluationresult", f"{task_execution['id']}:candidate-rejection"
+                )
+                timestamp = self._timestamp()
+                self._runtime_store.create({
+                    "apiVersion": "aep.dev/v1alpha1", "kind": "EvaluationResult",
+                    "id": candidate_id, "traceId": task_execution["traceId"],
+                    "createdAt": timestamp, "updatedAt": timestamp,
+                    "provenance": {"actor": "localized-candidate-evaluator",
+                        "workflowExecutionId": workflow["id"],
+                        "taskExecutionId": task_execution["id"],
+                        "repositoryRevision": workflow["repositoryRevision"],
+                        "resourceRefs": [candidate_ref]},
+                    "taskExecutionId": task_execution["id"],
+                    "evaluationRef": candidate_ref,
+                    "target": {"type": "AgentInvocation", "id": active_invocation_id},
+                    "status": "SUCCEEDED", "outcome": "FAIL",
+                    "evidence": {
+                        "repositoryRevision": str(workflow["repositoryRevision"]),
+                        "reason": "LOCALIZED_CANDIDATE_REJECTED",
+                        "diagnostic": str(error).split(":", 1)[0],
+                    },
+                    "startedAt": timestamp, "completedAt": timestamp,
+                }, deterministic_key=f"candidate-rejection:{task_execution['id']}")
+                self._attach(
+                    task_execution["id"], {"evaluationResultIds": [candidate_id]}
+                )
             return TaskExecutionResult.failure(FailureClass.EVALUATION, str(error))
         except (
             AgentResolutionError,

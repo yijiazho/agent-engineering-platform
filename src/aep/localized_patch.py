@@ -90,8 +90,16 @@ def apply_localized_operations(
         if raw.get("preimageSha256") != preimage_sha256:
             raise LocalizedPatchError("STALE_PREIMAGE", "operation digest differs from target")
         declared_region = raw.get("regionId")
-        if declared_region is not None and not isinstance(declared_region, str):
-            raise LocalizedPatchError("INVALID_OPERATION", "regionId must be a diagnostic string when present")
+        if declared_region is not None and (
+            not isinstance(declared_region, str)
+            or not declared_region
+            or len(declared_region) > 128
+            or not all(character.isprintable() for character in declared_region)
+        ):
+            raise LocalizedPatchError(
+                "INVALID_OPERATION",
+                "regionId must be a bounded diagnostic identifier when present",
+            )
         content = raw.get("content", "")
         if not isinstance(content, str) or "\x00" in content or not _utf8(content):
             raise LocalizedPatchError("UNSAFE_CONTENT", "operation content must be UTF-8 text without NUL")
@@ -101,7 +109,15 @@ def apply_localized_operations(
             if (not allow_rewrite and target_exists) or rewrite_seen or len(operations) != 1:
                 raise LocalizedPatchError("REWRITE_NOT_AUTHORIZED", "full-file rewrite requires one explicit authorized operation")
             rewrite_seen = True
-            edits.append((0, len(preimage), content, {"ordinal": ordinal, "operation": operation, "span": [0, len(preimage)]}))
+            record = {
+                "ordinal": ordinal,
+                "operation": operation,
+                "span": [0, len(preimage)],
+                "modelDeclaredRegionId": declared_region,
+            }
+            if trusted_region is not None:
+                record["trustedRegion"] = trusted_region
+            edits.append((0, len(preimage), content, record))
             continue
         anchor = raw.get("anchor")
         expected = raw.get("expectedMatchCount")
@@ -135,6 +151,13 @@ def apply_localized_operations(
             or anchor_end > region_end
             or start < region_start
             or end > region_end
+            or (
+                operation == "insert"
+                and raw.get("placement", "after") == "before"
+                and start == region_start
+                and trusted_region is not None
+                and trusted_region.get("kind") != "WHOLE_FILE"
+            )
         ):
             raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
         record = {"ordinal": ordinal, "operation": operation, "span": [start, end],

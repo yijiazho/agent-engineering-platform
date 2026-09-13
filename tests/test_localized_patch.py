@@ -104,9 +104,20 @@ def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
         repository_revision=REVISION,
         operations=[{"operation": "rewrite", "path": "new.md", "repositoryRevision": REVISION,
                      "preimageSha256": sha256(b"").hexdigest(), "regionId": "new-file", "content": "created\n"}],
+        region={"kind": "WHOLE_FILE", "name": "WHOLE_FILE",
+                "selectionId": "planselection-new", "planArtifactId": "artifact-new"},
         target_exists=False,
     )
     assert result.content == "created\n"
+    assert result.operations[0]["modelDeclaredRegionId"] == "new-file"
+    assert result.operations[0]["trustedRegion"]["selectionId"] == "planselection-new"
+
+
+@pytest.mark.parametrize("label", ["x" * 129, "bad\nlabel", "bad\tlabel"])
+def test_model_region_label_is_bounded_body_free_diagnostic(label) -> None:
+    preimage = "## Repository Layout\nbody\n"
+    with pytest.raises(LocalizedPatchError, match="bounded diagnostic identifier"):
+        apply(preimage, [operation(preimage, regionId=label)])
 
 
 def test_overlapping_anchor_occurrences_are_ambiguous() -> None:
