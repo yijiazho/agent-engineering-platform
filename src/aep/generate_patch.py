@@ -29,6 +29,7 @@ from aep.git_tool import GitTool
 from aep.localized_patch import LocalizedPatchError, apply_localized_operations
 from aep.patch_evaluation import PatchEvaluationContractError, evaluate_patch
 from aep.planning_evidence import (
+    CandidateReconciliationError,
     PlanningEvidenceError,
     evaluate_path_predicates,
     reconcile_dispositions,
@@ -286,6 +287,12 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 disposition_by_path = {item["path"]: item["disposition"] for item in dispositions}
                 if any(disposition_by_path[path] != "NO_CHANGE" for path in no_change_paths):
                     raise GeneratePatchContractError("planning-time no-change paths must retain NO_CHANGE")
+                assert reconciliation_evaluation is not None
+                reconciliation_ref = _ref_record(reconciliation_evaluation.ref)
+                reconciliation_id = self._runtime_id(
+                    "evaluationresult", f"{task_execution['id']}:plan-reconciliation"
+                )
+                timestamp = self._timestamp()
                 try:
                     reconciliation = reconcile_dispositions(
                         plan_id=str(plan["_artifactId"]), repository_revision=str(workflow["repositoryRevision"]),
@@ -312,14 +319,34 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         },
                         max_bytes=editable_target_max_bytes,
                     )
+                except CandidateReconciliationError as error:
+                    self._runtime_store.create({
+                        "apiVersion": "aep.dev/v1alpha1", "kind": "EvaluationResult",
+                        "id": reconciliation_id, "traceId": task_execution["traceId"],
+                        "createdAt": timestamp, "updatedAt": timestamp,
+                        "provenance": {"actor": "plan-reconciliation-evaluator",
+                            "workflowExecutionId": workflow["id"], "taskExecutionId": task_execution["id"],
+                            "repositoryRevision": workflow["repositoryRevision"],
+                            "resourceRefs": [reconciliation_ref]},
+                        "taskExecutionId": task_execution["id"],
+                        "evaluationRef": reconciliation_ref,
+                        "target": {"type": "AgentInvocation", "id": invocation_id},
+                        "status": "SUCCEEDED", "outcome": "FAIL",
+                        "evidence": {
+                            "planArtifactId": str(plan["_artifactId"]),
+                            "repositoryRevision": str(workflow["repositoryRevision"]),
+                            "reason": "CANDIDATE_POSTIMAGE_REJECTED",
+                        },
+                        "logs": [str(error)],
+                        "startedAt": timestamp, "completedAt": timestamp,
+                    }, deterministic_key=f"plan-reconciliation:{task_execution['id']}")
+                    self._attach(
+                        task_execution["id"],
+                        {"evaluationResultIds": [reconciliation_id]},
+                    )
+                    raise RejectedPatchCandidateError(str(error)) from error
                 except PlanningEvidenceError as error:
                     raise GeneratePatchContractError(str(error)) from error
-                assert reconciliation_evaluation is not None
-                reconciliation_ref = _ref_record(reconciliation_evaluation.ref)
-                reconciliation_id = self._runtime_id(
-                    "evaluationresult", f"{task_execution['id']}:plan-reconciliation"
-                )
-                timestamp = self._timestamp()
                 self._runtime_store.create({
                     "apiVersion": "aep.dev/v1alpha1", "kind": "EvaluationResult",
                     "id": reconciliation_id, "traceId": task_execution["traceId"],
@@ -470,6 +497,11 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 "localizedPreservation": [
                     json.loads(item["localizedPreservation"])
                     for item in changes if "localizedPreservation" in item
+                ],
+                "localizedOperations": [
+                    operation
+                    for item in changes if "localizedOperations" in item
+                    for operation in json.loads(item["localizedOperations"])
                 ],
             }
             evaluation_result = evaluate_patch(
@@ -1102,7 +1134,11 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
         if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
             continue
         inspection = item.get("inspection")
-        region = inspection.get("region") if isinstance(inspection, Mapping) else None
+        if not isinstance(inspection, Mapping) or "region" not in inspection:
+            raise GeneratePatchContractError(
+                "trusted planning evidence has no region selector field"
+            )
+        region = inspection.get("region")
         if isinstance(region, Mapping):
             kind, name = region.get("kind"), region.get("name")
             if isinstance(kind, str) and isinstance(name, str):
@@ -1113,6 +1149,26 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
                     "kind": kind, "name": name, "selectionId": selection_id,
                     "planArtifactId": plan.get("_artifactId"),
                 }
+            else:
+                raise GeneratePatchContractError(
+                    "trusted planning evidence region selector is malformed"
+                )
+        elif region is None:
+            selection_id = item.get("selectionId")
+            if not isinstance(selection_id, str) or not selection_id:
+                raise GeneratePatchContractError(
+                    "trusted planning evidence has no selection identity"
+                )
+            result[item["path"]] = {
+                "kind": "WHOLE_FILE",
+                "name": "WHOLE_FILE",
+                "selectionId": selection_id,
+                "planArtifactId": plan.get("_artifactId"),
+            }
+        else:
+            raise GeneratePatchContractError(
+                "trusted planning evidence region selector is malformed"
+            )
     return result
 
 
@@ -1197,11 +1253,17 @@ def _validated_changes(
                     allow_rewrite=False, target_exists=bool(target.get("exists", True)),
                 )
             except LocalizedPatchError as error:
+                if error.code in {
+                    "TRUSTED_REGION_MISSING",
+                    "TRUSTED_REGION_UNRESOLVED",
+                }:
+                    raise GeneratePatchContractError(str(error)) from error
                 raise RejectedPatchCandidateError(str(error)) from error
             whole_file_delete = whole_file_delete_request
             changes.append({"path": path, "content": applied.content,
                             "operation": "delete" if whole_file_delete else "write",
-                            "localizedPreservation": json.dumps(applied.preservation, sort_keys=True)})
+                            "localizedPreservation": json.dumps(applied.preservation, sort_keys=True),
+                            "localizedOperations": json.dumps(applied.operations, sort_keys=True)})
         return tuple(changes)
     changes: list[dict[str, str]] = []
     seen: set[str] = set()

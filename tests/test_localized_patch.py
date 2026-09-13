@@ -3,7 +3,11 @@ from hashlib import sha256
 import pytest
 
 from aep.localized_patch import LocalizedPatchError, apply_localized_operations
-from aep.generate_patch import RejectedPatchCandidateError, _validated_changes
+from aep.generate_patch import (
+    GeneratePatchContractError,
+    RejectedPatchCandidateError,
+    _validated_changes,
+)
 
 
 REVISION = "a" * 40
@@ -19,10 +23,11 @@ def operation(preimage: str, **values):
 
 
 def apply(preimage: str, operations, **kwargs):
+    region = kwargs.pop("region", {"kind": "WHOLE_FILE", "name": "WHOLE_FILE"})
     return apply_localized_operations(
         path="README.md", preimage=preimage,
         preimage_sha256=sha256(preimage.encode()).hexdigest(), repository_revision=REVISION,
-        operations=operations, region_id="repository-layout", **kwargs,
+        operations=operations, region=region, **kwargs,
     )
 
 
@@ -80,14 +85,14 @@ def test_delete_requires_whole_file_and_region_boundary_is_enforced() -> None:
     with pytest.raises(LocalizedPatchError, match="DELETE_NOT_AUTHORIZED"):
         apply_localized_operations(
             path="README.md", preimage=preimage, preimage_sha256=digest,
-            repository_revision=REVISION, operations=[delete], region_id="repository-layout",
+            repository_revision=REVISION, operations=[delete],
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
     outside = operation(preimage, operation="replace", anchor="outside", content="changed", expectedMatchCount=1)
     with pytest.raises(LocalizedPatchError, match="OUT_OF_REGION"):
         apply_localized_operations(
             path="README.md", preimage=preimage, preimage_sha256=digest,
-            repository_revision=REVISION, operations=[outside], region_id="repository-layout",
+            repository_revision=REVISION, operations=[outside],
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
 
@@ -172,6 +177,30 @@ def test_matching_model_label_cannot_bypass_trusted_region() -> None:
     assert error.value.code == "OUT_OF_REGION"
 
 
+def test_outside_anchor_cannot_collapse_to_trusted_boundary() -> None:
+    preimage = "outside\n## Repository Layout\ninside\n"
+    item = operation(preimage, anchor="outside\n", placement="after", content="escaped\n")
+    with pytest.raises(LocalizedPatchError) as error:
+        apply_localized_operations(
+            path="README.md", preimage=preimage,
+            preimage_sha256=sha256(preimage.encode()).hexdigest(),
+            repository_revision=REVISION, operations=[item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+    assert error.value.code == "OUT_OF_REGION"
+
+
+def test_nonrewrite_requires_explicit_trusted_region() -> None:
+    preimage = "## Repository Layout\nbody\n"
+    with pytest.raises(LocalizedPatchError) as error:
+        apply_localized_operations(
+            path="README.md", preimage=preimage,
+            preimage_sha256=sha256(preimage.encode()).hexdigest(),
+            repository_revision=REVISION, operations=[operation(preimage)],
+        )
+    assert error.value.code == "TRUSTED_REGION_MISSING"
+
+
 def test_region_candidate_failure_is_not_an_immutable_resource_configuration_error() -> None:
     preimage = "## Repository Layout\ninside\n## Elsewhere\noutside\n"
     with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
@@ -193,6 +222,16 @@ def test_unresolvable_trusted_selector_fails_before_operations() -> None:
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
     assert error.value.code == "TRUSTED_REGION_UNRESOLVED"
+    with pytest.raises(GeneratePatchContractError, match="TRUSTED_REGION_UNRESOLVED"):
+        _validated_changes(
+            {"changes": [operation(preimage)]}, ("README.md",),
+            ({"path": "README.md", "content": preimage,
+              "preimageSha256": sha256(preimage.encode()).hexdigest()},),
+            repository_revision=REVISION,
+            regions_by_path={"README.md": {
+                "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
+            }},
+        )
 
 
 def test_generate_patch_rejects_replace_without_plan_operation_identity() -> None:
@@ -216,6 +255,7 @@ def test_generate_patch_accepts_each_required_insertion_for_one_path() -> None:
         ]},
         ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION,
+        regions_by_path={"README.md": {"kind": "WHOLE_FILE", "name": "WHOLE_FILE"}},
         required_insertions=({"path": "README.md", "value": "one\n"}, {"path": "README.md", "value": "two\n"}),
     )
     assert changes[0]["content"] == "first\none\nsecond\ntwo\n"
@@ -229,6 +269,7 @@ def test_generate_patch_accepts_one_subtree_insert_for_many_required_values() ->
         {"changes": [operation(preimage, content=subtree)]}, ("README.md",),
         ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION,
+        regions_by_path={"README.md": {"kind": "WHOLE_FILE", "name": "WHOLE_FILE"}},
         required_insertions=tuple({"path": "README.md", "value": value} for value in subtree.splitlines()),
     )
     assert all(value in changes[0]["content"] for value in subtree.splitlines())

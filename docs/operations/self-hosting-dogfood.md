@@ -880,7 +880,10 @@ updating the Workflow, never by rewriting historical analysis evidence.
   reconciliation and patch EvaluationResults for original/effective sets.
   Localized-operation evidence records the server-derived plan selection,
   selector, resolved span, and digests separately from any diagnostic
-  model-declared region label; a label never authorizes an edit.
+  model-declared region label; a label never authorizes an edit. A nullable
+  `regionId` is required only for strict provider-schema compatibility, and
+  `null` means no diagnostic label. Whole-file planning authority is persisted
+  as an explicit `WHOLE_FILE` runtime selector.
   terminal dispositions, and change statistics before authorizing publication.
   Missing or failing reconciliation evidence must prevent both push and PR
   creation.

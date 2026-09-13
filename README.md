@@ -641,7 +641,9 @@ may proceed only through artifact-bound human approval.
 AEP-067 extends that contract: localized-edit authority is derived server-side
 from immutable planning evidence. Model region labels are not authorization;
 the persisted operation evidence records the trusted selector, selection, and
-resolved span separately from any legacy diagnostic label.
+resolved span separately from any legacy diagnostic label. The strict model
+shape uses nullable `regionId`, while the runtime records whole-file authority
+with an explicit server-derived `WHOLE_FILE` selector.
 
 Implemented foundations currently include:
 

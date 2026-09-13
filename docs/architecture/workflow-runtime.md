@@ -435,7 +435,10 @@ exact anchor, and expected match count. A model-provided region label is
 diagnostic only: the control plane derives the selector, planning-selection
 identity, and resolved span from immutable planning evidence, then proves the
 anchor/edit span lies within it before materializing a postimage or issuing a
-write. It persists those trusted fields separately from the model label. Missing,
+write. A trusted `region: null` planning record becomes an explicit
+`WHOLE_FILE` runtime selector rather than an implicit absence of bounds. The
+strict model schema represents an absent diagnostic label as `regionId: null`.
+The PATCH artifact persists the trusted fields separately from that label. Missing,
 ambiguous, stale, overlapping, out-of-order, non-UTF-8, or unauthorized edits
 fail before filesystem mutation. It records content-addressed unchanged-region
 statistics with the operation evidence. New files use their explicit absent

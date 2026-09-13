@@ -33,7 +33,7 @@ class LocalizedPatch:
 def apply_localized_operations(
     *, path: str, preimage: str, preimage_sha256: str,
     repository_revision: str, operations: Sequence[Mapping[str, Any]],
-    region_id: str | None = None, region: Mapping[str, Any] | None = None,
+    region: Mapping[str, Any] | None = None,
     allow_rewrite: bool = False, target_exists: bool = True,
 ) -> LocalizedPatch:
     """Apply ordered operations to *preimage* without mutating a workspace.
@@ -53,12 +53,20 @@ def apply_localized_operations(
     if isinstance(operations, (str, bytes)) or not isinstance(operations, Sequence) or not operations:
         raise LocalizedPatchError("MISSING_OPERATION", "localized operations are required")
 
-    # ``region_id`` was accepted by the original operation shape.  It is a
-    # model declaration, not an authorization input: only the selector from
-    # immutable planning evidence below may determine mutable scope.
+    # A model region label is never an authorization input: only the selector
+    # from immutable planning evidence may determine mutable scope.
     trusted_region: dict[str, Any] | None = None
-    region_start, region_end = 0, len(preimage)
-    if region is not None:
+    region_start = region_end = -1
+    if region is None:
+        if not all(
+            isinstance(item, Mapping) and item.get("operation") == "rewrite"
+            for item in operations
+        ):
+            raise LocalizedPatchError(
+                "TRUSTED_REGION_MISSING",
+                "localized operation requires a server-derived region selector",
+            )
+    else:
         region_start, region_end = _region_bounds(preimage, region)
         trusted_region = {
             "kind": region.get("kind"), "name": region.get("name"),
@@ -107,6 +115,7 @@ def apply_localized_operations(
             raise LocalizedPatchError(code, f"anchor matched {len(positions)} times; expected {expected}")
         start = positions[0]
         end = start + len(anchor)
+        anchor_start, anchor_end = start, end
         if operation == "insert":
             placement = raw.get("placement", "after")
             if placement not in {"before", "after"}:
@@ -121,7 +130,12 @@ def apply_localized_operations(
                     "DELETE_NOT_AUTHORIZED",
                     "localized deletion requires plan-operation evidence; only an exact whole-file delete is available",
                 )
-        if start < region_start or end > region_end:
+        if (
+            anchor_start < region_start
+            or anchor_end > region_end
+            or start < region_start
+            or end > region_end
+        ):
             raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
         record = {"ordinal": ordinal, "operation": operation, "span": [start, end],
                   "anchorSha256": sha256(anchor.encode()).hexdigest(),
@@ -150,13 +164,24 @@ def apply_localized_operations(
     unchanged.append(preimage[cursor:])
     output.append(preimage[cursor:])
     postimage = "".join(output)
+    postimage_sha256 = sha256(postimage.encode()).hexdigest()
+    records = [
+        {
+            **record,
+            "path": path,
+            "repositoryRevision": repository_revision,
+            "preimageSha256": preimage_sha256,
+            "postimageSha256": postimage_sha256,
+        }
+        for record in records
+    ]
     unchanged_bytes = "".join(unchanged).encode("utf-8")
     return LocalizedPatch(
         content=postimage,
         operations=tuple(records),
         preservation={
             "preimageSha256": preimage_sha256,
-            "postimageSha256": sha256(postimage.encode()).hexdigest(),
+            "postimageSha256": postimage_sha256,
             "unchangedRegionCount": len(unchanged),
             "unchangedBytes": len(unchanged_bytes),
             "unchangedSha256": sha256(unchanged_bytes).hexdigest(),

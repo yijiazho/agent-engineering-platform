@@ -126,10 +126,23 @@ def test_context_and_agent_boundaries_are_explicit(
     assert change_items["properties"]["operation"] == {
         "type": "string", "enum": ["insert", "replace", "delete", "rewrite"]
     }
-    assert {"repositoryRevision", "preimageSha256", "anchor",
+    assert {"repositoryRevision", "preimageSha256", "regionId", "anchor",
             "expectedMatchCount", "placement", "content"} <= set(change_items["required"])
-    assert "regionId" not in change_items["required"]
-    assert "regionId" not in change_items["properties"]
+    assert change_items["properties"]["regionId"] == {
+        "anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]
+    }
+    for diagnostic_label in ("readme-repository-layout:add-deploy", None):
+        Draft202012Validator(change_items).validate({
+            "operation": "insert",
+            "path": "README.md",
+            "repositoryRevision": "a" * 40,
+            "preimageSha256": "b" * 64,
+            "regionId": diagnostic_label,
+            "anchor": "## Repository Layout\n",
+            "expectedMatchCount": 1,
+            "placement": "after",
+            "content": "deploy/\n",
+        })
     planner = resources.get(ResourceRef(
         "Agent", "planner", EXPECTED["resourceVersions"]["plannerAgent"]
     ))
