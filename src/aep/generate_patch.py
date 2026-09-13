@@ -1336,13 +1336,16 @@ def _validated_changes(
                 raise RejectedPatchCandidateError("OUT_OF_ORDER_EDITS: operation spans are not source ordered")
             cursor = 0
             output: list[str] = []
+            unchanged: list[str] = []
             operation_records = []
             for (start, end), operation, record in spans:
                 if start < cursor:
                     raise RejectedPatchCandidateError("OVERLAPPING_EDITS: operation spans overlap")
+                unchanged.append(content[cursor:start])
                 output.extend((content[cursor:start], str(operation.get("content", ""))))
                 cursor = end
                 operation_records.append(record)
+            unchanged.append(content[cursor:])
             output.append(content[cursor:])
             postimage = "".join(output)
             # Per-operation checks are insufficient when adjacent insertions
@@ -1350,7 +1353,21 @@ def _validated_changes(
             # trusted selector against the assembled postimage.
             try:
                 for region in regions:
-                    _region_span(postimage, region)
+                    start, end, _identity, _matches = _region_span(content, region)
+                    post_start, post_end, _post_identity, _post_matches = _region_span(postimage, region)
+                    selection_id = region.get("selectionId")
+                    expected_start = start + sum(
+                        len(str(operation.get("content", ""))) - (span_end - span_start)
+                        for (span_start, span_end), operation, _record in spans
+                        if span_end <= start
+                    )
+                    expected_end = end + sum(
+                        len(str(operation.get("content", ""))) - (span_end - span_start)
+                        for (span_start, span_end), operation, record in spans
+                        if span_end <= end
+                    )
+                    if (post_start, post_end) != (expected_start, expected_end):
+                        raise PlanningEvidenceError("trusted region boundary changed")
             except PlanningEvidenceError as error:
                 raise RejectedPatchCandidateError(
                     "OUT_OF_REGION: assembled postimage invalidates a trusted region"
@@ -1364,6 +1381,9 @@ def _validated_changes(
             preservation = {
                 "preimageSha256": sha256(content.encode()).hexdigest(),
                 "postimageSha256": assembled_digest,
+                "unchangedRegionCount": len(unchanged),
+                "unchangedBytes": len("".join(unchanged).encode("utf-8")),
+                "unchangedSha256": sha256("".join(unchanged).encode("utf-8")).hexdigest(),
                 "authorizedSpans": [record["span"] for record in operation_records],
             }
             if not resolved:
