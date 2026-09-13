@@ -258,6 +258,28 @@ def test_section_end_insert_with_line_break_preserves_next_heading() -> None:
     )
 
 
+def test_section_end_insert_cannot_hide_next_heading_inside_new_fence() -> None:
+    preimage = (
+        "## Repository Layout\nlast\n"
+        "## Elsewhere\n```\noutside\n```\n"
+    )
+    item = operation(
+        preimage,
+        anchor="last\n",
+        placement="after",
+        content="wanted\n```\n",
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(
+            preimage,
+            [item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+
+    assert error.value.code == "OUT_OF_REGION"
+
+
 def test_nonrewrite_requires_explicit_trusted_region() -> None:
     preimage = "## Repository Layout\nbody\n"
     with pytest.raises(LocalizedPatchError) as error:

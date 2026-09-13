@@ -884,7 +884,7 @@ updating the Workflow, never by rewriting historical analysis evidence.
   `regionId` is required only for strict provider-schema compatibility, and
   `null` means no diagnostic label. Non-null values are bounded identifier
   strings, not unrestricted text. Whole-file planning authority is persisted
-  as an explicit `WHOLE_FILE` runtime selector.
-  terminal dispositions, and change statistics before authorizing publication.
+  as an explicit `WHOLE_FILE` runtime selector. Inspect terminal dispositions
+  and change statistics before authorizing publication.
   Missing or failing reconciliation evidence must prevent both push and PR
   creation.

@@ -197,6 +197,26 @@ def apply_localized_operations(
     unchanged.append(preimage[cursor:])
     output.append(preimage[cursor:])
     postimage = "".join(output)
+    if trusted_region is not None and trusted_region.get("kind") != "WHOLE_FILE":
+        expected_region_end = region_end + sum(
+            len(replacement) - (end - start)
+            for start, end, replacement, _record in edits
+        )
+        try:
+            post_region_start, post_region_end = _region_bounds(postimage, region)
+        except LocalizedPatchError:
+            raise LocalizedPatchError(
+                "OUT_OF_REGION",
+                "operation changes the trusted region boundary",
+            ) from None
+        if (post_region_start, post_region_end) != (
+            region_start,
+            expected_region_end,
+        ):
+            raise LocalizedPatchError(
+                "OUT_OF_REGION",
+                "operation changes the trusted region boundary",
+            )
     postimage_sha256 = sha256(postimage.encode()).hexdigest()
     records = [
         {

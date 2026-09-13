@@ -443,7 +443,10 @@ they cannot carry arbitrary source text. Boundary checks follow selector
 semantics: insertion before the first fenced body line remains inside a
 `MARKDOWN_FENCE`, insertion before a `MARKDOWN_SECTION` heading is outside that
 section, and insertion at a section end must preserve the line boundary before
-the following heading. The PATCH artifact persists the
+the following heading. After materialization, the trusted selector must still
+resolve to the exact span produced by transforming its preimage bounds, so
+inserted Markdown syntax cannot expand authority across a neighboring region.
+The PATCH artifact persists the
 trusted fields separately from that label. Missing,
 ambiguous, stale, overlapping, out-of-order, non-UTF-8, or unauthorized edits
 fail before filesystem mutation. It records content-addressed unchanged-region
