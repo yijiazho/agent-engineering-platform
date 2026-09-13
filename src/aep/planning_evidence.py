@@ -15,6 +15,10 @@ class PlanningEvidenceError(ValueError):
     """Raised when planning evidence is incomplete, stale, or contradictory."""
 
 
+class CandidateReconciliationError(PlanningEvidenceError):
+    """Raised when model output fails a deterministic postimage requirement."""
+
+
 class PlanningEvidenceInspectionError(PlanningEvidenceError):
     """Safe, stable failure raised while inspecting an immutable source blob."""
 
@@ -98,6 +102,10 @@ def _region_span(content: str, region: Mapping[str, Any]) -> tuple[int, int, str
     name = region.get("name")
     if not isinstance(kind, str) or not isinstance(name, str) or not name.strip():
         raise PlanningEvidenceInspectionError("REGION_SELECTOR_MALFORMED", path="", evaluation_complete=False)
+    if kind == "WHOLE_FILE":
+        if name != "WHOLE_FILE":
+            raise PlanningEvidenceInspectionError("REGION_SELECTOR_MALFORMED", path="", evaluation_complete=False)
+        return 0, len(content), "whole-file", 1
     headings, fences = _markdown_structure(content)
     if kind == "MARKDOWN_SECTION":
         matches = [item for item in headings if item[1] == name]
@@ -575,7 +583,7 @@ def reconcile_dispositions(
         if state == "CHANGE":
             proposed = (proposed_contents_by_path or {}).get(path)
             if path in deleted:
-                if region is not None:
+                if region is not None and region.get("kind") != "WHOLE_FILE":
                     raise PlanningEvidenceError(
                         f"DELETE for {path!r} cannot rely on region-scoped evidence"
                     )
@@ -611,7 +619,7 @@ def reconcile_dispositions(
                     max_bytes=max_bytes,
                 )
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
-                raise PlanningEvidenceError(
+                raise CandidateReconciliationError(
                     f"CHANGE for {path!r} has an unsatisfied or unsupported postcondition"
                 )
             effective.append(path)
@@ -620,7 +628,7 @@ def reconcile_dispositions(
                 predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")),
                 region=region, max_bytes=max_bytes)
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
-                raise PlanningEvidenceError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
+                raise CandidateReconciliationError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
             no_change.append(path)
         else:
             raise PlanningEvidenceError(f"disposition for {path!r} must be CHANGE or NO_CHANGE")
@@ -628,7 +636,7 @@ def reconcile_dispositions(
         insertion_values = tuple((required_insertions_by_path or {}).get(path, ()))
         if insertion_values:
             if output is None:
-                raise PlanningEvidenceError(
+                raise CandidateReconciliationError(
                     f"{state} for {path!r} lacks a required insertion"
                 )
             insertion_record = evaluate_path_predicates(
@@ -646,7 +654,7 @@ def reconcile_dispositions(
                 )
             ]
             if any(item["result"] != "MATCH" for item in insertion_proof):
-                raise PlanningEvidenceError(
+                raise CandidateReconciliationError(
                     f"{state} for {path!r} lacks a required insertion"
                 )
         records.append({"path": path, "disposition": state, "targetSha256": digest,

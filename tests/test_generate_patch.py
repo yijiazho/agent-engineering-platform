@@ -13,6 +13,7 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.context_builder import ContextBuilder
+import aep.generate_patch as generate_patch_module
 from aep.filesystem_tool import (
     FILESYSTEM_INPUT_SCHEMA,
     FILESYSTEM_OUTPUT_SCHEMA,
@@ -35,6 +36,7 @@ from aep.git_tool import (
 )
 from aep.model_invocation import FakeModelAdapter, ModelResponse, ModelUsage
 from aep.planning_evidence import evaluate_path_predicates, finalize_planning_evidence
+from aep.planning_evidence import PlanningEvidenceInspectionError
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
     RepositoryFile,
@@ -141,6 +143,22 @@ EVIDENCE_CHANGE_SCHEMA["properties"]["changes"]["items"] = {
         },
     ]
 }
+EVIDENCE_CHANGE_SCHEMA["properties"]["changes"]["items"]["anyOf"].append({
+    "type": "object", "additionalProperties": False,
+    "required": ["operation", "path", "repositoryRevision", "preimageSha256",
+                 "regionId", "anchor", "expectedMatchCount", "placement", "content"],
+    "properties": {
+        "operation": {"const": "insert"},
+        "path": {"type": "string", "minLength": 1},
+        "repositoryRevision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "preimageSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "regionId": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]},
+        "anchor": {"type": "string", "minLength": 1},
+        "expectedMatchCount": {"type": "integer", "minimum": 1},
+        "placement": {"enum": ["before", "after"]},
+        "content": {"type": "string"},
+    },
+})
 EVIDENCE_CHANGE_SCHEMA["required"].append("dispositions")
 EVIDENCE_CHANGE_SCHEMA["properties"]["dispositions"] = {
     "type": "array",
@@ -614,8 +632,11 @@ def test_evidence_bound_no_change_fails_when_postcondition_is_unsatisfied(
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
     assert "unsatisfied or unsupported" in result.message
-    assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
+    evaluation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+    assert evaluation["evidence"]["reason"] == "CANDIDATE_POSTIMAGE_REJECTED"
 
 
 def test_evidence_bound_no_change_fails_when_required_insertion_is_missing(
@@ -633,8 +654,11 @@ def test_evidence_bound_no_change_fails_when_required_insertion_is_missing(
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
     assert "lacks a required insertion" in result.message
-    assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
+    evaluation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+    assert evaluation["evidence"]["reason"] == "CANDIDATE_POSTIMAGE_REJECTED"
 
 
 def test_planning_time_no_change_fails_when_required_insertion_is_missing(
@@ -684,9 +708,71 @@ def test_evidence_bound_change_must_satisfy_declared_postcondition(tmp_path: Pat
     result = handler.execute(task, store.get(TASK_EXECUTION_ID))
 
     assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
     assert "unsatisfied or unsupported postcondition" in result.message
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 1\n"
-    assert store.get(TASK_EXECUTION_ID).get("evaluationResultIds", []) == []
+    evaluation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+
+
+def test_postimage_selector_failure_is_rejected_candidate_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, handler, task, _artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {"changes": [{"path": "src/app.py", "content": "value = 2\n"}],
+         "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}]},
+        evidence_bound=True,
+        postcondition_value="value = 2",
+    )
+
+    def ambiguous_postimage(**_kwargs):
+        raise PlanningEvidenceInspectionError(
+            "REGION_AMBIGUOUS", path="src/app.py", evaluation_complete=False
+        )
+
+    monkeypatch.setattr(
+        generate_patch_module, "reconcile_dispositions", ambiguous_postimage
+    )
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    evaluation = store.get(store.get(TASK_EXECUTION_ID)["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+    assert evaluation["evidence"]["reason"] == "CANDIDATE_POSTIMAGE_REJECTED"
+
+
+def test_localized_candidate_rejection_persists_evaluation(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, artifacts, workspace, _model = setup_handler(
+        tmp_path,
+        {
+            "changes": [{
+                "operation": "insert", "path": "src/app.py",
+                "regionId": None, "anchor": "missing anchor",
+                "expectedMatchCount": 1, "placement": "after", "content": "x\n",
+            }],
+            "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}],
+        },
+        evidence_bound=True,
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.EVALUATION
+    assert (workspace / "src/app.py").read_bytes() == b"value = 1\n"
+    execution = store.get(TASK_EXECUTION_ID)
+    evaluation = store.get(execution["evaluationResultIds"][0])
+    assert evaluation["outcome"] == "FAIL"
+    assert evaluation["evidence"] == {
+        "repositoryRevision": evaluation["provenance"]["repositoryRevision"],
+        "reason": "LOCALIZED_CANDIDATE_REJECTED",
+        "diagnostic": "ANCHOR_MISSING",
+    }
+    assert artifacts.list_by_task_execution(TASK_EXECUTION_ID) == ()
 
 
 def test_evidence_bound_change_persists_passing_generated_content_proof(
@@ -708,6 +794,44 @@ def test_evidence_bound_change_persists_passing_generated_content_proof(
     assert disposition["postconditionProof"]["predicateResults"][0]["result"] == "MATCH"
     assert disposition["outputSha256"] == sha256(b"value = 2\n").hexdigest()
     assert (workspace / "src/app.py").read_text(encoding="utf-8") == "value = 2\n"
+
+
+def test_localized_artifact_persists_server_derived_operation_authority(
+    tmp_path: Path,
+) -> None:
+    store, handler, task, artifacts, _workspace, _model = setup_handler(
+        tmp_path,
+        {
+            "changes": [{
+                "operation": "insert", "path": "src/app.py",
+                "regionId": "diagnostic-label", "anchor": "value = 1\n",
+                "expectedMatchCount": 1, "placement": "after",
+                "content": "# authorized marker\n",
+            }],
+            "dispositions": [{"path": "src/app.py", "disposition": "CHANGE"}],
+        },
+        evidence_bound=True,
+        postcondition_value="# authorized marker",
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    execution = store.get(TASK_EXECUTION_ID)
+    artifact = artifacts.get(execution["generatedArtifactIds"][0])
+    [operation] = artifact["localizedOperations"]
+    assert operation["path"] == "src/app.py"
+    assert operation["repositoryRevision"] == artifact["repositoryRevision"]
+    assert operation["modelDeclaredRegionId"] == "diagnostic-label"
+    assert operation["trustedRegion"]["kind"] == "WHOLE_FILE"
+    assert operation["trustedRegion"]["selectionId"].startswith("planselection-")
+    assert operation["trustedRegion"]["planArtifactId"] == PLAN_ARTIFACT_ID
+    assert operation["trustedRegion"]["span"] == [0, len("value = 1\n")]
+    assert operation["preimageSha256"] == sha256(b"value = 1\n").hexdigest()
+    assert operation["postimageSha256"] == sha256(
+        b"value = 1\n# authorized marker\n"
+    ).hexdigest()
+    validate_runtime("GeneratedArtifact", artifact)
 
 
 def test_evidence_bound_authorized_deletion_proves_absent_post_state(tmp_path: Path) -> None:
@@ -857,6 +981,8 @@ def setup_handler(
             change.setdefault("preimageSha256", "0" * 64)
             if change.get("path") == "src/app.py":
                 change["preimageSha256"] = sha256(b"value = 1\n").hexdigest()
+            if change.get("operation") in {"insert", "replace", "rewrite"}:
+                change.setdefault("repositoryRevision", revision)
     model = FakeModelAdapter(
         [ModelResponse(output=output, usage=ModelUsage(30, 20), latency_ms=5)]
     )

@@ -638,6 +638,14 @@ artifacts, and explicit pass, review-required, or reject dispositions. Accidenta
 unrelated deletion remains fail-closed; an explicitly authorized risky rewrite
 may proceed only through artifact-bound human approval.
 
+AEP-067 extends that contract: localized-edit authority is derived server-side
+from immutable planning evidence. Model region labels are not authorization;
+the persisted operation evidence records the trusted selector, selection, and
+resolved span separately from any legacy diagnostic label. The strict model
+shape uses nullable `regionId`, while the runtime records whole-file authority
+with an explicit server-derived `WHOLE_FILE` selector. Diagnostic labels are
+bounded identifiers and cannot persist arbitrary model-copied source text.
+
 Implemented foundations currently include:
 
 * Resource and runtime-object JSON Schemas, fixtures, and validation.
