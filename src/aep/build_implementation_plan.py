@@ -33,12 +33,13 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         intended = output.get("intendedFiles")
         if isinstance(intended, (str, bytes)) or not isinstance(intended, Sequence):
             return output
-        evidence = {
-            item.get("content", {}).get("path"): item.get("content")
-            for item in context_package.get("elements", ())
-            if isinstance(item, Mapping) and item.get("type") == "planning-evidence"
-            and isinstance(item.get("content"), Mapping)
-        }
+        evidence: dict[str, list[Mapping[str, Any]]] = {}
+        for item in context_package.get("elements", ()):
+            content = item.get("content") if isinstance(item, Mapping) else None
+            if isinstance(item, Mapping) and item.get("type") == "planning-evidence" and isinstance(content, Mapping):
+                path = content.get("path")
+                if isinstance(path, str):
+                    evidence.setdefault(path, []).append(content)
         selection = context_package.get("selection", {})
         required_context = selection.get("requiredContext", ()) if isinstance(selection, Mapping) else ()
         evidence_required = "planning-evidence" in required_context
@@ -61,20 +62,25 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         required, no_change, unsupported = [], [], []
         selected = []
         for path in authorized:
-            record = evidence[path]
-            states = [item.get("result") for item in record.get("predicateResults", ())]
+            # Null-scope evidence is evaluator-owned and cannot decide a path
+            # disposition or grant localized mutation authority.
+            records = evidence[path]
+            editable = [record for record in records
+                        if record.get("authorizationRole") != "EVALUATOR_ONLY"]
+            deciding = editable or records
+            states = [state for record in deciding for state in
+                      (item.get("result") for item in record.get("predicateResults", ()))]
+            postcondition_states = [item.get("result") for record in deciding
+                                    for item in record.get("postconditionResults", ())]
             if "UNSUPPORTED" in states:
                 unsupported.append(path)
             elif states and all(state == "MATCH" for state in states):
                 required.append(path)
-            elif all(
-                item.get("result") == "MATCH"
-                for item in record.get("postconditionResults", ())
-            ) and record.get("postconditionResults"):
+            elif postcondition_states and all(state == "MATCH" for state in postcondition_states):
                 no_change.append(path)
             else:
                 unsupported.append(path)
-            selected.append(record)
+            selected.extend(records)
         canonical = dict(output)
         canonical.update({
             "authorizedPaths": authorized,

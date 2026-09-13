@@ -97,6 +97,26 @@ def test_delete_requires_whole_file_and_region_boundary_is_enforced() -> None:
         )
 
 
+def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() -> None:
+    preimage = "# First\none\n# Second\ntwo\n# Outside\nthree\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    regions = {"README.md": (
+        {"kind": "MARKDOWN_SECTION", "name": "First", "selectionId": "first"},
+        {"kind": "MARKDOWN_SECTION", "name": "Second", "selectionId": "second"},
+    )}
+    change = _validated_changes(
+        {"changes": [operation(preimage, anchor="two", content="updated", regionId="model-label")]},
+        ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION, regions_by_path=regions,
+    )
+    assert "updated" in change[0]["content"]
+    assert '"selectionId": "second"' in change[0]["localizedOperations"]
+    with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
+        _validated_changes(
+            {"changes": [operation(preimage, anchor="three", content="updated")]},
+            ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+            repository_revision=REVISION, regions_by_path=regions,
+        )
 def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
     preimage = ""
     result = apply_localized_operations(

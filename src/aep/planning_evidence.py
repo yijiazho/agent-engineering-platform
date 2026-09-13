@@ -488,13 +488,13 @@ def validate_plan_path_contract(
     evidence = plan.get("pathEvidence")
     if isinstance(evidence, (str, bytes)) or not isinstance(evidence, Sequence):
         raise PlanningEvidenceError("implementation plan requires pathEvidence")
-    by_path: dict[str, Mapping[str, Any]] = {}
+    by_path: dict[str, list[Mapping[str, Any]]] = {}
     for item in evidence:
-        if not isinstance(item, Mapping) or item.get("path") in by_path:
-            raise PlanningEvidenceError("pathEvidence must contain one unique record per path")
+        if not isinstance(item, Mapping):
+            raise PlanningEvidenceError("pathEvidence must contain planning evidence records")
         path = item.get("path")
         _path(path)
-        by_path[path] = item
+        by_path.setdefault(path, []).append(item)
     if set(by_path) != set(authorized):
         raise PlanningEvidenceError("pathEvidence must cover every authorized path")
     trusted_by_id: dict[str, Mapping[str, Any]] = {}
@@ -503,42 +503,41 @@ def validate_plan_path_contract(
         if not isinstance(selection_id, str) or not selection_id or selection_id in trusted_by_id:
             raise PlanningEvidenceError("trusted planning evidence has invalid or duplicate identities")
         trusted_by_id[selection_id] = item
-    for path, item in by_path.items():
-        if item.get("repositoryRevision") != repository_revision:
-            raise PlanningEvidenceError(f"planning evidence for {path!r} is revision-mismatched")
-        if not re.fullmatch(r"[0-9a-f]{64}", str(item.get("preimageSha256", ""))):
-            raise PlanningEvidenceError(f"planning evidence for {path!r} lacks a content digest")
-        trusted = trusted_by_id.get(str(item.get("selectionId", "")))
-        if trusted is None or _canonical(item) != _canonical(trusted):
-            raise PlanningEvidenceError(
-                f"planning evidence for {path!r} does not match trusted Context Builder evidence"
-            )
-        results = item.get("predicateResults")
-        if not isinstance(results, Sequence) or not results:
-            raise PlanningEvidenceError(f"planning evidence for {path!r} lacks predicate results")
-        states = [result.get("result") for result in results if isinstance(result, Mapping)]
-        if len(states) != len(results):
+    for path, records in by_path.items():
+        # Multiple scopes for the same immutable path are expected.  Duplicate
+        # selection IDs, however, would make the model's evidence citation
+        # ambiguous and remain fail-closed.
+        if len({str(item.get("selectionId")) for item in records}) != len(records):
+            raise PlanningEvidenceError("pathEvidence has duplicate scope identities")
+        editable_records = [item for item in records if item.get("authorizationRole") != "EVALUATOR_ONLY"]
+        deciding_records = editable_records or records
+        for item in records:
+            if item.get("repositoryRevision") != repository_revision:
+                raise PlanningEvidenceError(f"planning evidence for {path!r} is revision-mismatched")
+            if not re.fullmatch(r"[0-9a-f]{64}", str(item.get("preimageSha256", ""))):
+                raise PlanningEvidenceError(f"planning evidence for {path!r} lacks a content digest")
+            trusted = trusted_by_id.get(str(item.get("selectionId", "")))
+            if trusted is None or _canonical(item) != _canonical(trusted):
+                raise PlanningEvidenceError(
+                    f"planning evidence for {path!r} does not match trusted Context Builder evidence"
+                )
+        states = [result.get("result") for item in deciding_records
+                  for result in item.get("predicateResults", ()) if isinstance(result, Mapping)]
+        expected_count = sum(len(item.get("predicateResults", ())) for item in deciding_records)
+        if len(states) != expected_count or not states:
             raise PlanningEvidenceError(f"planning evidence for {path!r} has malformed predicate results")
         has_unsupported = "UNSUPPORTED" in states
-        all_match = bool(states) and all(state == "MATCH" for state in states)
-        conjunction_failed = bool(states) and not has_unsupported and not all_match
-        postcondition_results = item.get("postconditionResults")
-        postcondition_states = [
-            result.get("result") for result in postcondition_results
-            if isinstance(result, Mapping)
-        ] if isinstance(postcondition_results, Sequence) else []
-        postconditions_match = bool(postcondition_states) and all(
-            state == "MATCH" for state in postcondition_states
-        )
+        all_match = all(state == "MATCH" for state in states)
+        conjunction_failed = not has_unsupported and not all_match
+        postcondition_states = [result.get("result") for item in deciding_records
+                                for result in item.get("postconditionResults", ())
+                                if isinstance(result, Mapping)]
+        postconditions_match = bool(postcondition_states) and all(state == "MATCH" for state in postcondition_states)
         if path in required and not all_match:
             raise PlanningEvidenceError(f"required-change path {path!r} does not satisfy its planning predicates")
         if path in no_change and (not conjunction_failed or not postconditions_match):
-            raise PlanningEvidenceError(
-                f"no-change path {path!r} lacks satisfied planning-time postconditions"
-            )
-        if path in unsupported and not (
-            has_unsupported or (conjunction_failed and not postconditions_match)
-        ):
+            raise PlanningEvidenceError(f"no-change path {path!r} lacks satisfied planning-time postconditions")
+        if path in unsupported and not (has_unsupported or (conjunction_failed and not postconditions_match)):
             raise PlanningEvidenceError(f"unsupported path {path!r} lacks unsupported evidence")
 
 

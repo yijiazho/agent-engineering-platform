@@ -382,7 +382,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
-                regions: list[Mapping[str, Any] | None] = []
+                scoped_declarations: dict[str, dict[str, Any]] = {}
                 declared_max_bytes: int | None = None
                 for declaration in declarations:
                     if not isinstance(declaration, Mapping):
@@ -396,9 +396,6 @@ class ContextBuilder:
                     postcondition = declaration.get("postcondition")
                     if not isinstance(predicate, Mapping) or not isinstance(postcondition, Mapping):
                         raise RequiredContextError("planning predicates require predicate and postcondition")
-                    predicates.append(dict(predicate))
-                    postconditions.append(dict(postcondition))
-                    reasons.append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
                     declared_region = declaration.get("region")
                     if declared_region is not None and not isinstance(
                         declared_region, Mapping
@@ -406,12 +403,22 @@ class ContextBuilder:
                         raise RequiredContextError(
                             f"planning-evidence target {path!r} has malformed region selector"
                         )
-                    regions.append(declared_region)
+                    # A path can have several independently trusted scopes.
+                    # In particular, a whole-file criterion is evaluation
+                    # evidence, never implicit authority to edit the file.
+                    scope_key = json.dumps(declared_region, sort_keys=True, separators=(",", ":"))
+                    scope = scoped_declarations.setdefault(scope_key, {
+                        "region": declared_region, "predicates": [],
+                        "postconditions": [], "reasons": [],
+                    })
+                    scope["predicates"].append(dict(predicate))
+                    scope["postconditions"].append(dict(postcondition))
+                    scope["reasons"].append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
                     hint = declaration.get("maxBytes")
                     if hint is not None:
                         hint = int(hint)
                         declared_max_bytes = hint if declared_max_bytes is None else min(declared_max_bytes, hint)
-                if not predicates:
+                if not scoped_declarations:
                     continue
                 inspection = task_spec.get("planningEvidenceInspection")
                 if not isinstance(inspection, Mapping) or not all(
@@ -425,16 +432,17 @@ class ContextBuilder:
                 trusted_ceiling = int(inspection["maxFileBytes"])
                 total_ceiling = int(inspection["maxTotalBytes"])
                 status_ceiling = int(inspection["statusFieldScanBytes"])
-                kinds = {str(item.get("kind")) for item in (*predicates, *postconditions)}
-                region = regions[0] if regions else None
-                if any(item != region for item in regions):
-                    raise RequiredContextError(
-                        f"planning-evidence target {path!r} has inconsistent region selectors"
-                    )
+                all_predicates = [item for scope in scoped_declarations.values() for item in scope["predicates"]]
+                all_postconditions = [item for scope in scoped_declarations.values() for item in scope["postconditions"]]
+                kinds = {str(item.get("kind")) for item in (*all_predicates, *all_postconditions)}
+                # Mixed scopes need the complete immutable blob.  Retain the
+                # bounded status-field fast path for a sole whole-file status
+                # declaration.
+                only_scope = next(iter(scoped_declarations.values())) if len(scoped_declarations) == 1 else None
                 strategy = (
                     "STRUCTURED_STATUS_FIELD_SCAN"
-                    if region is None and kinds <= {"STATUS_EQUALS"}
-                    else "COMPLETE_BLOB_SCAN"
+                    if only_scope is not None and only_scope["region"] is None
+                    and kinds <= {"STATUS_EQUALS"} else "COMPLETE_BLOB_SCAN"
                 )
                 applied_ceiling = trusted_ceiling
                 inspected_so_far = sum(
@@ -480,28 +488,35 @@ class ContextBuilder:
                             source_id = (
                                 f"git-blob:{repository_revision}:{path}:{blob_digest}"
                             )
-                    record = evaluate_path_predicates(path=path, content=content,
-                        repository_revision=repository_revision, predicates=predicates,
-                        source_id=source_id, max_bytes=applied_ceiling,
-                        blob_size=blob_size, blob_sha256=blob_digest,
-                        declared_max_bytes=declared_max_bytes,
-                        inspection_strategy=strategy,
-                        status_fields=(status_fields if strategy ==
-                            "STRUCTURED_STATUS_FIELD_SCAN" else None),
-                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
-                        region=region)
-                    postcondition_record = evaluate_path_predicates(
-                        path=path, content=content,
-                        repository_revision=repository_revision,
-                        predicates=postconditions, source_id=source_id,
-                        max_bytes=applied_ceiling, blob_size=blob_size,
-                        blob_sha256=blob_digest, declared_max_bytes=declared_max_bytes,
-                        inspection_strategy=strategy,
-                        status_fields=(status_fields if strategy ==
-                            "STRUCTURED_STATUS_FIELD_SCAN" else None),
-                        inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
-                        region=region,
-                    )
+                    scope_records = []
+                    for scope in scoped_declarations.values():
+                        scope_region = scope["region"]
+                        scope_kinds = {str(item.get("kind")) for item in (*scope["predicates"], *scope["postconditions"])}
+                        scope_strategy = (
+                            "STRUCTURED_STATUS_FIELD_SCAN"
+                            if scope_region is None and scope_kinds <= {"STATUS_EQUALS"}
+                            and len(scoped_declarations) == 1 else "COMPLETE_BLOB_SCAN"
+                        )
+                        record = evaluate_path_predicates(path=path, content=content,
+                            repository_revision=repository_revision, predicates=scope["predicates"],
+                            source_id=source_id, max_bytes=applied_ceiling,
+                            blob_size=blob_size, blob_sha256=blob_digest,
+                            declared_max_bytes=declared_max_bytes,
+                            inspection_strategy=scope_strategy,
+                            status_fields=(status_fields if scope_strategy == "STRUCTURED_STATUS_FIELD_SCAN" else None),
+                            inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling,
+                            region=scope_region)
+                        postcondition_record = evaluate_path_predicates(
+                            path=path, content=content, repository_revision=repository_revision,
+                            predicates=scope["postconditions"], source_id=source_id,
+                            max_bytes=applied_ceiling, blob_size=blob_size, blob_sha256=blob_digest,
+                            declared_max_bytes=declared_max_bytes, inspection_strategy=scope_strategy,
+                            status_fields=(status_fields if scope_strategy == "STRUCTURED_STATUS_FIELD_SCAN" else None),
+                            inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling, region=scope_region)
+                        scope_records.append(finalize_planning_evidence(
+                            record, postconditions=scope["postconditions"],
+                            selection_reasons=scope["reasons"],
+                            postcondition_results=postcondition_record["predicateResults"]))
                 except (OSError, UnicodeError, ValueError) as error:
                     reason = getattr(error, "reason", None) or {
                         FileNotFoundError: "TARGET_MISSING", UnicodeDecodeError: "INVALID_UTF8",
@@ -522,16 +537,23 @@ class ContextBuilder:
                         ),
                     }
                     raise failure from error
-                record = finalize_planning_evidence(
-                    record, postconditions=postconditions, selection_reasons=reasons,
-                    postcondition_results=postcondition_record["predicateResults"],
-                )
-                evidence_target.append(("planning-evidence", {
-                    "type": "planning-evidence", "content": record,
-                    "provenance": {"actor": "context-builder", "repositoryRevision": repository_revision,
-                        "knowledgeGraphVersion": knowledge_graph_version,
-                        "resourceRefs": [task_ref]},
-                }))
+                for record in scope_records:
+                    region = record["inspection"]["region"]
+                    record["scopeClass"] = "EDITABLE_REGION" if region is not None else "WHOLE_FILE_EVALUATOR"
+                    record["authorizationRole"] = "LOCALIZED_EDIT" if region is not None else "EVALUATOR_ONLY"
+                    record["owningEvaluator"] = None if region is not None else "deterministic-evaluator"
+                    # The role is part of the trusted selection identity.
+                    record = finalize_planning_evidence(
+                        record, postconditions=record["postconditions"],
+                        selection_reasons=record["selectionReasons"],
+                        postcondition_results=record["postconditionResults"],
+                    )
+                    evidence_target.append(("planning-evidence", {
+                        "type": "planning-evidence", "content": record,
+                        "provenance": {"actor": "context-builder", "repositoryRevision": repository_revision,
+                            "knowledgeGraphVersion": knowledge_graph_version,
+                            "resourceRefs": [task_ref]},
+                    }))
                 seen_paths.add(path)
                 matched += 1
             if matched == 0:

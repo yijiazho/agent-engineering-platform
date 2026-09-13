@@ -194,7 +194,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 if insertion_no_change_paths:
                     _verify_no_change_targets(
                         insertion_no_change_paths, required_insertions, editable_targets,
-                        regions_by_path=_regions_by_path(plan),
+                        regions_by_path=_single_regions_by_path(plan),
                         max_bytes=editable_target_max_bytes,
                     )
             else:
@@ -301,7 +301,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         targets=[item for item in editable_targets if item["path"] in required_change_paths],
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
-                        regions_by_path=_regions_by_path(plan),
+                        regions_by_path=_single_regions_by_path(plan),
                         evaluator_ref=_ref_record(reconciliation_evaluation.ref),
                         proposed_contents_by_path={
                             item["path"]: item["content"] for item in changes
@@ -1163,8 +1163,9 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
     return result
 
 
-def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
-    result = {}
+def _regions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    """Return every editable trusted scope, never a null-scope fallback."""
+    result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
         if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
             continue
@@ -1180,31 +1181,34 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
                 selection_id = item.get("selectionId")
                 if not isinstance(selection_id, str) or not selection_id:
                     raise GeneratePatchContractError("trusted planning evidence has no selection identity")
-                result[item["path"]] = {
+                result.setdefault(item["path"], []).append({
                     "kind": kind, "name": name, "selectionId": selection_id,
                     "planArtifactId": plan.get("_artifactId"),
-                }
+                })
             else:
                 raise GeneratePatchContractError(
                     "trusted planning evidence region selector is malformed"
                 )
         elif region is None:
-            selection_id = item.get("selectionId")
-            if not isinstance(selection_id, str) or not selection_id:
-                raise GeneratePatchContractError(
-                    "trusted planning evidence has no selection identity"
-                )
-            result[item["path"]] = {
-                "kind": "WHOLE_FILE",
-                "name": "WHOLE_FILE",
-                "selectionId": selection_id,
-                "planArtifactId": plan.get("_artifactId"),
-            }
+            # Whole-file evidence can prove evaluator-owned requirements but
+            # is deliberately absent from localized edit authorization.
+            continue
         else:
             raise GeneratePatchContractError(
                 "trusted planning evidence region selector is malformed"
             )
-    return result
+    return {path: tuple(regions) for path, regions in result.items()}
+
+
+def _single_regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
+    """Compatibility view for deterministic postimage checks.
+
+    Localized application receives all scopes and chooses only a uniquely
+    matching server-derived span.  Existing one-scope reconciliation callers
+    retain their narrow contract.
+    """
+    return {path: regions[0] for path, regions in _regions_by_path(plan).items()
+            if len(regions) == 1}
 
 
 def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
@@ -1219,7 +1223,7 @@ def _validated_changes(
     allowed_paths: Sequence[str],
     editable_targets: Sequence[JsonMapping],
     *, repository_revision: str | None = None,
-    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    regions_by_path: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
     rewrite_authorized_paths: Sequence[str] = (),
     required_insertions: Sequence[Mapping[str, str]] = (),
 ) -> tuple[dict[str, str], ...]:
@@ -1258,7 +1262,10 @@ def _validated_changes(
             content = target.get("content") if isinstance(target, Mapping) else None
             if target is None or not isinstance(content, str):
                 raise GeneratePatchContractError(f"localized operation target {path!r} is unavailable or non-UTF-8")
-            region = (regions_by_path or {}).get(path)
+            raw_regions = (regions_by_path or {}).get(path, ())
+            # Direct callers from the pre-multi-scope contract may still pass
+            # one mapping; normalize it at this boundary.
+            regions = (raw_regions,) if isinstance(raw_regions, Mapping) else tuple(raw_regions)
             # The current plan format binds postconditions, not per-operation
             # replace/delete identities.  Do not let an otherwise valid
             # insertion smuggle an unrelated mutation into the same region.
@@ -1278,16 +1285,25 @@ def _validated_changes(
                 raise GeneratePatchContractError(
                     "localized replace/delete requires immutable plan-operation evidence"
                 )
-            try:
-                applied = apply_localized_operations(
-                    path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
-                    repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
-                    operations=operations, region=region,
-                    # AEP-059's exact-artifact approval does not exist yet.
-                    # Keep rewrites rejected rather than allowing publication.
-                    allow_rewrite=False, target_exists=bool(target.get("exists", True)),
+            if not regions:
+                raise RejectedPatchCandidateError(
+                    "TRUSTED_REGION_MISSING: localized operation requires a server-derived region selector"
                 )
-            except LocalizedPatchError as error:
+            applied = None
+            failures: list[LocalizedPatchError] = []
+            for region in regions:
+                try:
+                    applied = apply_localized_operations(
+                        path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
+                        repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
+                        operations=operations, region=region, allow_rewrite=False,
+                        target_exists=bool(target.get("exists", True)),
+                    )
+                    break
+                except LocalizedPatchError as error:
+                    failures.append(error)
+            if applied is None:
+                error = failures[-1]
                 if error.code in {
                     "TRUSTED_REGION_MISSING",
                     "TRUSTED_REGION_UNRESOLVED",

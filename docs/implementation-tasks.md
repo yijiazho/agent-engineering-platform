@@ -81,3 +81,4 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md)
 * [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md)
 * [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md)
+* [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md)

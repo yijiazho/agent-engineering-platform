@@ -26,9 +26,9 @@ or `Blocked` as implementation state changes.
 | ------ | ----: |
 | Completed | 44 |
 | In Progress | 12 |
-| Not Started | 11 |
+| Not Started | 12 |
 | Blocked | 0 |
-| Total | 67 |
+| Total | 68 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -182,17 +182,18 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | In Progress |
 | 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | In Progress |
 | 56 | [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md) | In Progress |
-| 57 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
-| 58 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
-| 59 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |
-| 60 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
-| 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Not Started |
-| 62 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Not Started |
-| 63 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Not Started |
-| 64 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |
-| 65 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
-| 66 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
-| 67 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
+| 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | Not Started |
+| 58 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
+| 59 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
+| 60 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |
+| 61 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
+| 62 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Not Started |
+| 63 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Not Started |
+| 64 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Not Started |
+| 65 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |
+| 66 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
+| 67 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
+| 68 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
 
 ---
 
@@ -242,7 +243,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-040 | AEP-003, AEP-017, AEP-020, AEP-025, AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
 | AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Completed |
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
-| AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047, AEP-048, AEP-049, AEP-050, AEP-051, AEP-052, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | In Progress |
+| AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047, AEP-048, AEP-049, AEP-050, AEP-051, AEP-052, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067, AEP-068 | In Progress |
 | AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
 | AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | In Progress |
 | AEP-046 | AEP-010, AEP-036, AEP-040, AEP-042, AEP-045 | In Progress |
@@ -267,6 +268,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-065 | AEP-019, AEP-020, AEP-024, AEP-027, AEP-028, AEP-041, AEP-051, AEP-056 | Not Started |
 | AEP-066 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-036, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055 | Not Started |
 | AEP-067 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066 | In Progress |
+| AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | Not Started |
 
 ---
 
@@ -280,7 +282,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018, AEP-045, AEP-051, AEP-053, AEP-054 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024, AEP-049, AEP-050 | In Progress |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028, AEP-048 | In Progress |
-| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034, AEP-055, AEP-066, AEP-067 | In Progress |
+| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034, AEP-055, AEP-066, AEP-067, AEP-068 | In Progress |
 | Deployment And Observability | AEP-035, AEP-036, AEP-037 | Completed |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043, AEP-044, AEP-046, AEP-047, AEP-052 | In Progress |
 | Operations And Governance Expansion | AEP-056, AEP-057, AEP-058, AEP-059, AEP-062 | In Progress |
