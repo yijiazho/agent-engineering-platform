@@ -561,9 +561,58 @@ persisted result contains no full file body: path, revision, SHA-256 preimage,
 source identity, selected field or match count, predicate, and result. The same
 snapshot, predicates, and contents produce the same selection identity.
 
-Planning evidence is keyed by `(path, scope)`, not only by path. A path can
-therefore carry multiple independently selected editable Markdown regions and
-whole-file evaluator-owned criteria. Each record persists its scope class,
-selection identity, authorization role, and evaluator ownership without a
-source body. A `null` scope is evaluator evidence only; it cannot authorize a
-localized operation or substitute for a uniquely resolved scoped selection.
+
+# Semantic And Hybrid Candidate Retrieval
+
+AEP's repository knowledge layer may use multiple bounded retrieval signals to
+nominate repository evidence before an Agent reasons about an issue. Lexical
+retrieval remains authoritative for exact strings such as paths, identifiers,
+Resource names, configuration keys, issue numbers, and error text. A
+revision-bound semantic index may additionally retrieve files or
+structure-aware chunks whose meaning is related even when their vocabulary does
+not overlap the issue.
+
+Semantic index entries are content-bound and provider-neutral. An entry records
+the source content digest, path and bounded source identity, revision/snapshot
+membership, embedding configuration identity, and vector dimensions. Identical
+content may reuse an embedding across Git revisions, but query membership is
+always evaluated against the exact WorkflowExecution revision. A small local
+persistent backend is sufficient for the initial implementation; the repository
+knowledge API, not Context Builder, owns the backend contract.
+
+Candidate selection should use deterministic hybrid rank fusion rather than
+treating vector similarity as a replacement for lexical retrieval. Every
+selected candidate preserves its component retrieval reasons and ranks plus the
+fused rank and configured bounds.
+
+The evidence-strength boundary is:
+
+```text
+lexical / semantic / graph retrieval
+                |
+                v
+        candidate relevance
+                |
+                v
+          Agent reasoning
+                |
+                v
+       typed evidence request
+                |
+                v
+ exact revision-bound repository read
+                |
+                v
+         planning evidence
+                |
+                v
+       implementation plan
+                |
+                v
+         editable target
+```
+
+A semantic score never proves that a path requires modification and never
+grants write authority. Agents receive selected candidates only through
+ContextPackage construction and do not query vector, lexical, or graph
+providers directly.

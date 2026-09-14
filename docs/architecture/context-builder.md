@@ -789,3 +789,25 @@ by a deterministic SHA-256 identifier before failure metadata is attached.
 GeneratePatch applies the editable-target byte ceiling derived from the trusted
 Task token budget to target loading, late no-change predicate checks, and both
 postcondition and insertion reconciliation proofs.
+
+
+# Hybrid Candidate Context
+
+For early issue analysis, Context Builder may materialize candidate repository
+context from a deterministic hybrid query supplied by the repository knowledge
+layer. The query can combine lexical and semantic result sets only when both are
+bound to the WorkflowExecution's exact repository revision and compatible
+knowledge snapshot.
+
+Context Builder does not interpret vector similarity as repository truth. It
+applies configured candidate-count and byte/token bounds, deduplicates canonical
+source identities, and records component ranks, fused rank, retrieval mode, and
+degraded-mode provenance in the resulting ContextPackage. If semantic retrieval
+is unavailable, any lexical-only fallback must be explicitly configured and
+recorded rather than silently changing retrieval semantics.
+
+Hybrid candidates are inputs to AnalyzeIssue or a future explicit discovery
+Task. They cannot directly populate planning predicates, planning-evidence
+truth values, implementation-plan `intendedFiles`, editable targets, or Tool
+write permissions. Those remain progressively stronger downstream contracts
+based on exact revision-bound evidence.
