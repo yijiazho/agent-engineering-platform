@@ -60,6 +60,12 @@ The implementation must:
 * derive the semantic query from a versioned canonical field projection and
   normalization with a pre-provider byte/token ceiling, and persist its
   content digest and derivation version in provenance;
+* validate the query vector and persist its immutable content-addressed identity
+  for the logical query. Retries and deterministic context rebuilds must reuse
+  that identity rather than re-embedding the same query;
+* route every query-side embedding attempt through the shared AEP-046 model
+  admission coordinator and reserve/debit the requesting Workflow/Task
+  execution budgets under AEP-062, with durable consumption evidence;
 * expose candidate retrieval provenance through AEP inspection, including query
   identity, revision, retrieval modes, configured bounds, component ranks, and
   fused rank without printing source bodies by default. Provenance must retain
@@ -76,6 +82,8 @@ The implementation must:
 * AEP-053
 * AEP-054
 * AEP-069
+* AEP-046
+* AEP-062
 
 ## Acceptance Criteria
 
@@ -107,6 +115,13 @@ The implementation must:
 * A missing, stale, disabled, or incompatible semantic index either fails with
   a stable configured error or uses an explicitly configured lexical-only
   fallback whose degraded mode is persisted in ContextPackage provenance.
+* A retry or rebuild with the same logical query reuses the validated query
+  embedding identity and does not dispatch a second embedding request unless
+  the prior attempt definitively failed; the identity is inspectable without
+  exposing the vector or query text.
+* Query embedding attempts reserve and debit the requesting execution budget and
+  use shared model admission; pre-call rejection and post-call consumption are
+  covered for success, failure, retry, and resume.
 * Hybrid candidate selection alone cannot populate `intendedFiles`,
   `planningPredicates`, planning-evidence truth values, editable targets, or
   write permissions.

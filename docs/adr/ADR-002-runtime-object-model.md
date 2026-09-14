@@ -36,6 +36,9 @@ The initial runtime object model includes:
 * ResolvedAgent
 * AgentInvocation
 * ModelInvocation
+* SemanticIndexBuild
+* SemanticQuery
+* EmbeddingInvocation
 * ToolInvocation
 * EvaluationResult
 * PolicyDecision
@@ -133,11 +136,15 @@ WorkflowExecution
     AgentInvocation*
       ModelInvocation*
       ToolInvocation*
+    SemanticQuery*
+      EmbeddingInvocation*
     GeneratedArtifact*
     EvaluationResult*
     PolicyDecision*
     Approval*
     ExecutionEvent*
+  SemanticIndexBuild*
+    EmbeddingInvocation*
 ```
 
 The hierarchy describes ownership and traceability.
@@ -318,7 +325,10 @@ It may create ToolInvocation objects only for allowed non-model, non-knowledge t
 
 # ModelInvocation
 
-ModelInvocation records a call to an LLM, embedding model, reranker, or other model provider.
+ModelInvocation records an Agent-owned call to an LLM or other model provider
+performed as part of `AgentInvocation`. Embedding calls owned by repository
+semantic indexing or semantic candidate queries are not `ModelInvocation`
+objects because they are not Agent work and have no `agentInvocationId`.
 
 Responsibilities:
 
@@ -333,6 +343,18 @@ Responsibilities:
 Model providers are not Tools.
 
 ModelInvocation is governed by Model resources and ResolvedAgent policy constraints.
+
+## SemanticIndexBuild and SemanticQuery
+
+Repository semantic operations have independent runtime owners. A
+`SemanticIndexBuild` records one revision-bound index generation and owns an
+`EmbeddingInvocation` for every indexing attempt, including failures before a
+record is produced. A `SemanticQuery` records the execution-scoped candidate
+query and owns the embedding attempt for its canonical issue/Task projection.
+Both objects bind to an exact versioned Model Resource, shared model admission,
+execution budgets, and the immutable revision/configuration identities needed
+for replay. They persist safe timing, usage, and classified failure evidence;
+they never persist credentials, unrestricted source bodies, or query text.
 
 ---
 
