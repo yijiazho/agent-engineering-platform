@@ -4,7 +4,7 @@
 
 ## Context
 
-AEP-067 adds revision-bound semantic candidate retrieval, while the existing
+AEP-069 adds revision-bound semantic candidate retrieval, while the existing
 repository knowledge layer already provides deterministic lexical candidate
 selection. Neither signal is sufficient by itself for software repositories.
 
@@ -40,7 +40,10 @@ The implementation must:
 * preserve the component lexical rank/score and semantic rank/score alongside
   the fused rank and selection reason;
 * support explicit candidate-count, per-source, byte/token, and optional
-  path/type bounds so retrieval cannot expand without configuration;
+  path/type bounds so retrieval cannot expand without configuration. These
+  bounds, filters, fusion parameters, thresholds, and degraded-mode behavior
+  must come from the exact versioned requesting `Task` Resource rather than
+  mutable runtime configuration;
 * deduplicate file/chunk candidates by canonical source identity while
   preserving all retrieval reasons that contributed to selection;
 * give exact identifier/path matches an inspectable path through the lexical
@@ -53,7 +56,8 @@ The implementation must:
   in ContextPackage provenance rather than silent;
 * expose candidate retrieval provenance through AEP inspection, including query
   identity, revision, retrieval modes, configured bounds, component ranks, and
-  fused rank without printing source bodies by default; and
+  fused rank without printing source bodies by default. Provenance must retain
+  the resolved Task Resource reference and normalized retrieval policy; and
 * add regression fixtures comparing lexical-only and hybrid candidate
   selection for exact-identifier and vocabulary-mismatch issues.
 
@@ -65,7 +69,7 @@ The implementation must:
 * AEP-045
 * AEP-053
 * AEP-054
-* AEP-067
+* AEP-069
 
 ## Acceptance Criteria
 
@@ -89,6 +93,11 @@ The implementation must:
 * Hybrid retrieval obeys configured candidate, byte/token, and source bounds
   before model invocation; truncation or exclusion is deterministic and
   inspectable.
+* Candidate bounds, path/type filters, rank-fusion parameters, score thresholds,
+  and degraded-mode behavior are resolved from the immutable requesting Task
+  version. Query provenance records that Task reference and the normalized
+  policy, so identical execution inputs cannot silently use a different
+  retrieval configuration.
 * A missing, stale, disabled, or incompatible semantic index either fails with
   a stable configured error or uses an explicitly configured lexical-only
   fallback whose degraded mode is persisted in ContextPackage provenance.

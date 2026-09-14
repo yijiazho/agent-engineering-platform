@@ -26,9 +26,9 @@ or `Blocked` as implementation state changes.
 | ------ | ----: |
 | Completed | 44 |
 | In Progress | 12 |
-| Not Started | 12 |
+| Not Started | 14 |
 | Blocked | 0 |
-| Total | 68 |
+| Total | 70 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -194,6 +194,8 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 66 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
 | 67 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
 | 68 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
+| 69 | [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md) | Not Started |
+| 70 | [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md) | Not Started |
 
 ---
 
@@ -269,6 +271,8 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-066 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-036, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055 | Not Started |
 | AEP-067 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066 | In Progress |
 | AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | In Progress |
+| AEP-069 | AEP-003, AEP-004, AEP-015, AEP-016, AEP-017, AEP-018, AEP-039, AEP-045 | Not Started |
+| AEP-070 | AEP-016, AEP-017, AEP-029, AEP-045, AEP-053, AEP-054, AEP-069 | Not Started |
 
 ---
 
@@ -287,7 +291,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043, AEP-044, AEP-046, AEP-047, AEP-052 | In Progress |
 | Operations And Governance Expansion | AEP-056, AEP-057, AEP-058, AEP-059, AEP-062 | In Progress |
 | Evaluation And Experimentation | AEP-060, AEP-061 | Not Started |
-| Repository Intelligence Expansion | AEP-063 | Not Started |
+| Repository Intelligence Expansion | AEP-063, AEP-069, AEP-070 | Not Started |
 | Workflow And CI Expansion | AEP-064, AEP-065 | Not Started |
 
 ---

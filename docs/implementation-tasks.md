@@ -82,3 +82,5 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md)
 * [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md)
 * [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md)
+* [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md)
+* [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md)

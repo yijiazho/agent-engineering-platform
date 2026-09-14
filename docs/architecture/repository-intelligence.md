@@ -398,29 +398,38 @@ History
 * related issues
 * previous pull requests
 
-The Query Engine never performs semantic search.
+The Query Engine owns bounded candidate retrieval. Its lexical and graph query
+paths remain deterministic. A revision-bound semantic-index query is permitted
+only as an advisory candidate signal and is available to Context Builder through
+the same provider boundary; it never replaces exact lookup, planning-evidence
+reads, graph traversal, or typed structural queries.
 
 ---
 
 # 11. Semantic Layer
 
-Embeddings complement the graph.
+Embeddings complement the graph and may nominate revision-bound source-code
+files or structure-aware chunks for bounded candidate discovery when issue
+vocabulary differs from repository vocabulary.
 
-They are used primarily for:
+They are used for bounded candidate retrieval over:
 
 * documentation
 * ADRs
 * markdown
 * design documents
 * issue discussions
+* source-code files and structure-aware chunks
 
-Embeddings are **not** used for:
+Embeddings are **not** used as authority for:
 
-* source code navigation
+* trusted structural navigation
 * dependency resolution
 * symbol lookup
 
-Graph traversal always takes precedence.
+Graph traversal and lexical exact matches remain the deterministic path for
+structural and identifier queries. Semantic similarity is advisory, cannot
+prove a repository fact, and never authorizes planning or mutation.
 
 ---
 
@@ -561,6 +570,12 @@ persisted result contains no full file body: path, revision, SHA-256 preimage,
 source identity, selected field or match count, predicate, and result. The same
 snapshot, predicates, and contents produce the same selection identity.
 
+Planning evidence is keyed by `(path, scope)`, not only by path. A path can
+therefore carry multiple independently selected editable Markdown regions and
+whole-file evaluator-owned criteria. Each record persists its scope class,
+selection identity, authorization role, and evaluator ownership without a
+source body. A `null` scope is evaluator evidence only; it cannot authorize a
+localized operation or substitute for a uniquely resolved scoped selection.
 
 # Semantic And Hybrid Candidate Retrieval
 
@@ -574,16 +589,28 @@ not overlap the issue.
 
 Semantic index entries are content-bound and provider-neutral. An entry records
 the source content digest, path and bounded source identity, revision/snapshot
-membership, embedding configuration identity, and vector dimensions. Identical
-content may reuse an embedding across Git revisions, but query membership is
-always evaluated against the exact WorkflowExecution revision. A small local
-persistent backend is sufficient for the initial implementation; the repository
-knowledge API, not Context Builder, owns the backend contract.
+membership, exact versioned embedding `Model` Resource reference, vector
+dimensions, similarity metric, and normalization rule. Identical content may
+reuse an embedding across Git revisions, but query membership is always
+evaluated against the exact WorkflowExecution revision. A small local persistent
+backend is sufficient for the initial implementation; the repository knowledge
+API, not Context Builder, owns the backend contract. It stages membership for a
+revision and atomically publishes a complete index generation; a query rejects
+an unavailable or incomplete generation instead of observing partial results.
+
+Embedding calls remain outside Agent and `ModelInvocation` execution. A durable
+`SemanticIndexBuild` owns revision indexing and its `EmbeddingInvocation`
+records persist the resolved Model Resource, timing, classified outcome, and
+safe usage metadata for every attempt, including failures before an entry is
+created. Inspection exposes that evidence without credentials or source bodies.
 
 Candidate selection should use deterministic hybrid rank fusion rather than
 treating vector similarity as a replacement for lexical retrieval. Every
 selected candidate preserves its component retrieval reasons and ranks plus the
-fused rank and configured bounds.
+fused rank and configured bounds. The exact versioned requesting `Task`
+Resource supplies candidate and source limits, path/type filters, fusion
+parameters, thresholds, and the semantic-index degraded-mode choice; query
+provenance records that Resource reference and normalized policy.
 
 The evidence-strength boundary is:
 

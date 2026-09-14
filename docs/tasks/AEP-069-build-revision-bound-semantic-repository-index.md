@@ -29,7 +29,9 @@ AEP should begin with a small local provider-neutral index suitable for one
 repository. A separately operated vector-database service is not required for
 this task. The storage and query contracts must allow a future implementation
 to replace the local backend without changing Context Builder or Task
-semantics.
+semantics. Embeddings are selected through an exact versioned `Model` Resource;
+the index does not introduce an unversioned provider configuration outside the
+immutable Resource graph.
 
 ## Deliverable
 
@@ -40,13 +42,25 @@ The implementation must:
 
 * define canonical semantic-index records for repository files or
   structure-aware chunks, including path, source range or structural identity,
-  content digest, repository revision/snapshot membership, embedding
-  configuration identity, and vector dimensions;
+  content digest, repository revision/snapshot membership, embedding `Model`
+  Resource reference, vector dimensions, similarity metric, and vector
+  normalization rule;
 * define an embedding-provider boundary separate from ModelInvocation and Agent
-  execution, with explicit model/configuration identity, bounded batch and
-  timeout behavior, and no runtime credentials persisted in index evidence;
+  execution. It must consume the exact versioned embedding `Model` Resource,
+  including its provider, model, timeout, retry, and rate-limit configuration,
+  with bounded batch behavior and no runtime credentials persisted in index
+  evidence;
+* define durable `SemanticIndexBuild` and `EmbeddingInvocation` runtime records
+  and inspection paths. Each embedding attempt, including one that fails before
+  an index record is produced, must retain its owning build, requested
+  revision/snapshot, resolved Model Resource, timing, classified outcome, and
+  safe usage metadata without source bodies or credentials;
 * provide a small persistent local index suitable for the self-hosting
   repository without requiring a network vector-database service;
+* stage all membership changes for a repository revision and atomically publish
+  a complete index generation only after it is complete. Queries must reject an
+  absent, incomplete, or superseded generation rather than return a partial
+  candidate set labeled as the requested revision;
 * use content-addressed embedding reuse so unchanged content does not require a
   new embedding merely because a new Git revision references it;
 * exclude unsupported, binary, generated, vendored, secret-bearing, and
@@ -56,7 +70,8 @@ The implementation must:
   documented bounded fallback for small or unsupported text files;
 * expose semantic nearest-neighbor query primitives through the repository
   knowledge API with explicit `topK`, score threshold, result-size, and token or
-  byte bounds;
+  byte bounds. Query semantics and provenance must include the configured
+  similarity metric and normalization rule;
 * return candidate evidence with similarity score, path, source range or chunk
   identity, content digest, revision, knowledge snapshot, embedding
   configuration, and selection reason;
@@ -69,8 +84,12 @@ The implementation must:
 
 ## Dependencies
 
+* AEP-003
+* AEP-004
 * AEP-015
 * AEP-016
+* AEP-017
+* AEP-018
 * AEP-039
 * AEP-045
 
@@ -86,9 +105,18 @@ The implementation must:
 * Changed, renamed, deleted, and newly added files produce correct revision
   membership without leaking candidates from another revision.
 * The embedding-provider contract records provider/model/configuration identity,
-  vector dimensions, timing/failure evidence, and safe usage metadata while
+  exact Model Resource reference, vector dimensions, similarity metric,
+  normalization rule, timing/failure evidence, and safe usage metadata while
   excluding runtime credentials and unrestricted repository content from
   ordinary logs.
+* `SemanticIndexBuild` and `EmbeddingInvocation` schemas persist and expose
+  success and failure evidence independently of AgentInvocation and
+  ModelInvocation; a failed request before index-record creation remains
+  inspectable with a stable classification.
+* A failed or interrupted build cannot publish partial membership for a
+  revision. Crash/retry and concurrent-query tests prove that queries see either
+  the previously complete generation or the newly complete generation, never a
+  partial one.
 * The local backend supports deterministic bounded top-K semantic queries and
   stable tie ordering for a fixed stored index and query vector.
 * Structure-aware chunking is implemented for the repository's primary source
@@ -105,8 +133,10 @@ The implementation must:
   Builder to silently substitute evidence from another revision or an
   incompatible embedding configuration.
 * Unit and integration tests cover content-addressed reuse, revision isolation,
+  atomic generation publication, crash/retry and concurrent query behavior,
   chunk identity stability, deterministic ordering, exclusion rules, provider
-  failure, bounded retrieval, and provenance inspection.
+  failure, durable invocation evidence, bounded retrieval, and provenance
+  inspection.
 * Repository-intelligence, Context Builder, ADR, execution-plan, and operator
   documentation describe the semantic index as a platform-owned candidate
   retrieval signal and preserve the rule that Agents do not query it directly.
