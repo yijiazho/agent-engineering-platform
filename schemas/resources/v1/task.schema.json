@@ -196,6 +196,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "name"],
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["WHOLE_FILE"]}}, "required": ["kind"]},
+          "then": {"properties": {"name": {"enum": ["WHOLE_FILE"]}}}
+        }
+      ],
       "properties": {
         "kind": { "type": "string", "enum": ["MARKDOWN_SECTION", "MARKDOWN_FENCE", "WHOLE_FILE"] },
         "name": { "type": "string", "minLength": 1 }

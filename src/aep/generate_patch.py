@@ -1359,7 +1359,9 @@ def _validated_changes(
                     expected_start = start + sum(
                         len(str(operation.get("content", ""))) - (span_end - span_start)
                         for (span_start, span_end), operation, _record in spans
-                        if span_end <= start
+                        # A zero-width insertion at a region boundary belongs
+                        # to that region; it must not move the region's start.
+                        if span_end < start
                     )
                     expected_end = end + sum(
                         len(str(operation.get("content", ""))) - (span_end - span_start)

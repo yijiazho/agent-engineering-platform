@@ -166,7 +166,11 @@ def test_context_and_agent_boundaries_are_explicit(
         "planningPredicates"
     ]["items"]
     assert "region" in predicate["required"]
-    assert predicate["properties"]["region"]["anyOf"][1] == {"type": "null"}
+    region_schema = predicate["properties"]["region"]
+    assert region_schema["anyOf"][-1] == {"type": "null"}
+    region_validator = Draft202012Validator(region_schema)
+    assert region_validator.is_valid({"kind": "WHOLE_FILE", "name": "WHOLE_FILE"})
+    assert not region_validator.is_valid({"kind": "WHOLE_FILE", "name": "README.md"})
     for agent in resources.by_kind("Agent"):
         validate_openai_strict_schema(agent.data["spec"]["outputSchema"])
     for agent in agents.values():

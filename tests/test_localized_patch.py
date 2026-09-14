@@ -147,6 +147,29 @@ def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
     assert result.operations[0]["trustedRegion"]["selectionId"] == "planselection-new"
 
 
+def test_aggregate_validation_allows_a_whole_file_new_file_rewrite() -> None:
+    preimage = ""
+    change = _validated_changes(
+        {"changes": [{
+            "operation": "rewrite", "path": "new.py",
+            "repositoryRevision": REVISION,
+            "preimageSha256": sha256(preimage.encode()).hexdigest(),
+            "regionId": "new-file", "content": "created = True\n",
+        }]},
+        ("new.py",),
+        ({"path": "new.py", "content": preimage,
+          "preimageSha256": sha256(preimage.encode()).hexdigest(),
+          "exists": False},),
+        repository_revision=REVISION,
+        regions_by_path={"new.py": ({
+            "kind": "WHOLE_FILE", "name": "WHOLE_FILE",
+            "selectionId": "new-file", "planArtifactId": "plan-new-file",
+        },)},
+    )
+
+    assert change[0]["content"] == "created = True\n"
+
+
 @pytest.mark.parametrize("label", ["x" * 129, "bad\nlabel", "bad\tlabel"])
 def test_model_region_label_is_bounded_body_free_diagnostic(label) -> None:
     preimage = "## Repository Layout\nbody\n"
