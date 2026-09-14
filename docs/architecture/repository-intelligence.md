@@ -597,6 +597,8 @@ backend is sufficient for the initial implementation; the repository knowledge
 API, not Context Builder, owns the backend contract. It stages membership for a
 revision and atomically publishes a complete index generation; a query rejects
 an unavailable or incomplete generation instead of observing partial results.
+Each query must name the completed generation and immutable configuration digest
+it was built against; selecting the latest generation implicitly is forbidden.
 
 Embedding calls remain outside Agent and `ModelInvocation` execution. A durable
 `SemanticIndexBuild` owns revision indexing and its `EmbeddingInvocation`
@@ -611,6 +613,11 @@ fused rank and configured bounds. The exact versioned requesting `Task`
 Resource supplies candidate and source limits, path/type filters, fusion
 parameters, thresholds, and the semantic-index degraded-mode choice; query
 provenance records that Resource reference and normalized policy.
+The issue text sent to an embedding provider is a versioned canonical projection
+of bounded issue/Task fields, normalized before dispatch. Its pre-provider
+byte/token ceiling, derivation version, and content digest are retained in the
+`SemanticQuery` runtime evidence; query-side embedding attempts are not attached
+to an index build.
 
 The evidence-strength boundary is:
 

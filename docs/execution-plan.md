@@ -25,8 +25,8 @@ or `Blocked` as implementation state changes.
 | Status | Count |
 | ------ | ----: |
 | Completed | 44 |
-| In Progress | 12 |
-| Not Started | 14 |
+| In Progress | 15 |
+| Not Started | 11 |
 | Blocked | 0 |
 | Total | 70 |
 

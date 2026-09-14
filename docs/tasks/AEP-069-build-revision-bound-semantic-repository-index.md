@@ -55,6 +55,9 @@ The implementation must:
   an index record is produced, must retain its owning build, requested
   revision/snapshot, resolved Model Resource, timing, classified outcome, and
   safe usage metadata without source bodies or credentials;
+* enforce immutable build-level budgets for eligible files/chunks, provider
+  invocations, input tokens, elapsed duration, and optional cost before each
+  provider call, with durable consumption and blocked evidence;
 * provide a small persistent local index suitable for the self-hosting
   repository without requiring a network vector-database service;
 * stage all membership changes for a repository revision and atomically publish
@@ -65,13 +68,18 @@ The implementation must:
   new embedding merely because a new Git revision references it;
 * exclude unsupported, binary, generated, vendored, secret-bearing, and
   explicitly ignored content according to deterministic repository-scanner
-  rules;
+  rules. Apply fail-closed path and content secret detection before any
+  embedding-provider call, including credentials in otherwise eligible files,
+  without persisting the detected value;
 * use deterministic structure-aware chunk boundaries where supported and a
   documented bounded fallback for small or unsupported text files;
 * expose semantic nearest-neighbor query primitives through the repository
   knowledge API with explicit `topK`, score threshold, result-size, and token or
   byte bounds. Query semantics and provenance must include the configured
   similarity metric and normalization rule;
+* validate every provider response before staging records: exact batch
+  cardinality and input ordering, configured dimensions, and finite numeric
+  components are required;
 * return candidate evidence with similarity score, path, source range or chunk
   identity, content digest, revision, knowledge snapshot, embedding
   configuration, and selection reason;
@@ -92,6 +100,8 @@ The implementation must:
 * AEP-018
 * AEP-039
 * AEP-045
+* AEP-046
+* AEP-062
 
 ## Acceptance Criteria
 
@@ -129,6 +139,9 @@ The implementation must:
   configured top-K result set.
 * Query results expose similarity as candidate-ranking evidence only; no
   semantic score is treated as proof that a file requires modification.
+* Every query names an immutable completed index-generation identity and
+  configuration digest as input. A replay cannot silently select a newly
+  published generation; unavailable or superseded generations fail closed.
 * Index/query failures have stable classifications and cannot cause Context
   Builder to silently substitute evidence from another revision or an
   incompatible embedding configuration.

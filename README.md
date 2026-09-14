@@ -626,9 +626,10 @@ Task status is tracked in [docs/execution-plan.md](docs/execution-plan.md).
 The post-MVP roadmap extends the proven issue-to-PR control loop without
 changing its completion boundary. It adds deterministic execution inspection,
 replay and resume, artifact-bound human approvals, first-class budgets,
-AI-regression suites and versioned experiments, symbol-aware repository
-knowledge, a pull-request review workflow, and governed GitHub Actions evidence.
-These increments are tracked by AEP-056 through AEP-065 and are organized in
+AI-regression suites and versioned experiments, symbol-aware and semantic
+repository knowledge, hybrid candidate retrieval, a pull-request review
+workflow, and governed GitHub Actions evidence. These increments are tracked
+by AEP-056 through AEP-070 and are organized in
 [ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
 
 AEP-066 tracks the issue #88 GeneratePatch remediation: localized

@@ -54,6 +54,12 @@ The implementation must:
 * define deterministic degradation when the semantic index is unavailable,
   stale, incompatible, or disabled; any lexical-only fallback must be explicit
   in ContextPackage provenance rather than silent;
+* own issue-query embedding attempts with a durable `SemanticQuery` runtime
+  record (or equivalent execution-scoped owner), including successes and
+  failures before retrieval, rather than attaching them to an index build;
+* derive the semantic query from a versioned canonical field projection and
+  normalization with a pre-provider byte/token ceiling, and persist its
+  content digest and derivation version in provenance;
 * expose candidate retrieval provenance through AEP inspection, including query
   identity, revision, retrieval modes, configured bounds, component ranks, and
   fused rank without printing source bodies by default. Provenance must retain
