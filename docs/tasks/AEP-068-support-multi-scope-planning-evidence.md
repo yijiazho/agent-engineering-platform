@@ -1,6 +1,6 @@
 # AEP-068: Support Multi-Scope Planning Evidence
 
-**Status:** Not Started
+**Status:** In Progress
 
 ## Context
 

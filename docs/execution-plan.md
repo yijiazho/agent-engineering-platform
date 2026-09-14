@@ -182,7 +182,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | In Progress |
 | 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | In Progress |
 | 56 | [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md) | In Progress |
-| 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | Not Started |
+| 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | In Progress |
 | 58 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 | 59 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
 | 60 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |
@@ -268,7 +268,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-065 | AEP-019, AEP-020, AEP-024, AEP-027, AEP-028, AEP-041, AEP-051, AEP-056 | Not Started |
 | AEP-066 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-036, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055 | Not Started |
 | AEP-067 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066 | In Progress |
-| AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | Not Started |
+| AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | In Progress |
 
 ---
 

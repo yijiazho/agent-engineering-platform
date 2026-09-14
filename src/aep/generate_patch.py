@@ -1358,10 +1358,14 @@ def _validated_changes(
                     selection_id = region.get("selectionId")
                     expected_start = start + sum(
                         len(str(operation.get("content", ""))) - (span_end - span_start)
-                        for (span_start, span_end), operation, _record in spans
+                        for (span_start, span_end), operation, record in spans
                         # A zero-width insertion at a region boundary belongs
-                        # to that region; it must not move the region's start.
-                        if span_end < start
+                        # to the selection that authorized it.  An adjacent
+                        # selection's boundary therefore still shifts.
+                        if span_end < start or (
+                            span_end == start
+                            and record.get("trustedRegion", {}).get("selectionId") != selection_id
+                        )
                     )
                     expected_end = end + sum(
                         len(str(operation.get("content", ""))) - (span_end - span_start)

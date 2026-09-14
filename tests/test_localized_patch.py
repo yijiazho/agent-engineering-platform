@@ -125,6 +125,14 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
     assert {record["postimageSha256"] for record in combined_records} == {
         sha256(combined[0]["content"].encode()).hexdigest()
     }
+    adjacent_boundary = _validated_changes(
+        {"changes": [operation(
+            preimage, anchor="one\n", placement="after", content="first boundary\n",
+        )]},
+        ("README.md",), ( {"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION, regions_by_path=regions,
+    )
+    assert "first boundary\n# Second" in adjacent_boundary[0]["content"]
     with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
         _validated_changes(
             {"changes": [operation(preimage, anchor="three", content="updated")]},
