@@ -7,7 +7,9 @@ import json
 from typing import Any
 
 from aep.analyze_issue import AnalyzeIssueContractError, AnalyzeIssueTaskHandler
-from aep.planning_evidence import PlanningEvidenceError, validate_plan_path_contract
+from aep.planning_evidence import (
+    PlanningEvidenceError, scope_disposition, validate_plan_path_contract,
+)
 
 
 class BuildImplementationPlanContractError(AnalyzeIssueContractError):
@@ -33,12 +35,13 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         intended = output.get("intendedFiles")
         if isinstance(intended, (str, bytes)) or not isinstance(intended, Sequence):
             return output
-        evidence = {
-            item.get("content", {}).get("path"): item.get("content")
-            for item in context_package.get("elements", ())
-            if isinstance(item, Mapping) and item.get("type") == "planning-evidence"
-            and isinstance(item.get("content"), Mapping)
-        }
+        evidence: dict[str, list[Mapping[str, Any]]] = {}
+        for item in context_package.get("elements", ()):
+            content = item.get("content") if isinstance(item, Mapping) else None
+            if isinstance(item, Mapping) and item.get("type") == "planning-evidence" and isinstance(content, Mapping):
+                path = content.get("path")
+                if isinstance(path, str):
+                    evidence.setdefault(path, []).append(content)
         selection = context_package.get("selection", {})
         required_context = selection.get("requiredContext", ()) if isinstance(selection, Mapping) else ()
         evidence_required = "planning-evidence" in required_context
@@ -61,20 +64,22 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         required, no_change, unsupported = [], [], []
         selected = []
         for path in authorized:
-            record = evidence[path]
-            states = [item.get("result") for item in record.get("predicateResults", ())]
-            if "UNSUPPORTED" in states:
+            # Null-scope evidence is evaluator-owned and cannot decide a path
+            # disposition or grant localized mutation authority.
+            records = evidence[path]
+            editable = [record for record in records
+                        if record.get("authorizationRole") != "EVALUATOR_ONLY"]
+            deciding = editable or records
+            dispositions = [scope_disposition(record) for record in deciding]
+            if "UNSUPPORTED" in dispositions:
                 unsupported.append(path)
-            elif states and all(state == "MATCH" for state in states):
+            elif "CHANGE" in dispositions:
                 required.append(path)
-            elif all(
-                item.get("result") == "MATCH"
-                for item in record.get("postconditionResults", ())
-            ) and record.get("postconditionResults"):
+            elif dispositions and all(value == "NO_CHANGE" for value in dispositions):
                 no_change.append(path)
             else:
                 unsupported.append(path)
-            selected.append(record)
+            selected.extend(records)
         canonical = dict(output)
         canonical.update({
             "authorizedPaths": authorized,
@@ -109,6 +114,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             evidence_paths = {item.get("path") for item in evidence}
             unsupported_evidence_paths = set()
             for item in evidence:
+                # Whole-file evaluator evidence is deliberately not planning
+                # authorization. Its evaluator owns the criterion result and
+                # it must not poison a scoped insertion on the same path.
+                if item.get("authorizationRole") == "EVALUATOR_ONLY":
+                    continue
                 states = [
                     result.get("result")
                     for result in item.get("predicateResults", ())

@@ -560,3 +560,10 @@ condition. Exact planning evidence is a separate revision-bound read whose
 persisted result contains no full file body: path, revision, SHA-256 preimage,
 source identity, selected field or match count, predicate, and result. The same
 snapshot, predicates, and contents produce the same selection identity.
+
+Planning evidence is keyed by `(path, scope)`, not only by path. A path can
+therefore carry multiple independently selected editable Markdown regions and
+whole-file evaluator-owned criteria. Each record persists its scope class,
+selection identity, authorization role, and evaluator ownership without a
+source body. A `null` scope is evaluator evidence only; it cannot authorize a
+localized operation or substitute for a uniquely resolved scoped selection.

@@ -540,7 +540,7 @@ def test_planning_predicates_are_derived_from_prior_issue_analysis() -> None:
     assert declarations[0]["maxPaths"] == 20
 
 
-def test_planning_evidence_rejects_mixed_scoped_and_unscoped_declarations() -> None:
+def test_planning_evidence_keeps_mixed_scoped_and_unscoped_declarations_separate() -> None:
     task_resource = task("plan", ["planning-evidence"])
     common = {
         "path": "README.md",
@@ -549,18 +549,18 @@ def test_planning_evidence_rejects_mixed_scoped_and_unscoped_declarations() -> N
         "selectionReason": "requested transition",
     }
     task_resource["spec"]["planningPredicates"] = [
-        common,
+        {**common, "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"},
+         "postcondition": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"}},
         {**common, "region": {
             "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
         }},
     ]
 
-    with pytest.raises(RequiredContextError, match="inconsistent region selectors"):
-        ContextBuilder(
+    package = ContextBuilder(
             repository_knowledge=knowledge_provider(),
             artifact_store=InMemoryGeneratedArtifactStore(),
             repository_file_reader=InspectionReader(
-                lambda _path, _revision, _limit: "old"
+                lambda _path, _revision, _limit: "# Repository Layout\nold\n# Outside\nold\n"
             ),
         ).build(
             task=task_resource,
@@ -569,6 +569,15 @@ def test_planning_evidence_rejects_mixed_scoped_and_unscoped_declarations() -> N
             event=event(),
             created_at=CREATED_AT,
         )
+    evidence = [item["content"] for item in package["elements"]
+                if item["type"] == "planning-evidence"]
+    assert len(evidence) == 2
+    editable = next(item for item in evidence if item["authorizationRole"] == "LOCALIZED_EDIT")
+    evaluator = next(item for item in evidence if item["authorizationRole"] == "EVALUATOR_ONLY")
+    assert editable["inspection"]["region"]["name"] == "Repository Layout"
+    assert evaluator["inspection"]["region"] is None
+    assert editable["selectionId"] != evaluator["selectionId"]
+    assert "# Repository Layout" not in repr(evidence)
 
 
 def task_execution(task_resource: dict) -> dict:

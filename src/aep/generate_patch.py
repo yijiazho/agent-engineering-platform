@@ -34,6 +34,8 @@ from aep.planning_evidence import (
     PlanningEvidenceInspectionError,
     evaluate_path_predicates,
     reconcile_dispositions,
+    scope_disposition,
+    _region_span,
 )
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeStoreError
@@ -194,7 +196,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 if insertion_no_change_paths:
                     _verify_no_change_targets(
                         insertion_no_change_paths, required_insertions, editable_targets,
-                        regions_by_path=_regions_by_path(plan),
+                        regions_by_path=_single_regions_by_path(plan),
                         max_bytes=editable_target_max_bytes,
                     )
             else:
@@ -301,7 +303,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                         targets=[item for item in editable_targets if item["path"] in required_change_paths],
                         dispositions=[item for item in dispositions if item["path"] in required_change_paths],
                         postconditions_by_path=_postconditions_by_path(plan),
-                        regions_by_path=_regions_by_path(plan),
+                        regions_by_path=_single_regions_by_path(plan),
                         evaluator_ref=_ref_record(reconciliation_evaluation.ref),
                         proposed_contents_by_path={
                             item["path"]: item["content"] for item in changes
@@ -1154,17 +1156,25 @@ def _validated_dispositions(output: object, allowed_paths: Sequence[str], change
 
 
 def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
-    result = {}
+    """Retain every postcondition with its own trusted selector."""
+    result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
         if isinstance(item, Mapping) and isinstance(item.get("path"), str):
             values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
-                result[item["path"]] = tuple(value for value in values if isinstance(value, Mapping))
-    return result
+                inspection = item.get("inspection", {})
+                region = inspection.get("region") if isinstance(inspection, Mapping) else None
+                result.setdefault(item["path"], []).append({
+                    "predicates": tuple(value for value in values if isinstance(value, Mapping)),
+                    "region": region,
+                    "selectionId": item.get("selectionId"),
+                })
+    return {path: tuple(values) for path, values in result.items()}
 
 
-def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
-    result = {}
+def _regions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
+    """Return every editable trusted scope, never a null-scope fallback."""
+    result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
         if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
             continue
@@ -1180,31 +1190,36 @@ def _regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
                 selection_id = item.get("selectionId")
                 if not isinstance(selection_id, str) or not selection_id:
                     raise GeneratePatchContractError("trusted planning evidence has no selection identity")
-                result[item["path"]] = {
+                if item.get("authorizationRole") == "EVALUATOR_ONLY" or scope_disposition(item) != "CHANGE":
+                    continue
+                result.setdefault(item["path"], []).append({
                     "kind": kind, "name": name, "selectionId": selection_id,
                     "planArtifactId": plan.get("_artifactId"),
-                }
+                })
             else:
                 raise GeneratePatchContractError(
                     "trusted planning evidence region selector is malformed"
                 )
         elif region is None:
-            selection_id = item.get("selectionId")
-            if not isinstance(selection_id, str) or not selection_id:
-                raise GeneratePatchContractError(
-                    "trusted planning evidence has no selection identity"
-                )
-            result[item["path"]] = {
-                "kind": "WHOLE_FILE",
-                "name": "WHOLE_FILE",
-                "selectionId": selection_id,
-                "planArtifactId": plan.get("_artifactId"),
-            }
+            # Null scopes are evaluator-owned by contract. Explicit
+            # WHOLE_FILE selectors above retain ordinary-file authorization.
+            continue
         else:
             raise GeneratePatchContractError(
                 "trusted planning evidence region selector is malformed"
             )
-    return result
+    return {path: tuple(regions) for path, regions in result.items()}
+
+
+def _single_regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
+    """Compatibility view for deterministic postimage checks.
+
+    Localized application receives all scopes and chooses only a uniquely
+    matching server-derived span.  Existing one-scope reconciliation callers
+    retain their narrow contract.
+    """
+    return {path: regions[0] for path, regions in _regions_by_path(plan).items()
+            if len(regions) == 1}
 
 
 def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
@@ -1219,7 +1234,7 @@ def _validated_changes(
     allowed_paths: Sequence[str],
     editable_targets: Sequence[JsonMapping],
     *, repository_revision: str | None = None,
-    regions_by_path: Mapping[str, Mapping[str, Any]] | None = None,
+    regions_by_path: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
     rewrite_authorized_paths: Sequence[str] = (),
     required_insertions: Sequence[Mapping[str, str]] = (),
 ) -> tuple[dict[str, str], ...]:
@@ -1258,7 +1273,10 @@ def _validated_changes(
             content = target.get("content") if isinstance(target, Mapping) else None
             if target is None or not isinstance(content, str):
                 raise GeneratePatchContractError(f"localized operation target {path!r} is unavailable or non-UTF-8")
-            region = (regions_by_path or {}).get(path)
+            raw_regions = (regions_by_path or {}).get(path, ())
+            # Direct callers from the pre-multi-scope contract may still pass
+            # one mapping; normalize it at this boundary.
+            regions = (raw_regions,) if isinstance(raw_regions, Mapping) else tuple(raw_regions)
             # The current plan format binds postconditions, not per-operation
             # replace/delete identities.  Do not let an otherwise valid
             # insertion smuggle an unrelated mutation into the same region.
@@ -1278,16 +1296,104 @@ def _validated_changes(
                 raise GeneratePatchContractError(
                     "localized replace/delete requires immutable plan-operation evidence"
                 )
-            try:
-                applied = apply_localized_operations(
-                    path=path, preimage=content, preimage_sha256=str(target.get("preimageSha256", "")),
-                    repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
-                    operations=operations, region=region,
-                    # AEP-059's exact-artifact approval does not exist yet.
-                    # Keep rewrites rejected rather than allowing publication.
-                    allow_rewrite=False, target_exists=bool(target.get("exists", True)),
+            if not regions:
+                raise RejectedPatchCandidateError(
+                    "TRUSTED_REGION_MISSING: localized operation requires a server-derived region selector"
                 )
-            except LocalizedPatchError as error:
+            resolved: list[tuple[Mapping[str, Any], Any]] = []
+            for operation in operations:
+                matches = []
+                failures: list[LocalizedPatchError] = []
+                for region in regions:
+                    try:
+                        matches.append(apply_localized_operations(
+                            path=path, preimage=content,
+                            preimage_sha256=str(target.get("preimageSha256", "")),
+                            repository_revision=repository_revision or str(target.get("repositoryRevision", "")),
+                            operations=[operation], region=region, allow_rewrite=False,
+                            target_exists=bool(target.get("exists", True)),
+                        ))
+                    except LocalizedPatchError as error:
+                        failures.append(error)
+                if len(matches) != 1:
+                    if len(matches) > 1:
+                        raise RejectedPatchCandidateError(
+                            "AMBIGUOUS_TRUSTED_REGION: operation resolves in multiple trusted regions"
+                        )
+                    error = failures[-1]
+                    if error.code in {
+                        "TRUSTED_REGION_MISSING", "TRUSTED_REGION_UNRESOLVED",
+                    }:
+                        raise GeneratePatchContractError(str(error)) from error
+                    raise RejectedPatchCandidateError(str(error)) from error
+                resolved.append((operation, matches[0]))
+            # Every operation was checked against exactly one immutable span.
+            # Reassemble them from the common preimage so anchors retain their
+            # original-preimage semantics across separately authorized scopes.
+            spans = [(patch.operations[0]["span"], operation, patch.operations[0])
+                     for operation, patch in resolved]
+            if [span for span, _operation, _record in spans] != sorted(span for span, _operation, _record in spans):
+                raise RejectedPatchCandidateError("OUT_OF_ORDER_EDITS: operation spans are not source ordered")
+            cursor = 0
+            output: list[str] = []
+            unchanged: list[str] = []
+            operation_records = []
+            for (start, end), operation, record in spans:
+                if start < cursor:
+                    raise RejectedPatchCandidateError("OVERLAPPING_EDITS: operation spans overlap")
+                unchanged.append(content[cursor:start])
+                output.extend((content[cursor:start], str(operation.get("content", ""))))
+                cursor = end
+                operation_records.append(record)
+            unchanged.append(content[cursor:])
+            output.append(content[cursor:])
+            postimage = "".join(output)
+            # Per-operation checks are insufficient when adjacent insertions
+            # jointly alter Markdown structure. Re-resolve every immutable
+            # trusted selector against the assembled postimage.
+            try:
+                for region in regions:
+                    start, end, _identity, _matches = _region_span(content, region)
+                    post_start, post_end, _post_identity, _post_matches = _region_span(postimage, region)
+                    selection_id = region.get("selectionId")
+                    expected_start = start + sum(
+                        len(str(operation.get("content", ""))) - (span_end - span_start)
+                        for (span_start, span_end), operation, record in spans
+                        # A zero-width insertion at a region boundary belongs
+                        # to the selection that authorized it.  An adjacent
+                        # selection's boundary therefore still shifts.
+                        if span_end < start or (
+                            span_end == start
+                            and record.get("trustedRegion", {}).get("selectionId") != selection_id
+                        )
+                    )
+                    expected_end = end + sum(
+                        len(str(operation.get("content", ""))) - (span_end - span_start)
+                        for (span_start, span_end), operation, record in spans
+                        if span_end <= end
+                    )
+                    if (post_start, post_end) != (expected_start, expected_end):
+                        raise PlanningEvidenceError("trusted region boundary changed")
+            except PlanningEvidenceError as error:
+                raise RejectedPatchCandidateError(
+                    "OUT_OF_REGION: assembled postimage invalidates a trusted region"
+                ) from error
+            assembled_digest = sha256(postimage.encode()).hexdigest()
+            operation_records = [
+                {**record, "ordinal": ordinal, "postimageSha256": assembled_digest}
+                for ordinal, record in enumerate(operation_records)
+            ]
+            applied_content = postimage
+            preservation = {
+                "preimageSha256": sha256(content.encode()).hexdigest(),
+                "postimageSha256": assembled_digest,
+                "unchangedRegionCount": len(unchanged),
+                "unchangedBytes": len("".join(unchanged).encode("utf-8")),
+                "unchangedSha256": sha256("".join(unchanged).encode("utf-8")).hexdigest(),
+                "authorizedSpans": [record["span"] for record in operation_records],
+            }
+            if not resolved:
+                error = LocalizedPatchError("MISSING_OPERATION", "localized operations are required")
                 if error.code in {
                     "TRUSTED_REGION_MISSING",
                     "TRUSTED_REGION_UNRESOLVED",
@@ -1295,10 +1401,10 @@ def _validated_changes(
                     raise GeneratePatchContractError(str(error)) from error
                 raise RejectedPatchCandidateError(str(error)) from error
             whole_file_delete = whole_file_delete_request
-            changes.append({"path": path, "content": applied.content,
+            changes.append({"path": path, "content": applied_content,
                             "operation": "delete" if whole_file_delete else "write",
-                            "localizedPreservation": json.dumps(applied.preservation, sort_keys=True),
-                            "localizedOperations": json.dumps(applied.operations, sort_keys=True)})
+                            "localizedPreservation": json.dumps(preservation, sort_keys=True),
+                            "localizedOperations": json.dumps(operation_records, sort_keys=True)})
         return tuple(changes)
     changes: list[dict[str, str]] = []
     seen: set[str] = set()

@@ -1,4 +1,5 @@
 from hashlib import sha256
+import json
 
 import pytest
 
@@ -97,6 +98,47 @@ def test_delete_requires_whole_file_and_region_boundary_is_enforced() -> None:
         )
 
 
+def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() -> None:
+    preimage = "# First\none\n# Second\ntwo\n# Outside\nthree\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    regions = {"README.md": (
+        {"kind": "MARKDOWN_SECTION", "name": "First", "selectionId": "first"},
+        {"kind": "MARKDOWN_SECTION", "name": "Second", "selectionId": "second"},
+    )}
+    change = _validated_changes(
+        {"changes": [operation(preimage, anchor="two", content="updated", regionId="model-label")]},
+        ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION, regions_by_path=regions,
+    )
+    assert "updated" in change[0]["content"]
+    assert '"selectionId": "second"' in change[0]["localizedOperations"]
+    combined = _validated_changes(
+        {"changes": [
+            operation(preimage, anchor="one", content="first", regionId="first"),
+            operation(preimage, anchor="two", content="second", regionId="second"),
+        ]}, ("README.md",),
+        ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION, regions_by_path=regions,
+    )
+    assert "first" in combined[0]["content"] and "second" in combined[0]["content"]
+    combined_records = json.loads(combined[0]["localizedOperations"])
+    assert {record["postimageSha256"] for record in combined_records} == {
+        sha256(combined[0]["content"].encode()).hexdigest()
+    }
+    adjacent_boundary = _validated_changes(
+        {"changes": [operation(
+            preimage, anchor="one\n", placement="after", content="first boundary\n",
+        )]},
+        ("README.md",), ( {"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION, regions_by_path=regions,
+    )
+    assert "first boundary\n# Second" in adjacent_boundary[0]["content"]
+    with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
+        _validated_changes(
+            {"changes": [operation(preimage, anchor="three", content="updated")]},
+            ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+            repository_revision=REVISION, regions_by_path=regions,
+        )
 def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
     preimage = ""
     result = apply_localized_operations(
@@ -111,6 +153,29 @@ def test_empty_preimage_can_create_without_an_existing_anchor() -> None:
     assert result.content == "created\n"
     assert result.operations[0]["modelDeclaredRegionId"] == "new-file"
     assert result.operations[0]["trustedRegion"]["selectionId"] == "planselection-new"
+
+
+def test_aggregate_validation_allows_a_whole_file_new_file_rewrite() -> None:
+    preimage = ""
+    change = _validated_changes(
+        {"changes": [{
+            "operation": "rewrite", "path": "new.py",
+            "repositoryRevision": REVISION,
+            "preimageSha256": sha256(preimage.encode()).hexdigest(),
+            "regionId": "new-file", "content": "created = True\n",
+        }]},
+        ("new.py",),
+        ({"path": "new.py", "content": preimage,
+          "preimageSha256": sha256(preimage.encode()).hexdigest(),
+          "exists": False},),
+        repository_revision=REVISION,
+        regions_by_path={"new.py": ({
+            "kind": "WHOLE_FILE", "name": "WHOLE_FILE",
+            "selectionId": "new-file", "planArtifactId": "plan-new-file",
+        },)},
+    )
+
+    assert change[0]["content"] == "created = True\n"
 
 
 @pytest.mark.parametrize("label", ["x" * 129, "bad\nlabel", "bad\tlabel"])

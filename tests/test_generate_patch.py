@@ -949,6 +949,9 @@ def setup_handler(
             path="src/app.py", content="value = 1\n", repository_revision=revision,
             predicates=[{"kind": "TEXT_PRESENT", "value": "value = 1"}],
             source_id="file:src/app.py",
+            # This legacy fixture intentionally grants an explicit whole-file
+            # selector.  A null selector is evaluator-only under AEP-068.
+            region={"kind": "WHOLE_FILE", "name": "WHOLE_FILE"},
         )
         planning_record = finalize_planning_evidence(
             planning_record,

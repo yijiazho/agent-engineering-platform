@@ -469,6 +469,26 @@ def finalize_planning_evidence(
     return result
 
 
+def scope_disposition(record: Mapping[str, Any]) -> str:
+    """Classify one trusted scope without conflating sibling scopes."""
+    results = record.get("predicateResults", ())
+    postconditions = record.get("postconditionResults", ())
+    if not isinstance(results, Sequence) or isinstance(results, (str, bytes)) or not results:
+        raise PlanningEvidenceError("planning evidence has malformed predicate results")
+    states = [item.get("result") for item in results if isinstance(item, Mapping)]
+    if len(states) != len(results):
+        raise PlanningEvidenceError("planning evidence has malformed predicate results")
+    if "UNSUPPORTED" in states:
+        return "UNSUPPORTED"
+    if all(state == "MATCH" for state in states):
+        return "CHANGE"
+    if isinstance(postconditions, Sequence) and not isinstance(postconditions, (str, bytes)) and postconditions:
+        post_states = [item.get("result") for item in postconditions if isinstance(item, Mapping)]
+        if len(post_states) == len(postconditions) and all(state == "MATCH" for state in post_states):
+            return "NO_CHANGE"
+    return "UNSUPPORTED"
+
+
 def validate_plan_path_contract(
     plan: Mapping[str, Any],
     repository_revision: str,
@@ -488,13 +508,13 @@ def validate_plan_path_contract(
     evidence = plan.get("pathEvidence")
     if isinstance(evidence, (str, bytes)) or not isinstance(evidence, Sequence):
         raise PlanningEvidenceError("implementation plan requires pathEvidence")
-    by_path: dict[str, Mapping[str, Any]] = {}
+    by_path: dict[str, list[Mapping[str, Any]]] = {}
     for item in evidence:
-        if not isinstance(item, Mapping) or item.get("path") in by_path:
-            raise PlanningEvidenceError("pathEvidence must contain one unique record per path")
+        if not isinstance(item, Mapping):
+            raise PlanningEvidenceError("pathEvidence must contain planning evidence records")
         path = item.get("path")
         _path(path)
-        by_path[path] = item
+        by_path.setdefault(path, []).append(item)
     if set(by_path) != set(authorized):
         raise PlanningEvidenceError("pathEvidence must cover every authorized path")
     trusted_by_id: dict[str, Mapping[str, Any]] = {}
@@ -503,42 +523,30 @@ def validate_plan_path_contract(
         if not isinstance(selection_id, str) or not selection_id or selection_id in trusted_by_id:
             raise PlanningEvidenceError("trusted planning evidence has invalid or duplicate identities")
         trusted_by_id[selection_id] = item
-    for path, item in by_path.items():
-        if item.get("repositoryRevision") != repository_revision:
-            raise PlanningEvidenceError(f"planning evidence for {path!r} is revision-mismatched")
-        if not re.fullmatch(r"[0-9a-f]{64}", str(item.get("preimageSha256", ""))):
-            raise PlanningEvidenceError(f"planning evidence for {path!r} lacks a content digest")
-        trusted = trusted_by_id.get(str(item.get("selectionId", "")))
-        if trusted is None or _canonical(item) != _canonical(trusted):
-            raise PlanningEvidenceError(
-                f"planning evidence for {path!r} does not match trusted Context Builder evidence"
-            )
-        results = item.get("predicateResults")
-        if not isinstance(results, Sequence) or not results:
-            raise PlanningEvidenceError(f"planning evidence for {path!r} lacks predicate results")
-        states = [result.get("result") for result in results if isinstance(result, Mapping)]
-        if len(states) != len(results):
-            raise PlanningEvidenceError(f"planning evidence for {path!r} has malformed predicate results")
-        has_unsupported = "UNSUPPORTED" in states
-        all_match = bool(states) and all(state == "MATCH" for state in states)
-        conjunction_failed = bool(states) and not has_unsupported and not all_match
-        postcondition_results = item.get("postconditionResults")
-        postcondition_states = [
-            result.get("result") for result in postcondition_results
-            if isinstance(result, Mapping)
-        ] if isinstance(postcondition_results, Sequence) else []
-        postconditions_match = bool(postcondition_states) and all(
-            state == "MATCH" for state in postcondition_states
-        )
-        if path in required and not all_match:
+    for path, records in by_path.items():
+        # Multiple scopes for the same immutable path are expected.  Duplicate
+        # selection IDs, however, would make the model's evidence citation
+        # ambiguous and remain fail-closed.
+        if len({str(item.get("selectionId")) for item in records}) != len(records):
+            raise PlanningEvidenceError("pathEvidence has duplicate scope identities")
+        editable_records = [item for item in records if item.get("authorizationRole") != "EVALUATOR_ONLY"]
+        deciding_records = editable_records or records
+        for item in records:
+            if item.get("repositoryRevision") != repository_revision:
+                raise PlanningEvidenceError(f"planning evidence for {path!r} is revision-mismatched")
+            if not re.fullmatch(r"[0-9a-f]{64}", str(item.get("preimageSha256", ""))):
+                raise PlanningEvidenceError(f"planning evidence for {path!r} lacks a content digest")
+            trusted = trusted_by_id.get(str(item.get("selectionId", "")))
+            if trusted is None or _canonical(item) != _canonical(trusted):
+                raise PlanningEvidenceError(
+                    f"planning evidence for {path!r} does not match trusted Context Builder evidence"
+                )
+        dispositions = [scope_disposition(item) for item in deciding_records]
+        if path in required and ("UNSUPPORTED" in dispositions or "CHANGE" not in dispositions):
             raise PlanningEvidenceError(f"required-change path {path!r} does not satisfy its planning predicates")
-        if path in no_change and (not conjunction_failed or not postconditions_match):
-            raise PlanningEvidenceError(
-                f"no-change path {path!r} lacks satisfied planning-time postconditions"
-            )
-        if path in unsupported and not (
-            has_unsupported or (conjunction_failed and not postconditions_match)
-        ):
+        if path in no_change and (not dispositions or any(value != "NO_CHANGE" for value in dispositions)):
+            raise PlanningEvidenceError(f"no-change path {path!r} lacks satisfied planning-time postconditions")
+        if path in unsupported and "UNSUPPORTED" not in dispositions:
             raise PlanningEvidenceError(f"unsupported path {path!r} lacks unsupported evidence")
 
 
@@ -567,6 +575,27 @@ def reconcile_dispositions(
     deleted = set(deleted_paths)
     if len(deleted) != len(deleted_paths) or not deleted.issubset(original_paths):
         raise PlanningEvidenceError("deleted paths must be unique original required paths")
+    def scoped_proof(path: str, value: str, source_id: str) -> dict[str, Any]:
+        raw_scopes = postconditions_by_path.get(path, ())
+        # Legacy callers pass a flat predicate sequence. New planning evidence
+        # carries each predicate set with its own immutable region.
+        scopes = raw_scopes if raw_scopes and isinstance(raw_scopes[0], Mapping) and "predicates" in raw_scopes[0] else ({"predicates": raw_scopes, "region": (regions_by_path or {}).get(path)},)
+        proofs = []
+        for scope in scopes:
+            predicates = scope.get("predicates", ())
+            if not isinstance(predicates, Sequence):
+                raise PlanningEvidenceError(f"planning evidence for {path!r} has malformed scope predicates")
+            proof = evaluate_path_predicates(
+                path=path, content=value, repository_revision=repository_revision,
+                predicates=predicates, source_id=source_id,
+                region=scope.get("region"), max_bytes=max_bytes,
+            )
+            proofs.append({"selectionId": scope.get("selectionId"), "region": scope.get("region"),
+                           "predicateResults": proof["predicateResults"]})
+        return {"path": path, "repositoryRevision": repository_revision,
+                "sourceProvenance": {"sourceId": source_id}, "scopeProofs": proofs,
+                "predicateResults": [result for proof in proofs for result in proof["predicateResults"]]}
+
     effective, no_change, records = [], [], []
     for path in sorted(target_map, key=lambda value: (str(value).casefold(), str(value))):
         target, disposition = target_map[path], disposition_map[path]
@@ -587,7 +616,16 @@ def reconcile_dispositions(
                     raise PlanningEvidenceError(
                         f"DELETE for {path!r} cannot rely on region-scoped evidence"
                     )
-                postconditions = postconditions_by_path.get(path, ())
+                raw_postconditions = postconditions_by_path.get(path, ())
+                postconditions = (
+                    tuple(predicate for scope in raw_postconditions
+                          if isinstance(scope, Mapping)
+                          for predicate in scope.get("predicates", ())
+                          if isinstance(predicate, Mapping))
+                    if raw_postconditions and isinstance(raw_postconditions[0], Mapping)
+                    and "predicates" in raw_postconditions[0]
+                    else raw_postconditions
+                )
                 if not postconditions or any(
                     item.get("kind") != "TEXT_ABSENT"
                     for item in postconditions
@@ -611,22 +649,14 @@ def reconcile_dispositions(
                     f"CHANGE for {path!r} lacks proposed content evidence"
                 )
             else:
-                proof = evaluate_path_predicates(
-                    path=path, content=proposed, repository_revision=repository_revision,
-                    predicates=postconditions_by_path.get(path, ()),
-                    source_id="generated-change",
-                    region=region,
-                    max_bytes=max_bytes,
-                )
+                proof = scoped_proof(path, proposed, "generated-change")
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise CandidateReconciliationError(
                     f"CHANGE for {path!r} has an unsatisfied or unsupported postcondition"
                 )
             effective.append(path)
         elif state == "NO_CHANGE":
-            proof = evaluate_path_predicates(path=path, content=content, repository_revision=repository_revision,
-                predicates=postconditions_by_path.get(path, ()), source_id=str(target.get("provenance", {}).get("taskExecutionId", "editable-target")),
-                region=region, max_bytes=max_bytes)
+            proof = scoped_proof(path, content, str(target.get("provenance", {}).get("taskExecutionId", "editable-target")))
             if any(item["result"] != "MATCH" for item in proof["predicateResults"]):
                 raise CandidateReconciliationError(f"NO_CHANGE for {path!r} has an unsatisfied or unsupported criterion")
             no_change.append(path)
@@ -639,20 +669,33 @@ def reconcile_dispositions(
                 raise CandidateReconciliationError(
                     f"{state} for {path!r} lacks a required insertion"
                 )
-            insertion_record = evaluate_path_predicates(
-                path=path, content=output, repository_revision=repository_revision,
-                predicates=[{"kind": "TEXT_PRESENT", "value": value}
-                            for value in insertion_values],
-                source_id="generated-insertion-reconciliation", region=region,
-                max_bytes=max_bytes,
-                distinct_text_matches=True,
-            )
-            insertion_proof = [
-                {"value": value, "result": result["result"]}
-                for value, result in zip(
-                    insertion_values, insertion_record["predicateResults"], strict=True
+            raw_scopes = postconditions_by_path.get(path, ())
+            scopes = raw_scopes if raw_scopes and isinstance(raw_scopes[0], Mapping) and "predicates" in raw_scopes[0] else ({"region": region},)
+            if len(scopes) == 1 and scopes[0].get("selectionId") is None:
+                insertion_record = evaluate_path_predicates(
+                    path=path, content=output, repository_revision=repository_revision,
+                    predicates=[{"kind": "TEXT_PRESENT", "value": value} for value in insertion_values],
+                    source_id="generated-insertion-reconciliation", region=scopes[0].get("region"),
+                    max_bytes=max_bytes, distinct_text_matches=True,
                 )
-            ]
+                insertion_proof = [{"value": value, "result": result["result"]}
+                                   for value, result in zip(insertion_values, insertion_record["predicateResults"], strict=True)]
+            else:
+                insertion_proof = []
+                for value in insertion_values:
+                    matches = []
+                    for scope in scopes:
+                        result = evaluate_path_predicates(
+                            path=path, content=output, repository_revision=repository_revision,
+                            predicates=[{"kind": "TEXT_PRESENT", "value": value}],
+                            source_id="generated-insertion-reconciliation",
+                            region=scope.get("region"), max_bytes=max_bytes,
+                        )
+                        if result["predicateResults"][0]["result"] == "MATCH":
+                            matches.append(scope.get("selectionId"))
+                    insertion_proof.append({"value": value,
+                                            "result": "MATCH" if len(matches) == 1 else "NO_MATCH",
+                                            "selectionId": matches[0] if len(matches) == 1 else None})
             if any(item["result"] != "MATCH" for item in insertion_proof):
                 raise CandidateReconciliationError(
                     f"{state} for {path!r} lacks a required insertion"

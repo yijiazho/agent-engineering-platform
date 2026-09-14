@@ -435,8 +435,10 @@ exact anchor, and expected match count. A model-provided region label is
 diagnostic only: the control plane derives the selector, planning-selection
 identity, and resolved span from immutable planning evidence, then proves the
 anchor/edit span lies within it before materializing a postimage or issuing a
-write. A trusted `region: null` planning record becomes an explicit
-`WHOLE_FILE` runtime selector rather than an implicit absence of bounds. The
+write. A trusted `region: null` planning record is whole-file evaluator-owned
+evidence, not a runtime selector or localized write grant. One path may retain
+several separate server-derived editable-region selections alongside that
+evaluator evidence; each operation must resolve in exactly one selected span. The
 strict model schema represents an absent diagnostic label as `regionId: null`.
 Non-null labels are bounded to 128 identifier characters before persistence;
 they cannot carry arbitrary source text. Boundary checks follow selector
