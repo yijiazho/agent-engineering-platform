@@ -796,8 +796,9 @@ postcondition and insertion reconciliation proofs.
 For early issue analysis, Context Builder may materialize candidate repository
 context from a deterministic hybrid query supplied by the repository knowledge
 layer. The query can combine lexical and semantic result sets only when both are
-bound to the WorkflowExecution's exact repository revision and compatible
-knowledge snapshot.
+bound to the WorkflowExecution's exact repository revision and exact bound
+knowledge-snapshot identity (version, producer, and configuration digest).
+Different snapshots for the same commit are rejected before fusion.
 
 Context Builder does not interpret vector similarity as repository truth. It
 applies configured candidate-count and byte/token bounds, deduplicates canonical

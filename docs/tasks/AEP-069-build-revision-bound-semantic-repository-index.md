@@ -50,6 +50,10 @@ The implementation must:
   including its provider, model, timeout, retry, and rate-limit configuration,
   with bounded batch behavior and no runtime credentials persisted in index
   evidence;
+* authorize repository-content egress before the first indexing call. The exact
+  repository identity, content classes, and versioned embedding Model/provider
+  must be approved by the requesting Resource or applicable Policy; a denied
+  decision fails closed without sending content or issuing a provider request;
 * define durable `SemanticIndexBuild` and `EmbeddingInvocation` runtime records
   and inspection paths. Each embedding attempt, including one that fails before
   an index record is produced, must retain its owning build, requested
