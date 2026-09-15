@@ -48,10 +48,14 @@ Repository Intelligence does **not**:
 * perform AI reasoning
 * build prompts
 * execute workflows
-* invoke models
-* retrieve context for Tasks
+* perform Agent reasoning or invoke Agent-owned models
+* assemble ContextPackages for Tasks
 
-Its responsibility ends at producing and maintaining the Repository Knowledge Graph.
+It produces and maintains the Repository Knowledge Graph and its revision-bound
+semantic index. Context Builder owns Task context assembly, and may request
+bounded lexical/semantic candidate retrieval through this platform-owned
+knowledge boundary; Repository Intelligence never decides edits or performs
+Agent reasoning.
 
 ---
 
@@ -556,7 +560,12 @@ Repository Intelligence functions as the knowledge compiler of AEP.
 
 It continuously transforms Git repositories into immutable Repository Knowledge Graphs through deterministic analysis, AST parsing, symbol extraction, and relationship modeling.
 
-The resulting graph provides a language-agnostic semantic representation of the repository that enables the Context Builder to assemble precise, explainable, and reproducible ContextPackages without relying on source code parsing or vector search during workflow execution.
+The resulting graph and optional revision-bound semantic index provide
+language-agnostic structural and candidate evidence that enables Context Builder
+to assemble precise, explainable, and reproducible ContextPackages. Semantic
+index queries during workflow execution are bounded, policy-authorized, and
+provenance-rich; they do not replace exact repository evidence or edit
+authorization.
 Candidate-file results remain bounded discovery metadata. They do not authorize
 editing and do not satisfy patch input requirements. Exact editable preimages
 are materialized separately by the trusted Context Builder from the immutable

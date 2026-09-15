@@ -34,7 +34,8 @@ candidate rankings under explicit budgets.
 The implementation must:
 
 * execute lexical and semantic retrieval against the same repository revision
-  and compatible knowledge snapshot;
+  and exact knowledge-snapshot identity. Different snapshot versions or
+  producer/configuration identities are rejected before rank fusion;
 * combine rankings with a deterministic, documented rank-fusion algorithm that
   does not depend on opaque model judgment;
 * preserve the component lexical rank/score and semantic rank/score alongside
@@ -70,6 +71,9 @@ The implementation must:
 * route every query-side embedding attempt through the shared AEP-046 model
   admission coordinator and reserve/debit the requesting Workflow/Task
   execution budgets under AEP-062, with durable consumption evidence;
+* authorize disclosure of the canonical issue/Task projection to the exact
+  embedding Model/provider through the requesting Task or an applicable
+  versioned Policy before any provider call; denied disclosure fails closed;
 * expose candidate retrieval provenance through AEP inspection, including query
   identity, revision, retrieval modes, configured bounds, component ranks, and
   fused rank without printing source bodies by default. Provenance must retain
@@ -95,7 +99,8 @@ The implementation must:
   repository-knowledge/Context Builder boundary; the Agent has no direct
   access to lexical, vector, or graph providers.
 * Lexical and semantic queries are guaranteed to target the WorkflowExecution's
-  exact repository revision, and mixed-revision results are rejected.
+  exact repository revision and exact bound knowledge snapshot; mixed-revision
+  or mixed-snapshot results are rejected.
 * Rank fusion is deterministic for fixed component result sets and has stable
   tie ordering independent of provider response ordering.
 * Each selected candidate records whether it was selected lexically,

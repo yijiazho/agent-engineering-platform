@@ -64,6 +64,11 @@ The implementation must:
   a complete index generation only after it is complete. Queries must reject an
   absent, incomplete, or superseded generation rather than return a partial
   candidate set labeled as the requested revision;
+* serialize builders with a deterministic claim key covering repository
+  revision, knowledge snapshot, embedding Model Resource, and index
+  configuration digest. An atomic single-flight claim must ensure concurrent
+  creators reuse one build and one generation rather than dispatch duplicate
+  embedding work;
 * use content-addressed embedding reuse so unchanged content does not require a
   new embedding merely because a new Git revision references it;
 * exclude unsupported, binary, generated, vendored, secret-bearing, and
@@ -127,6 +132,10 @@ The implementation must:
   revision. Crash/retry and concurrent-query tests prove that queries see either
   the previously complete generation or the newly complete generation, never a
   partial one.
+* Concurrent creators for the same repository revision, knowledge snapshot,
+  Model Resource, and index configuration converge through one deterministic
+  build key and atomic single-flight claim; only one embedding workload is
+  dispatched and published.
 * The local backend supports deterministic bounded top-K semantic queries and
   stable tie ordering for a fixed stored index and query vector.
 * Structure-aware chunking is implemented for the repository's primary source

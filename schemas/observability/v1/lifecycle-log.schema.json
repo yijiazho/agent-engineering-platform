@@ -20,6 +20,8 @@
         "AgentInvocationStarted", "AgentInvocationCompleted", "AgentInvocationFailed",
         "ModelInvocationStarted", "ModelInvocationCompleted", "ModelInvocationFailed",
         "ModelRequestAdmitted", "ModelRequestThrottled", "ModelRetryScheduled", "ModelRetrySuppressed",
+        "EmbeddingInvocationStarted", "EmbeddingInvocationCompleted", "EmbeddingInvocationFailed",
+        "EmbeddingRequestAdmitted", "EmbeddingRequestThrottled", "EmbeddingRetryScheduled", "EmbeddingRetrySuppressed",
         "ToolInvocationStarted", "ToolInvocationCompleted", "ToolInvocationFailed",
         "EvaluationCompleted", "EvaluationFailed", "PolicyDecisionRecorded",
         "ApprovalRequested", "ApprovalRecorded", "GeneratedArtifactCreated"
@@ -83,6 +85,10 @@
       "then": { "properties": { "runtimeKind": { "const": "ModelInvocation" } } }
     },
     {
+      "if": { "properties": { "eventName": { "enum": ["EmbeddingInvocationStarted", "EmbeddingInvocationCompleted", "EmbeddingInvocationFailed", "EmbeddingRequestAdmitted", "EmbeddingRequestThrottled", "EmbeddingRetryScheduled", "EmbeddingRetrySuppressed"] } } },
+      "then": { "properties": { "runtimeKind": { "const": "EmbeddingInvocation" } } }
+    },
+    {
       "if": { "properties": { "eventName": { "enum": ["ToolInvocationStarted", "ToolInvocationCompleted", "ToolInvocationFailed"] } } },
       "then": { "properties": { "runtimeKind": { "const": "ToolInvocation" } } }
     },
@@ -103,11 +109,11 @@
       "then": { "properties": { "runtimeKind": { "const": "GeneratedArtifact" } } }
     },
     {
-      "if": { "properties": { "eventName": { "enum": ["ModelRequestAdmitted", "ModelRequestThrottled", "ModelRetryScheduled", "ModelRetrySuppressed"] } } },
+      "if": { "properties": { "eventName": { "enum": ["ModelRequestAdmitted", "ModelRequestThrottled", "ModelRetryScheduled", "ModelRetrySuppressed", "EmbeddingRequestAdmitted", "EmbeddingRequestThrottled", "EmbeddingRetryScheduled", "EmbeddingRetrySuppressed"] } } },
       "then": { "properties": { "status": { "const": "RUNNING" } } }
     },
     {
-      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionStarted", "TaskExecutionStarted", "AgentInvocationStarted", "ModelInvocationStarted", "ToolInvocationStarted"] } } },
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionStarted", "TaskExecutionStarted", "AgentInvocationStarted", "ModelInvocationStarted", "EmbeddingInvocationStarted", "ToolInvocationStarted"] } } },
       "then": { "properties": { "status": { "const": "RUNNING" } } }
     },
     {
@@ -115,11 +121,11 @@
       "then": { "properties": { "status": { "enum": ["PENDING", "QUEUED"] } } }
     },
     {
-      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionCompleted", "TaskExecutionSucceeded", "AgentInvocationCompleted", "ModelInvocationCompleted", "ToolInvocationCompleted", "EvaluationCompleted"] } } },
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionCompleted", "TaskExecutionSucceeded", "AgentInvocationCompleted", "ModelInvocationCompleted", "EmbeddingInvocationCompleted", "ToolInvocationCompleted", "EvaluationCompleted"] } } },
       "then": { "properties": { "status": { "const": "SUCCEEDED" } } }
     },
     {
-      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionFailed", "TaskExecutionFailed", "AgentInvocationFailed", "ModelInvocationFailed", "ToolInvocationFailed", "EvaluationFailed"] } } },
+      "if": { "properties": { "eventName": { "enum": ["WorkflowExecutionFailed", "TaskExecutionFailed", "AgentInvocationFailed", "ModelInvocationFailed", "EmbeddingInvocationFailed", "ToolInvocationFailed", "EvaluationFailed"] } } },
       "then": {
         "properties": {
           "status": { "const": "FAILED" },
