@@ -66,6 +66,14 @@ revision-bound symbol identities and bounded relationships. The graph remains
 platform-owned evidence selected by Context Builder. Agents do not browse it
 directly, and unsupported language constructs cannot become invented edges.
 
+AEP-069 and AEP-070 add a complementary semantic retrieval track. AEP-069
+builds a small provider-neutral, revision-bound semantic index with
+content-addressed embedding reuse; AEP-070 combines that signal with existing
+lexical retrieval through deterministic rank fusion. Semantic similarity is
+candidate-ranking evidence only. It does not establish planning truth, select
+editable targets, or authorize mutation. Exact planning evidence and
+revision-bound editable-target contracts remain downstream requirements.
+
 ## Workflow And Integration Expansion
 
 AEP-064 adds a governed pull-request review workflow with deterministic DAG
@@ -86,7 +94,7 @@ continuation semantics. Features may share completed MVP dependencies without
 being forced into one serial implementation chain when their contracts are
 otherwise independent.
 
-AEP-056 through AEP-065 are post-MVP work. Their addition does not change the
+AEP-056 through AEP-065 and AEP-069 through AEP-070 are post-MVP work. Their addition does not change the
 ADR-003 success criteria and does not block completion of the AEP-043 controlled
 dogfood pilot unless a later, explicit decision changes that boundary.
 

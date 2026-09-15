@@ -48,10 +48,14 @@ Repository Intelligence does **not**:
 * perform AI reasoning
 * build prompts
 * execute workflows
-* invoke models
-* retrieve context for Tasks
+* perform Agent reasoning or invoke Agent-owned models
+* assemble ContextPackages for Tasks
 
-Its responsibility ends at producing and maintaining the Repository Knowledge Graph.
+It produces and maintains the Repository Knowledge Graph and its revision-bound
+semantic index. Context Builder owns Task context assembly, and may request
+bounded lexical/semantic candidate retrieval through this platform-owned
+knowledge boundary; Repository Intelligence never decides edits or performs
+Agent reasoning.
 
 ---
 
@@ -398,29 +402,38 @@ History
 * related issues
 * previous pull requests
 
-The Query Engine never performs semantic search.
+The Query Engine owns bounded candidate retrieval. Its lexical and graph query
+paths remain deterministic. A revision-bound semantic-index query is permitted
+only as an advisory candidate signal and is available to Context Builder through
+the same provider boundary; it never replaces exact lookup, planning-evidence
+reads, graph traversal, or typed structural queries.
 
 ---
 
 # 11. Semantic Layer
 
-Embeddings complement the graph.
+Embeddings complement the graph and may nominate revision-bound source-code
+files or structure-aware chunks for bounded candidate discovery when issue
+vocabulary differs from repository vocabulary.
 
-They are used primarily for:
+They are used for bounded candidate retrieval over:
 
 * documentation
 * ADRs
 * markdown
 * design documents
 * issue discussions
+* source-code files and structure-aware chunks
 
-Embeddings are **not** used for:
+Embeddings are **not** used as authority for:
 
-* source code navigation
+* trusted structural navigation
 * dependency resolution
 * symbol lookup
 
-Graph traversal always takes precedence.
+Graph traversal and lexical exact matches remain the deterministic path for
+structural and identifier queries. Semantic similarity is advisory, cannot
+prove a repository fact, and never authorizes planning or mutation.
 
 ---
 
@@ -547,7 +560,12 @@ Repository Intelligence functions as the knowledge compiler of AEP.
 
 It continuously transforms Git repositories into immutable Repository Knowledge Graphs through deterministic analysis, AST parsing, symbol extraction, and relationship modeling.
 
-The resulting graph provides a language-agnostic semantic representation of the repository that enables the Context Builder to assemble precise, explainable, and reproducible ContextPackages without relying on source code parsing or vector search during workflow execution.
+The resulting graph and optional revision-bound semantic index provide
+language-agnostic structural and candidate evidence that enables Context Builder
+to assemble precise, explainable, and reproducible ContextPackages. Semantic
+index queries during workflow execution are bounded, policy-authorized, and
+provenance-rich; they do not replace exact repository evidence or edit
+authorization.
 Candidate-file results remain bounded discovery metadata. They do not authorize
 editing and do not satisfy patch input requirements. Exact editable preimages
 are materialized separately by the trusted Context Builder from the immutable
@@ -567,3 +585,77 @@ whole-file evaluator-owned criteria. Each record persists its scope class,
 selection identity, authorization role, and evaluator ownership without a
 source body. A `null` scope is evaluator evidence only; it cannot authorize a
 localized operation or substitute for a uniquely resolved scoped selection.
+
+# Semantic And Hybrid Candidate Retrieval
+
+AEP's repository knowledge layer may use multiple bounded retrieval signals to
+nominate repository evidence before an Agent reasons about an issue. Lexical
+retrieval remains authoritative for exact strings such as paths, identifiers,
+Resource names, configuration keys, issue numbers, and error text. A
+revision-bound semantic index may additionally retrieve files or
+structure-aware chunks whose meaning is related even when their vocabulary does
+not overlap the issue.
+
+Semantic index entries are content-bound and provider-neutral. An entry records
+the source content digest, path and bounded source identity, revision/snapshot
+membership, exact versioned embedding `Model` Resource reference, vector
+dimensions, similarity metric, and normalization rule. Identical content may
+reuse an embedding across Git revisions, but query membership is always
+evaluated against the exact WorkflowExecution revision. A small local persistent
+backend is sufficient for the initial implementation; the repository knowledge
+API, not Context Builder, owns the backend contract. It stages membership for a
+revision and atomically publishes a complete index generation; a query rejects
+an unavailable or incomplete generation instead of observing partial results.
+Each query must name the completed generation and immutable configuration digest
+it was built against; selecting the latest generation implicitly is forbidden.
+
+Embedding calls remain outside Agent and `ModelInvocation` execution. A durable
+`SemanticIndexBuild` owns revision indexing and its `EmbeddingInvocation`
+records persist the resolved Model Resource, timing, classified outcome, and
+safe usage metadata for every attempt, including failures before an entry is
+created. Inspection exposes that evidence without credentials or source bodies.
+
+Candidate selection should use deterministic hybrid rank fusion rather than
+treating vector similarity as a replacement for lexical retrieval. Every
+selected candidate preserves its component retrieval reasons and ranks plus the
+fused rank and configured bounds. The exact versioned requesting `Task`
+Resource supplies candidate and source limits, path/type filters, fusion
+parameters, thresholds, and the semantic-index degraded-mode choice; query
+provenance records that Resource reference and normalized policy.
+The issue text sent to an embedding provider is a versioned canonical projection
+of bounded issue/Task fields, normalized before dispatch. Its pre-provider
+byte/token ceiling, derivation version, and content digest are retained in the
+`SemanticQuery` runtime evidence; query-side embedding attempts are not attached
+to an index build.
+
+The evidence-strength boundary is:
+
+```text
+lexical / semantic / graph retrieval
+                |
+                v
+        candidate relevance
+                |
+                v
+          Agent reasoning
+                |
+                v
+       typed evidence request
+                |
+                v
+ exact revision-bound repository read
+                |
+                v
+         planning evidence
+                |
+                v
+       implementation plan
+                |
+                v
+         editable target
+```
+
+A semantic score never proves that a path requires modification and never
+grants write authority. Agents receive selected candidates only through
+ContextPackage construction and do not query vector, lexical, or graph
+providers directly.

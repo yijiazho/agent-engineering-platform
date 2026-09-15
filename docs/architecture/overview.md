@@ -614,3 +614,15 @@ AEP is built around four core concepts:
 * **Agents** perform bounded cognitive tasks and generate reusable engineering artifacts.
 
 By separating orchestration, knowledge, cognition, execution, and governance into independent layers, the platform remains modular, explainable, reproducible, and extensible while providing a foundation for AI-native software engineering workflows.
+
+
+## Semantic Repository Candidate Retrieval
+
+The repository-intelligence layer may complement lexical and symbol-aware
+queries with a revision-bound semantic index. Semantic and lexical rankings are
+combined deterministically to improve candidate recall for natural-language
+engineering requests, especially when issue vocabulary differs from
+implementation vocabulary. These results remain candidate evidence only:
+Context Builder materializes them under explicit budgets, while exact planning
+evidence and editable-target binding are still required before mutation.
+Agents never query the semantic index directly.

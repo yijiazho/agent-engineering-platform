@@ -88,7 +88,13 @@ Implement provider-aware rate-limit coordination and safe diagnostics that:
   limit/remaining/reset values when present;
 * records admission, throttling, retry-scheduled, retry-suppressed, and
   terminal provider lifecycle events with trace, WorkflowExecution,
-  TaskExecution, AgentInvocation, and ModelInvocation correlation;
+  TaskExecution, and an explicit owner correlation. Owner kinds include
+  AgentInvocation/ModelInvocation and repository `SemanticIndexBuild` or
+  `SemanticQuery`/`EmbeddingInvocation`; no fabricated AgentInvocation is
+  permitted;
+* supports embedding-owner admission and retry evidence in the observability
+  schema and covers indexing and query-side success, failure, and throttling
+  events;
 * continues to omit raw provider bodies, raw headers, prompts,
   ContextPackage/model output bodies, API keys, credential/project identity,
   and unredacted provider request IDs from runtime evidence and logs;
