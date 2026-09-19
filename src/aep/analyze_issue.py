@@ -256,6 +256,7 @@ class AnalyzeIssueTaskHandler:
             return []
         try:
             _validate_acceptance_criterion_insertions(output)
+            _validate_evaluator_owned_requirements(output)
         except AnalyzeIssueContractError as error:
             return [str(error)]
         return []
@@ -446,6 +447,36 @@ def _validate_acceptance_criterion_insertions(output: Any) -> None:
         raise AnalyzeIssueContractError(
             "acceptanceCriterionInsertions must map every acceptance criterion exactly once"
         )
+
+
+def _validate_evaluator_owned_requirements(output: Any) -> None:
+    """Reject untyped null-scope criteria before planning evidence is built."""
+    if not isinstance(output, Mapping):
+        return
+    declarations = output.get("planningPredicates", ())
+    if not isinstance(declarations, Sequence) or isinstance(declarations, (str, bytes)):
+        return
+    if any(isinstance(item, Mapping) and item.get("region") is None for item in declarations):
+        raise AnalyzeIssueContractError(
+            "evaluator-owned criteria must use evaluatorRequirements, not null-region document predicates"
+        )
+    requirements = output.get("evaluatorRequirements", ())
+    if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
+        raise AnalyzeIssueContractError("evaluatorRequirements must be an array")
+    for item in requirements:
+        if not isinstance(item, Mapping):
+            raise AnalyzeIssueContractError("evaluatorRequirements must contain objects")
+        if (
+            item.get("owner") != "PATCH_EVALUATION"
+            or item.get("requirementId") != "DIFF_CHECK_PASSES"
+            or not isinstance(item.get("path"), str)
+            or not item["path"]
+            or not isinstance(item.get("criterion"), str)
+            or item["criterion"] not in output.get("acceptanceCriteria", ())
+        ):
+            raise AnalyzeIssueContractError(
+                "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"
+            )
 
 
 def _required_ref(value: Any, expected_kind: str, field: str) -> ResourceRef:

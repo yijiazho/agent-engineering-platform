@@ -394,6 +394,28 @@ class ContextBuilder:
                         continue
                     predicate = declaration.get("predicate")
                     postcondition = declaration.get("postcondition")
+                    evaluator_requirement = declaration.get("_evaluatorRequirement")
+                    if isinstance(evaluator_requirement, Mapping):
+                        # This typed requirement is synthesized from evaluated
+                        # AnalyzeIssue output. It is not a model-supplied
+                        # document predicate and cannot grant edit authority.
+                        scope_key = "evaluator:" + json.dumps(
+                            evaluator_requirement, sort_keys=True, separators=(",", ":")
+                        )
+                        scope = scoped_declarations.setdefault(scope_key, {
+                            "region": None, "predicates": [], "postconditions": [],
+                            "reasons": [], "evaluatorRequirement": dict(evaluator_requirement),
+                        })
+                        scope["predicates"].append({
+                            "kind": "UNSUPPORTED_SEMANTIC",
+                            "value": str(evaluator_requirement["requirementId"]),
+                        })
+                        scope["postconditions"].append({
+                            "kind": "UNSUPPORTED_SEMANTIC",
+                            "value": str(evaluator_requirement["requirementId"]),
+                        })
+                        scope["reasons"].append(str(evaluator_requirement["selectionReason"]))
+                        continue
                     if not isinstance(predicate, Mapping) or not isinstance(postcondition, Mapping):
                         raise RequiredContextError("planning predicates require predicate and postcondition")
                     declared_region = declaration.get("region")
@@ -527,6 +549,9 @@ class ContextBuilder:
                             record, postconditions=scope["postconditions"],
                             selection_reasons=scope["reasons"],
                             postcondition_results=postcondition_record["predicateResults"]))
+                        if "evaluatorRequirement" in scope:
+                            scope_records[-1]["owningEvaluator"] = scope["evaluatorRequirement"]["owner"]
+                            scope_records[-1]["requirementId"] = scope["evaluatorRequirement"]["requirementId"]
                 except (OSError, UnicodeError, ValueError) as error:
                     reason = getattr(error, "reason", None) or {
                         FileNotFoundError: "TARGET_MISSING", UnicodeDecodeError: "INVALID_UTF8",
@@ -549,13 +574,16 @@ class ContextBuilder:
                     raise failure from error
                 for record in scope_records:
                     region = record["inspection"]["region"]
-                    evaluator_owned = region is None and any(
+                    evaluator_owned = "requirementId" in record or (region is None and any(
                         result.get("result") == "UNSUPPORTED"
                         for result in record.get("predicateResults", ())
-                    )
+                    ))
                     record["scopeClass"] = "WHOLE_FILE_EVALUATOR" if evaluator_owned else "EDITABLE_REGION"
                     record["authorizationRole"] = "EVALUATOR_ONLY" if evaluator_owned else "LOCALIZED_EDIT"
-                    record["owningEvaluator"] = "deterministic-evaluator" if evaluator_owned else None
+                    record["owningEvaluator"] = (
+                        record.get("owningEvaluator", "deterministic-evaluator")
+                        if evaluator_owned else None
+                    )
                     # The role is part of the trusted selection identity.
                     record = finalize_planning_evidence(
                         record, postconditions=record["postconditions"],
@@ -861,6 +889,16 @@ class ContextBuilder:
                                 "prior ISSUE_ANALYSIS planning predicate scopeType is invalid"
                             )
                         normalized.append(record)
+                    requirements = content.get("evaluatorRequirements", ())
+                    if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
+                        raise RequiredContextError("prior ISSUE_ANALYSIS evaluatorRequirements must be an array")
+                    for requirement in requirements:
+                        if not isinstance(requirement, Mapping):
+                            raise RequiredContextError("prior ISSUE_ANALYSIS evaluatorRequirements must be objects")
+                        normalized.append({
+                            "path": requirement.get("path"),
+                            "_evaluatorRequirement": dict(requirement),
+                        })
                     return normalized
         raise RequiredContextError(
             "planning-evidence requires predicate declarations from prior ISSUE_ANALYSIS"

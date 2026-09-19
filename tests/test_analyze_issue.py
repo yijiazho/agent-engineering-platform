@@ -2,7 +2,12 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from aep.analyze_issue import AnalyzeIssueTaskHandler
+import pytest
+
+from aep.analyze_issue import (
+    AnalyzeIssueContractError, AnalyzeIssueTaskHandler,
+    _validate_evaluator_owned_requirements,
+)
 from aep.context_builder import ContextBuilder
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.model_invocation import (
@@ -75,6 +80,36 @@ VALID_ANALYSIS = {
     "risks": ["Provider output may violate the schema."],
     "likelyRepositoryAreas": ["src/aep", "tests"],
 }
+
+
+def test_evaluator_owned_requirement_rejects_null_scope_status_predicate() -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"],
+        "planningPredicates": [{
+            "path": "README.md", "region": None,
+            "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+            "postcondition": {"kind": "STATUS_EQUALS", "value": "GIT_DIFF_CHECK_PASSES"},
+        }],
+        "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="evaluatorRequirements"):
+        _validate_evaluator_owned_requirements(output)
+
+
+def test_evaluator_owned_requirement_requires_approved_pairing() -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"],
+        "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "git diff --check passes", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "STATUS_EQUALS",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unsupported evaluator-owned"):
+        _validate_evaluator_owned_requirements(output)
 
 
 def test_success_composes_boundaries_and_attaches_complete_task_evidence() -> None:
