@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from hashlib import sha256
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 
 from aep.agent_invocation import AgentInvocationContractError, invoke_agent
@@ -486,6 +486,8 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             or not isinstance(item.get("criterion"), str)
             or item["criterion"] not in output.get("acceptanceCriteria", ())
             or not _safe_evaluator_requirement_path(item["path"])
+            or "diff" not in item["criterion"].casefold()
+            or "check" not in item["criterion"].casefold()
         ):
             raise AnalyzeIssueContractError(
                 "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"
@@ -496,12 +498,16 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
 
 
 def _safe_evaluator_requirement_path(path: str) -> bool:
-    candidate = PurePosixPath(path)
+    converted = path.strip().replace("\\", "/")
+    candidate = PurePosixPath(converted.strip("/"))
     return (
-        not candidate.is_absolute()
-        and "\\" not in path
-        and bool(candidate.parts)
-        and all(part not in {"", ".", ".."} for part in candidate.parts)
+        bool(converted)
+        and not converted.startswith("/")
+        and not PureWindowsPath(path).drive
+        and str(candidate) not in ("", ".")
+        and not candidate.is_absolute()
+        and ".." not in candidate.parts
+        and candidate.parts[0].casefold() != ".git"
     )
 
 

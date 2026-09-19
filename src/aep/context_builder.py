@@ -552,6 +552,7 @@ class ContextBuilder:
                         if "evaluatorRequirement" in scope:
                             scope_records[-1]["owningEvaluator"] = scope["evaluatorRequirement"]["owner"]
                             scope_records[-1]["requirementId"] = scope["evaluatorRequirement"]["requirementId"]
+                            scope_records[-1]["criterion"] = scope["evaluatorRequirement"]["criterion"]
                 except (OSError, UnicodeError, ValueError) as error:
                     reason = getattr(error, "reason", None) or {
                         FileNotFoundError: "TARGET_MISSING", UnicodeDecodeError: "INVALID_UTF8",

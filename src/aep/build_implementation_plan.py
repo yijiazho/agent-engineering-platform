@@ -60,7 +60,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         # The model may propose a useful subset, but it cannot omit an exact
         # bounded target whose Task-declared predicate was evaluated. The
         # trusted evidence set is the authoritative authorization universe.
-        authorized = sorted(evidence)
+        authorized = sorted(
+            path for path, records in evidence.items()
+            if any(record.get("authorizationRole") != "EVALUATOR_ONLY" for record in records)
+        )
         required, no_change, unsupported = [], [], []
         selected = []
         for path in authorized:
@@ -352,6 +355,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         if unsupported != classified_unsupported:
             raise BuildImplementationPlanContractError(
                 "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
+            )
+        classified_evaluator_owned = {
+            str(item.get("criterion")) for item in classifications
+            if item.get("classification") == "EVALUATOR_OWNED"
+        }
+        if classified_evaluator_owned != evaluator_criteria:
+            raise BuildImplementationPlanContractError(
+                "EVALUATOR_OWNED classifications must exactly match typed evaluator requirements"
             )
 
     def _context_arguments(

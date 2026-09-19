@@ -1159,7 +1159,8 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
     """Retain every postcondition with its own trusted selector."""
     result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
-        if isinstance(item, Mapping) and isinstance(item.get("path"), str):
+        if (isinstance(item, Mapping) and isinstance(item.get("path"), str)
+                and item.get("authorizationRole") != "EVALUATOR_ONLY"):
             values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
                 inspection = item.get("inspection", {})
