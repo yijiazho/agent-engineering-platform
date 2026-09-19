@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from hashlib import sha256
+from pathlib import PurePosixPath
 from typing import Any
 
 from aep.agent_invocation import AgentInvocationContractError, invoke_agent
@@ -473,6 +474,7 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
     requirements = output.get("evaluatorRequirements", ())
     if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
         raise AnalyzeIssueContractError("evaluatorRequirements must be an array")
+    criteria_seen: set[str] = set()
     for item in requirements:
         if not isinstance(item, Mapping):
             raise AnalyzeIssueContractError("evaluatorRequirements must contain objects")
@@ -483,10 +485,24 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             or not item["path"]
             or not isinstance(item.get("criterion"), str)
             or item["criterion"] not in output.get("acceptanceCriteria", ())
+            or not _safe_evaluator_requirement_path(item["path"])
         ):
             raise AnalyzeIssueContractError(
                 "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"
             )
+        if item["criterion"] in criteria_seen:
+            raise AnalyzeIssueContractError("evaluatorRequirements must contain one requirement per criterion")
+        criteria_seen.add(item["criterion"])
+
+
+def _safe_evaluator_requirement_path(path: str) -> bool:
+    candidate = PurePosixPath(path)
+    return (
+        not candidate.is_absolute()
+        and "\\" not in path
+        and bool(candidate.parts)
+        and all(part not in {"", ".", ".."} for part in candidate.parts)
+    )
 
 
 def _required_ref(value: Any, expected_kind: str, field: str) -> ResourceRef:
