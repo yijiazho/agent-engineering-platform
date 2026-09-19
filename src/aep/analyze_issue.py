@@ -460,6 +460,16 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
         raise AnalyzeIssueContractError(
             "evaluator-owned criteria must use evaluatorRequirements, not null-region document predicates"
         )
+    for declaration in declarations:
+        if not isinstance(declaration, Mapping):
+            continue
+        for predicate in (declaration.get("predicate"), declaration.get("postcondition")):
+            if isinstance(predicate, Mapping) and predicate.get("kind") == "STATUS_EQUALS":
+                value = predicate.get("value")
+                if not isinstance(value, str) or value == "GIT_DIFF_CHECK_PASSES":
+                    raise AnalyzeIssueContractError(
+                        "STATUS_EQUALS is reserved for an explicit structured-status document criterion"
+                    )
     requirements = output.get("evaluatorRequirements", ())
     if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
         raise AnalyzeIssueContractError("evaluatorRequirements must be an array")

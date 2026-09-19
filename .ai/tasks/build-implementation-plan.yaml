@@ -108,7 +108,8 @@
               "classification": {
                 "enum": [
                   "REQUIRED_INSERTION",
-                  "UNSUPPORTED"
+                  "UNSUPPORTED",
+                  "EVALUATOR_OWNED"
                 ]
               },
               "requiredInsertions": {

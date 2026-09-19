@@ -239,6 +239,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 "unsupportedAcceptanceCriteria must contain unique criteria"
             )
         unsupported = set(unsupported_values)
+        evaluator_requirements = analysis.get("evaluatorRequirements", ())
+        evaluator_criteria = {
+            item.get("criterion") for item in evaluator_requirements
+            if isinstance(item, Mapping)
+        } if isinstance(evaluator_requirements, Sequence) and not isinstance(evaluator_requirements, (str, bytes)) else set()
         insertions = {
             (item.get("path"), item.get("value"))
             for item in plan.get("requiredInsertions", ())
@@ -320,6 +325,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "each required-insertion classification must bind at least one insertion"
                 )
+            if disposition == "EVALUATOR_OWNED":
+                if criterion not in evaluator_criteria or bindings or criterion in unsupported:
+                    raise BuildImplementationPlanContractError(
+                        "evaluator-owned criterion must bind one typed evaluator requirement and no insertions"
+                    )
         binders: dict[tuple[Any, Any], list[str]] = {}
         for criterion, values in bound_by_criterion.items():
             for value in values:
