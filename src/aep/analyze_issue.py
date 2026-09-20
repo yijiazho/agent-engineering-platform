@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from hashlib import sha256
 from pathlib import PurePosixPath, PureWindowsPath
+import re
 from typing import Any
 
 from aep.agent_invocation import AgentInvocationContractError, invoke_agent
@@ -494,8 +495,7 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             or not isinstance(item.get("criterion"), str)
             or item["criterion"] not in output.get("acceptanceCriteria", ())
             or not _safe_evaluator_requirement_path(item["path"])
-            or "diff" not in item["criterion"].casefold()
-            or "check" not in item["criterion"].casefold()
+            or re.search(r"(?<!\\S)git\\s+diff\\s+--check(?!\\S)", item["criterion"], re.IGNORECASE) is None
         ):
             raise AnalyzeIssueContractError(
                 "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"

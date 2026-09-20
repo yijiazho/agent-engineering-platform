@@ -112,6 +112,21 @@ def test_evaluator_owned_requirement_requires_approved_pairing() -> None:
         _validate_evaluator_owned_requirements(output)
 
 
+def test_evaluator_owned_requirement_requires_explicit_git_diff_check_criterion() -> None:
+    output = {
+        "acceptanceCriteria": ["Check that the diff passes security review"],
+        "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "Check that the diff passes security review", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "security requirement",
+        }],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unsupported evaluator-owned"):
+        _validate_evaluator_owned_requirements(output)
+
+
 @pytest.mark.parametrize("path", [" docs/task.md", "docs\\task.md", "docs/task.md/", "docs//task.md"])
 def test_evaluator_owned_requirement_requires_canonical_repository_path(path: str) -> None:
     output = {

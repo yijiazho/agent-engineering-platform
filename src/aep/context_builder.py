@@ -382,6 +382,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
+                evaluator_requirements: list[Mapping[str, Any]] = []
                 scoped_declarations: dict[str, dict[str, Any]] = {}
                 declared_max_bytes: int | None = None
                 for declaration in declarations:
@@ -396,25 +397,10 @@ class ContextBuilder:
                     postcondition = declaration.get("postcondition")
                     evaluator_requirement = declaration.get("_evaluatorRequirement")
                     if isinstance(evaluator_requirement, Mapping):
-                        # This typed requirement is synthesized from evaluated
-                        # AnalyzeIssue output. It is not a model-supplied
-                        # document predicate and cannot grant edit authority.
-                        scope_key = "evaluator:" + json.dumps(
-                            evaluator_requirement, sort_keys=True, separators=(",", ":")
-                        )
-                        scope = scoped_declarations.setdefault(scope_key, {
-                            "region": None, "predicates": [], "postconditions": [],
-                            "reasons": [], "evaluatorRequirement": dict(evaluator_requirement),
-                        })
-                        scope["predicates"].append({
-                            "kind": "UNSUPPORTED_SEMANTIC",
-                            "value": str(evaluator_requirement["requirementId"]),
-                        })
-                        scope["postconditions"].append({
-                            "kind": "UNSUPPORTED_SEMANTIC",
-                            "value": str(evaluator_requirement["requirementId"]),
-                        })
-                        scope["reasons"].append(str(evaluator_requirement["selectionReason"]))
+                        # Evaluator requirements are not document predicates:
+                        # retain their identity without decoding or size-limiting
+                        # the named file.
+                        evaluator_requirements.append(evaluator_requirement)
                         continue
                     if not isinstance(predicate, Mapping) or not isinstance(postcondition, Mapping):
                         raise RequiredContextError("planning predicates require predicate and postcondition")
@@ -440,6 +426,52 @@ class ContextBuilder:
                     if hint is not None:
                         hint = int(hint)
                         declared_max_bytes = hint if declared_max_bytes is None else min(declared_max_bytes, hint)
+                for requirement in evaluator_requirements:
+                    requirement_id = str(requirement["requirementId"])
+                    criterion = str(requirement["criterion"])
+                    selection_reason = str(requirement["selectionReason"])
+                    record = {
+                        "path": path,
+                        "repositoryRevision": repository_revision,
+                        "preimageSha256": sha256(
+                            f"evaluator:{repository_revision}:{path}".encode("utf-8")
+                        ).hexdigest(),
+                        "sourceProvenance": {
+                            "sourceId": f"evaluator-requirement:{repository_revision}:{path}",
+                            "repositoryRevision": repository_revision,
+                        },
+                        "inspection": {
+                            "region": None, "inspectionStrategy": "EVALUATOR_REQUIREMENT",
+                            "inspectedBytes": 0, "blobSize": None,
+                        },
+                        "predicateResults": [{
+                            "kind": "EVALUATOR_REQUIREMENT", "value": requirement_id,
+                            "result": "EVALUATOR_OWNED",
+                        }],
+                        "scopeClass": "WHOLE_FILE_EVALUATOR",
+                        "authorizationRole": "EVALUATOR_ONLY",
+                        "owningEvaluator": requirement["owner"],
+                        "requirementId": requirement_id,
+                        "criterion": criterion,
+                    }
+                    record = finalize_planning_evidence(
+                        record,
+                        postconditions=[{
+                            "kind": "EVALUATOR_REQUIREMENT", "value": requirement_id,
+                        }],
+                        selection_reasons=[selection_reason],
+                        postcondition_results=[{
+                            "kind": "EVALUATOR_REQUIREMENT", "value": requirement_id,
+                            "result": "EVALUATOR_OWNED",
+                        }],
+                    )
+                    evidence_target.append(("planning-evidence", {
+                        "type": "planning-evidence", "content": record,
+                        "provenance": {"actor": "context-builder", "repositoryRevision": repository_revision,
+                            "knowledgeGraphVersion": knowledge_graph_version,
+                            "resourceRefs": [task_ref]},
+                    }))
+                    matched += 1
                 if not scoped_declarations:
                     continue
                 inspection = task_spec.get("planningEvidenceInspection")

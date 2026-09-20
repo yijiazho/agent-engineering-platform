@@ -22,7 +22,7 @@
   ],
   "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
   "resourceVersions": {
-    "workflow": "1.27.0",
+    "workflow": "1.28.0",
     "buildImplementationPlanTask": "1.12.0",
     "plannerAgent": "1.11.0",
     "implementationPlanningPrompt": "1.10.0",
@@ -33,9 +33,9 @@
     "createPullRequestTask": "1.2.0",
     "publicationEvidencePolicy": "1.1.0",
     "model": "1.1.0",
-    "analyzeIssueTask": "1.8.0",
-    "issueAnalyzerAgent": "1.6.0",
-    "issueAnalysisPrompt": "1.4.0",
+    "analyzeIssueTask": "1.9.0",
+    "issueAnalyzerAgent": "1.7.0",
+    "issueAnalysisPrompt": "1.5.0",
     "issueAnalysisEvaluation": "1.4.0"
   },
   "publicationCapabilities": ["git.push", "github.create_pr"],

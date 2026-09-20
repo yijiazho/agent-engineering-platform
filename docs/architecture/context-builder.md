@@ -729,7 +729,8 @@ null-region document predicates. The current approved pair is
 `PATCH_EVALUATION` / `DIFF_CHECK_PASSES`; it carries a bounded path, acceptance
 criterion, and selection reason, and becomes `EVALUATOR_ONLY` planning evidence
 with the owner and requirement identifier persisted. It never supplies a
-localized mutation span. AnalyzeIssue rejects any null-region document
+localized mutation span or requires a source-body scan; Context Builder records
+its typed identity directly for the named evaluator. AnalyzeIssue rejects any null-region document
 predicate, arbitrary owner, requirement identifier, or use of `STATUS_EQUALS`
 to represent a formatter, build, test, or patch outcome before Context Builder
 inspects repository content.
