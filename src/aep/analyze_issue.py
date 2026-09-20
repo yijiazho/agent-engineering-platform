@@ -487,6 +487,17 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
     if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
         raise AnalyzeIssueContractError("evaluatorRequirements must be an array")
     criteria_seen: set[str] = set()
+    evaluator_criteria = {
+        item.get("criterion") for item in requirements if isinstance(item, Mapping)
+    }
+    for declaration in declarations:
+        if (
+            isinstance(declaration, Mapping)
+            and declaration.get("selectionReason") in evaluator_criteria
+        ):
+            raise AnalyzeIssueContractError(
+                "evaluator-owned criteria cannot also use document planning predicates"
+            )
     for item in requirements:
         if not isinstance(item, Mapping):
             raise AnalyzeIssueContractError("evaluatorRequirements must contain objects")

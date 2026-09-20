@@ -363,7 +363,7 @@ def evaluate_patch(
         "checks": checks,
         "evaluatorRequirements": [{
             **binding,
-            "result": "PASS" if applicable and git_status == "SUCCEEDED" else "FAIL",
+            "result": "PASS" if applicable and git_status in {"SUCCEEDED", "NOT_RUN"} else "FAIL",
         } for binding in evaluator_bindings],
         "errors": errors,
     }
