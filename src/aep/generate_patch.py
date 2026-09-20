@@ -529,6 +529,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     if item["path"] not in effective_no_change
                 ),
                 unsupported_acceptance_criteria=unsupported_criteria,
+                evaluator_requirements=tuple({
+                    "selectionId": item["selectionId"], "criterion": item["criterion"],
+                    "owner": item["owningEvaluator"], "requirementId": item["requirementId"],
+                } for item in plan.get("_trustedEvaluatorEvidence", ())),
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),

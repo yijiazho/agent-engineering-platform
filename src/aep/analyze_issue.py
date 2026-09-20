@@ -471,11 +471,14 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
                 region = declaration.get("region")
                 if (
                     not isinstance(value, str)
-                    or value not in {"In Progress", "Blocked", "Completed"}
+                    or value not in {"Not Started", "In Progress", "Blocked", "Completed"}
                     or not isinstance(region, Mapping)
                     or region.get("kind") != "MARKDOWN_SECTION"
                     or not isinstance(region.get("name"), str)
                     or not region["name"]
+                    or not isinstance(declaration.get("selectionReason"), str)
+                    or declaration["selectionReason"] not in output.get("acceptanceCriteria", ())
+                    or "status" not in declaration["selectionReason"].casefold()
                 ):
                     raise AnalyzeIssueContractError(
                         "STATUS_EQUALS requires a Markdown-section structured Status criterion"
@@ -495,7 +498,7 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             or not isinstance(item.get("criterion"), str)
             or item["criterion"] not in output.get("acceptanceCriteria", ())
             or not _safe_evaluator_requirement_path(item["path"])
-            or re.search(r"(?<!\\S)git\\s+diff\\s+--check(?!\\S)", item["criterion"], re.IGNORECASE) is None
+            or re.search(r"(?<!\S)git\s+diff\s+--check(?!\S)", item["criterion"], re.IGNORECASE) is None
         ):
             raise AnalyzeIssueContractError(
                 "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"

@@ -127,6 +127,33 @@ def test_evaluator_owned_requirement_requires_explicit_git_diff_check_criterion(
         _validate_evaluator_owned_requirements(output)
 
 
+def test_evaluator_owned_requirement_accepts_explicit_git_diff_check_criterion() -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"], "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "git diff --check passes", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    _validate_evaluator_owned_requirements(output)
+
+
+def test_status_equals_requires_a_bound_status_acceptance_criterion() -> None:
+    output = {
+        "acceptanceCriteria": ["Tests pass"],
+        "planningPredicates": [{
+            "selectionReason": "Tests pass", "region": {"kind": "MARKDOWN_SECTION", "name": "Status"},
+            "predicate": {"kind": "STATUS_EQUALS", "value": "Not Started"},
+            "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        }], "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="structured Status"):
+        _validate_evaluator_owned_requirements(output)
+
+
 @pytest.mark.parametrize("path", [" docs/task.md", "docs\\task.md", "docs/task.md/", "docs//task.md"])
 def test_evaluator_owned_requirement_requires_canonical_repository_path(path: str) -> None:
     output = {
