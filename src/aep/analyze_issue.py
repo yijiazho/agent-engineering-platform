@@ -467,9 +467,17 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
         for predicate in (declaration.get("predicate"), declaration.get("postcondition")):
             if isinstance(predicate, Mapping) and predicate.get("kind") == "STATUS_EQUALS":
                 value = predicate.get("value")
-                if not isinstance(value, str) or value == "GIT_DIFF_CHECK_PASSES":
+                region = declaration.get("region")
+                if (
+                    not isinstance(value, str)
+                    or value not in {"In Progress", "Blocked", "Completed"}
+                    or not isinstance(region, Mapping)
+                    or region.get("kind") != "MARKDOWN_SECTION"
+                    or not isinstance(region.get("name"), str)
+                    or not region["name"]
+                ):
                     raise AnalyzeIssueContractError(
-                        "STATUS_EQUALS is reserved for an explicit structured-status document criterion"
+                        "STATUS_EQUALS requires a Markdown-section structured Status criterion"
                     )
     requirements = output.get("evaluatorRequirements", ())
     if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
@@ -498,13 +506,15 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
 
 
 def _safe_evaluator_requirement_path(path: str) -> bool:
-    converted = path.strip().replace("\\", "/")
-    candidate = PurePosixPath(converted.strip("/"))
+    if path != path.strip() or "\\" in path:
+        return False
+    candidate = PurePosixPath(path)
     return (
-        bool(converted)
-        and not converted.startswith("/")
+        bool(path)
+        and not path.startswith("/")
         and not PureWindowsPath(path).drive
         and str(candidate) not in ("", ".")
+        and path == str(candidate)
         and not candidate.is_absolute()
         and ".." not in candidate.parts
         and candidate.parts[0].casefold() != ".git"

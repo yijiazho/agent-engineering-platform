@@ -112,6 +112,36 @@ def test_evaluator_owned_requirement_requires_approved_pairing() -> None:
         _validate_evaluator_owned_requirements(output)
 
 
+@pytest.mark.parametrize("path", [" docs/task.md", "docs\\task.md", "docs/task.md/", "docs//task.md"])
+def test_evaluator_owned_requirement_requires_canonical_repository_path(path: str) -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"], "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "git diff --check passes", "path": path,
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unsupported evaluator-owned"):
+        _validate_evaluator_owned_requirements(output)
+
+
+def test_status_equals_requires_bounded_structured_status_transition() -> None:
+    output = {
+        "acceptanceCriteria": ["Tests pass"],
+        "planningPredicates": [{
+            "region": {"kind": "WHOLE_FILE", "name": "WHOLE_FILE"},
+            "predicate": {"kind": "STATUS_EQUALS", "value": "TESTS_PASS"},
+            "postcondition": {"kind": "STATUS_EQUALS", "value": "TESTS_PASS"},
+        }],
+        "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="structured Status"):
+        _validate_evaluator_owned_requirements(output)
+
+
 def test_success_composes_boundaries_and_attaches_complete_task_evidence() -> None:
     store, handler, task, adapter = setup_handler(
         ModelResponse(

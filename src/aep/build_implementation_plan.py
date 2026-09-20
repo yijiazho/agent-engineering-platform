@@ -64,6 +64,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             path for path, records in evidence.items()
             if any(record.get("authorizationRole") != "EVALUATOR_ONLY" for record in records)
         )
+        evaluator_evidence = [
+            record for records in evidence.values() for record in records
+            if record.get("authorizationRole") == "EVALUATOR_ONLY"
+        ]
         required, no_change, unsupported = [], [], []
         selected = []
         for path in authorized:
@@ -90,6 +94,9 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             "verifiedNoChangePaths": no_change,
             "unsupportedPaths": unsupported,
             "pathEvidence": selected,
+            # Evaluator evidence is preserved for its named deterministic
+            # evaluator, but never enters the mutation authorization universe.
+            "evaluatorEvidence": evaluator_evidence,
             # Backward-compatible aliases consumed by the current patch boundary.
             "intendedFiles": authorized,
             "noChangeFiles": no_change,
@@ -100,6 +107,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         except PlanningEvidenceError as error:
             raise BuildImplementationPlanContractError(str(error)) from error
         canonical["pathEvidence"] = [item["selectionId"] for item in selected]
+        canonical["evaluatorEvidence"] = [item["selectionId"] for item in evaluator_evidence]
         return canonical
 
     def _invocation_output_errors(
@@ -329,7 +337,12 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                     "each required-insertion classification must bind at least one insertion"
                 )
             if disposition == "EVALUATOR_OWNED":
-                if criterion not in evaluator_criteria or bindings or criterion in unsupported:
+                if (
+                    criterion not in evaluator_criteria
+                    or bindings
+                    or criterion in unsupported
+                    or expected_by_criterion[str(criterion)]
+                ):
                     raise BuildImplementationPlanContractError(
                         "evaluator-owned criterion must bind one typed evaluator requirement and no insertions"
                     )

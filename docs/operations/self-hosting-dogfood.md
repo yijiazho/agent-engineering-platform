@@ -865,7 +865,7 @@ must be an intentional, separately reviewed operation.
 * `analyze-issue:1.8.0` derives bounded exact or prefix document predicates and
   separate typed evaluatorRequirements from the request; evaluator ownership
   and requirement IDs are persisted without granting mutation authority;
-  `build-implementation-plan:1.11.0` uses those declarations
+  `build-implementation-plan:1.12.0` uses those declarations
   to create trusted `planning-evidence` records
 
 The planning Task owns trusted limits of 256 KiB per file, 1 MiB in aggregate,
