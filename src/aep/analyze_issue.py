@@ -493,10 +493,13 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
     for declaration in declarations:
         if (
             isinstance(declaration, Mapping)
-            and declaration.get("selectionReason") in evaluator_criteria
+            and (
+                declaration.get("selectionReason") not in output.get("acceptanceCriteria", ())
+                or declaration.get("selectionReason") in evaluator_criteria
+            )
         ):
             raise AnalyzeIssueContractError(
-                "evaluator-owned criteria cannot also use document planning predicates"
+                "planning predicates must bind one non-evaluator acceptance criterion exactly"
             )
     for item in requirements:
         if not isinstance(item, Mapping):
@@ -509,7 +512,7 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             or not isinstance(item.get("criterion"), str)
             or item["criterion"] not in output.get("acceptanceCriteria", ())
             or not _safe_evaluator_requirement_path(item["path"])
-            or re.search(r"(?<!\S)git\s+diff\s+--check(?!\S)", item["criterion"], re.IGNORECASE) is None
+            or re.search(r"(?<![A-Za-z0-9_-])git\s+diff\s+--check(?![A-Za-z0-9_-])", item["criterion"], re.IGNORECASE) is None
         ):
             raise AnalyzeIssueContractError(
                 "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"

@@ -140,6 +140,19 @@ def test_evaluator_owned_requirement_accepts_explicit_git_diff_check_criterion()
     _validate_evaluator_owned_requirements(output)
 
 
+def test_evaluator_owned_requirement_accepts_markdown_delimited_diff_check() -> None:
+    output = {
+        "acceptanceCriteria": ["Ensure `git diff --check` passes."], "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "Ensure `git diff --check` passes.", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    _validate_evaluator_owned_requirements(output)
+
+
 def test_status_equals_requires_a_bound_status_acceptance_criterion() -> None:
     output = {
         "acceptanceCriteria": ["Tests pass"],
