@@ -186,7 +186,7 @@ failed workflow.
 
 * AEP-066 aggregate proof remains exact: one safe multiline operation may satisfy multiple required values, while a missing value fails reconciliation.
 
-* Preservation, changed-path boundaries, `git diff --check`, build, and test requirements receive deterministic evaluator ownership. Genuinely unsupported requirements have explicit blocking evidence and are not silently satisfied.
+* Preservation, changed-path boundaries, and `git diff --check` requirements receive deterministic evaluator ownership. Build and test requirements remain explicitly unsupported until separately versioned typed evaluator contracts exist; they have blocking evidence and are not silently satisfied.
 
 * Evaluator-owned criteria use a versioned, typed owner and approved requirement
   identifier. A `git diff --check` requirement cannot be represented as
