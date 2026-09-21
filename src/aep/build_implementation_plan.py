@@ -60,7 +60,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         # The model may propose a useful subset, but it cannot omit an exact
         # bounded target whose Task-declared predicate was evaluated. The
         # trusted evidence set is the authoritative authorization universe.
-        authorized = sorted(evidence)
+        authorized = sorted(
+            path for path, records in evidence.items()
+            if any(record.get("authorizationRole") != "EVALUATOR_ONLY" for record in records)
+        )
+        evaluator_evidence = [
+            record for records in evidence.values() for record in records
+            if record.get("authorizationRole") == "EVALUATOR_ONLY"
+        ]
         required, no_change, unsupported = [], [], []
         selected = []
         for path in authorized:
@@ -87,6 +94,9 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             "verifiedNoChangePaths": no_change,
             "unsupportedPaths": unsupported,
             "pathEvidence": selected,
+            # Evaluator evidence is preserved for its named deterministic
+            # evaluator, but never enters the mutation authorization universe.
+            "evaluatorEvidence": evaluator_evidence,
             # Backward-compatible aliases consumed by the current patch boundary.
             "intendedFiles": authorized,
             "noChangeFiles": no_change,
@@ -97,6 +107,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         except PlanningEvidenceError as error:
             raise BuildImplementationPlanContractError(str(error)) from error
         canonical["pathEvidence"] = [item["selectionId"] for item in selected]
+        canonical["evaluatorEvidence"] = [item["selectionId"] for item in evaluator_evidence]
         return canonical
 
     def _invocation_output_errors(
@@ -239,6 +250,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 "unsupportedAcceptanceCriteria must contain unique criteria"
             )
         unsupported = set(unsupported_values)
+        evaluator_requirements = analysis.get("evaluatorRequirements", ())
+        evaluator_criteria = {
+            item.get("criterion") for item in evaluator_requirements
+            if isinstance(item, Mapping)
+        } if isinstance(evaluator_requirements, Sequence) and not isinstance(evaluator_requirements, (str, bytes)) else set()
         insertions = {
             (item.get("path"), item.get("value"))
             for item in plan.get("requiredInsertions", ())
@@ -320,6 +336,16 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "each required-insertion classification must bind at least one insertion"
                 )
+            if disposition == "EVALUATOR_OWNED":
+                if (
+                    criterion not in evaluator_criteria
+                    or bindings
+                    or criterion in unsupported
+                    or expected_by_criterion[str(criterion)]
+                ):
+                    raise BuildImplementationPlanContractError(
+                        "evaluator-owned criterion must bind one typed evaluator requirement and no insertions"
+                    )
         binders: dict[tuple[Any, Any], list[str]] = {}
         for criterion, values in bound_by_criterion.items():
             for value in values:
@@ -342,6 +368,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         if unsupported != classified_unsupported:
             raise BuildImplementationPlanContractError(
                 "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
+            )
+        classified_evaluator_owned = {
+            str(item.get("criterion")) for item in classifications
+            if item.get("classification") == "EVALUATOR_OWNED"
+        }
+        if classified_evaluator_owned != evaluator_criteria:
+            raise BuildImplementationPlanContractError(
+                "EVALUATOR_OWNED classifications must exactly match typed evaluator requirements"
             )
 
     def _context_arguments(

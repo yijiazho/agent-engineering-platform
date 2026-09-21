@@ -382,6 +382,7 @@ class ContextBuilder:
                 predicates = []
                 postconditions = []
                 reasons = []
+                evaluator_requirements: list[Mapping[str, Any]] = []
                 scoped_declarations: dict[str, dict[str, Any]] = {}
                 declared_max_bytes: int | None = None
                 for declaration in declarations:
@@ -394,6 +395,13 @@ class ContextBuilder:
                         continue
                     predicate = declaration.get("predicate")
                     postcondition = declaration.get("postcondition")
+                    evaluator_requirement = declaration.get("_evaluatorRequirement")
+                    if isinstance(evaluator_requirement, Mapping):
+                        # Evaluator requirements are not document predicates:
+                        # retain their identity without decoding or size-limiting
+                        # the named file.
+                        evaluator_requirements.append(evaluator_requirement)
+                        continue
                     if not isinstance(predicate, Mapping) or not isinstance(postcondition, Mapping):
                         raise RequiredContextError("planning predicates require predicate and postcondition")
                     declared_region = declaration.get("region")
@@ -418,6 +426,52 @@ class ContextBuilder:
                     if hint is not None:
                         hint = int(hint)
                         declared_max_bytes = hint if declared_max_bytes is None else min(declared_max_bytes, hint)
+                for requirement in evaluator_requirements:
+                    requirement_id = str(requirement["requirementId"])
+                    criterion = str(requirement["criterion"])
+                    selection_reason = str(requirement["selectionReason"])
+                    record = {
+                        "path": path,
+                        "repositoryRevision": repository_revision,
+                        "preimageSha256": sha256(
+                            f"evaluator:{repository_revision}:{path}".encode("utf-8")
+                        ).hexdigest(),
+                        "sourceProvenance": {
+                            "sourceId": f"evaluator-requirement:{repository_revision}:{path}",
+                            "repositoryRevision": repository_revision,
+                        },
+                        "inspection": {
+                            "region": None, "inspectionStrategy": "EVALUATOR_REQUIREMENT",
+                            "inspectedBytes": 0, "blobSize": None,
+                        },
+                        "predicateResults": [{
+                            "kind": "EVALUATOR_REQUIREMENT", "value": requirement_id,
+                            "result": "EVALUATOR_OWNED",
+                        }],
+                        "scopeClass": "WHOLE_FILE_EVALUATOR",
+                        "authorizationRole": "EVALUATOR_ONLY",
+                        "owningEvaluator": requirement["owner"],
+                        "requirementId": requirement_id,
+                        "criterion": criterion,
+                    }
+                    record = finalize_planning_evidence(
+                        record,
+                        postconditions=[{
+                            "kind": "EVALUATOR_REQUIREMENT", "value": requirement_id,
+                        }],
+                        selection_reasons=[selection_reason],
+                        postcondition_results=[{
+                            "kind": "EVALUATOR_REQUIREMENT", "value": requirement_id,
+                            "result": "EVALUATOR_OWNED",
+                        }],
+                    )
+                    evidence_target.append(("planning-evidence", {
+                        "type": "planning-evidence", "content": record,
+                        "provenance": {"actor": "context-builder", "repositoryRevision": repository_revision,
+                            "knowledgeGraphVersion": knowledge_graph_version,
+                            "resourceRefs": [task_ref]},
+                    }))
+                    matched += 1
                 if not scoped_declarations:
                     continue
                 inspection = task_spec.get("planningEvidenceInspection")
@@ -527,6 +581,10 @@ class ContextBuilder:
                             record, postconditions=scope["postconditions"],
                             selection_reasons=scope["reasons"],
                             postcondition_results=postcondition_record["predicateResults"]))
+                        if "evaluatorRequirement" in scope:
+                            scope_records[-1]["owningEvaluator"] = scope["evaluatorRequirement"]["owner"]
+                            scope_records[-1]["requirementId"] = scope["evaluatorRequirement"]["requirementId"]
+                            scope_records[-1]["criterion"] = scope["evaluatorRequirement"]["criterion"]
                 except (OSError, UnicodeError, ValueError) as error:
                     reason = getattr(error, "reason", None) or {
                         FileNotFoundError: "TARGET_MISSING", UnicodeDecodeError: "INVALID_UTF8",
@@ -549,13 +607,16 @@ class ContextBuilder:
                     raise failure from error
                 for record in scope_records:
                     region = record["inspection"]["region"]
-                    evaluator_owned = region is None and any(
+                    evaluator_owned = "requirementId" in record or (region is None and any(
                         result.get("result") == "UNSUPPORTED"
                         for result in record.get("predicateResults", ())
-                    )
+                    ))
                     record["scopeClass"] = "WHOLE_FILE_EVALUATOR" if evaluator_owned else "EDITABLE_REGION"
                     record["authorizationRole"] = "EVALUATOR_ONLY" if evaluator_owned else "LOCALIZED_EDIT"
-                    record["owningEvaluator"] = "deterministic-evaluator" if evaluator_owned else None
+                    record["owningEvaluator"] = (
+                        record.get("owningEvaluator", "deterministic-evaluator")
+                        if evaluator_owned else None
+                    )
                     # The role is part of the trusted selection identity.
                     record = finalize_planning_evidence(
                         record, postconditions=record["postconditions"],
@@ -861,6 +922,16 @@ class ContextBuilder:
                                 "prior ISSUE_ANALYSIS planning predicate scopeType is invalid"
                             )
                         normalized.append(record)
+                    requirements = content.get("evaluatorRequirements", ())
+                    if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
+                        raise RequiredContextError("prior ISSUE_ANALYSIS evaluatorRequirements must be an array")
+                    for requirement in requirements:
+                        if not isinstance(requirement, Mapping):
+                            raise RequiredContextError("prior ISSUE_ANALYSIS evaluatorRequirements must be objects")
+                        normalized.append({
+                            "path": requirement.get("path"),
+                            "_evaluatorRequirement": dict(requirement),
+                        })
                     return normalized
         raise RequiredContextError(
             "planning-evidence requires predicate declarations from prior ISSUE_ANALYSIS"

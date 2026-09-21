@@ -2,7 +2,12 @@ import json
 from copy import deepcopy
 from pathlib import Path
 
-from aep.analyze_issue import AnalyzeIssueTaskHandler
+import pytest
+
+from aep.analyze_issue import (
+    AnalyzeIssueContractError, AnalyzeIssueTaskHandler,
+    _validate_evaluator_owned_requirements,
+)
 from aep.context_builder import ContextBuilder
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.model_invocation import (
@@ -75,6 +80,121 @@ VALID_ANALYSIS = {
     "risks": ["Provider output may violate the schema."],
     "likelyRepositoryAreas": ["src/aep", "tests"],
 }
+
+
+def test_evaluator_owned_requirement_rejects_null_scope_status_predicate() -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"],
+        "planningPredicates": [{
+            "path": "README.md", "region": None,
+            "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+            "postcondition": {"kind": "STATUS_EQUALS", "value": "GIT_DIFF_CHECK_PASSES"},
+        }],
+        "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="evaluatorRequirements"):
+        _validate_evaluator_owned_requirements(output)
+
+
+def test_evaluator_owned_requirement_requires_approved_pairing() -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"],
+        "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "git diff --check passes", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "STATUS_EQUALS",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unsupported evaluator-owned"):
+        _validate_evaluator_owned_requirements(output)
+
+
+def test_evaluator_owned_requirement_requires_explicit_git_diff_check_criterion() -> None:
+    output = {
+        "acceptanceCriteria": ["Check that the diff passes security review"],
+        "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "Check that the diff passes security review", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "security requirement",
+        }],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unsupported evaluator-owned"):
+        _validate_evaluator_owned_requirements(output)
+
+
+def test_evaluator_owned_requirement_accepts_explicit_git_diff_check_criterion() -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"], "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "git diff --check passes", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    _validate_evaluator_owned_requirements(output)
+
+
+def test_evaluator_owned_requirement_accepts_markdown_delimited_diff_check() -> None:
+    output = {
+        "acceptanceCriteria": ["Ensure `git diff --check` passes."], "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "Ensure `git diff --check` passes.", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    _validate_evaluator_owned_requirements(output)
+
+
+def test_status_equals_requires_a_bound_status_acceptance_criterion() -> None:
+    output = {
+        "acceptanceCriteria": ["Tests pass"],
+        "planningPredicates": [{
+            "selectionReason": "Tests pass", "region": {"kind": "MARKDOWN_SECTION", "name": "Status"},
+            "predicate": {"kind": "STATUS_EQUALS", "value": "Not Started"},
+            "postcondition": {"kind": "STATUS_EQUALS", "value": "Completed"},
+        }], "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="structured Status"):
+        _validate_evaluator_owned_requirements(output)
+
+
+@pytest.mark.parametrize("path", [" docs/task.md", "docs\\task.md", "docs/task.md/", "docs//task.md"])
+def test_evaluator_owned_requirement_requires_canonical_repository_path(path: str) -> None:
+    output = {
+        "acceptanceCriteria": ["git diff --check passes"], "planningPredicates": [],
+        "evaluatorRequirements": [{
+            "criterion": "git diff --check passes", "path": path,
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "formatting requirement",
+        }],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unsupported evaluator-owned"):
+        _validate_evaluator_owned_requirements(output)
+
+
+def test_status_equals_requires_bounded_structured_status_transition() -> None:
+    output = {
+        "acceptanceCriteria": ["Tests pass"],
+        "planningPredicates": [{
+            "region": {"kind": "WHOLE_FILE", "name": "WHOLE_FILE"},
+            "predicate": {"kind": "STATUS_EQUALS", "value": "TESTS_PASS"},
+            "postcondition": {"kind": "STATUS_EQUALS", "value": "TESTS_PASS"},
+        }],
+        "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="structured Status"):
+        _validate_evaluator_owned_requirements(output)
 
 
 def test_success_composes_boundaries_and_attaches_complete_task_evidence() -> None:

@@ -3,7 +3,7 @@
   "kind": "Evaluation",
   "metadata": {
     "name": "implementation-plan-schema",
-    "version": "1.7.0"
+    "version": "1.9.0"
   },
   "spec": {
     "type": "schema",
@@ -25,7 +25,8 @@
         "requiredChangePaths",
         "verifiedNoChangePaths",
         "unsupportedPaths",
-        "pathEvidence"
+        "pathEvidence",
+        "evaluatorEvidence"
       ],
       "properties": {
         "intendedFiles": {
@@ -103,7 +104,8 @@
               "classification": {
                 "enum": [
                   "REQUIRED_INSERTION",
-                  "UNSUPPORTED"
+                  "UNSUPPORTED",
+                  "EVALUATOR_OWNED"
                 ]
               },
               "requiredInsertions": {
@@ -194,6 +196,11 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "evaluatorEvidence": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
         }
       }
     },

@@ -724,6 +724,17 @@ valid only when the precondition does not match and every requested
 postcondition already matches; all other states remain unsupported.
 Agents receive immutable evidence and never query the repository provider.
 
+Evaluator-owned requirements are a separate typed AnalyzeIssue output, not
+null-region document predicates. The current approved pair is
+`PATCH_EVALUATION` / `DIFF_CHECK_PASSES`; it carries a bounded path, acceptance
+criterion, and selection reason, and becomes `EVALUATOR_ONLY` planning evidence
+with the owner and requirement identifier persisted. It never supplies a
+localized mutation span or requires a source-body scan; Context Builder records
+its typed identity directly for the named evaluator. AnalyzeIssue rejects any null-region document
+predicate, arbitrary owner, requirement identifier, or use of `STATUS_EQUALS`
+to represent a formatter, build, test, or patch outcome before Context Builder
+inspects repository content.
+
 `STATUS_EQUALS` binds only the unique leading structured Status field. Blank
 lines containing only Markdown spaces or tabs and one initial level-one document
 title with nonempty content may precede it; the title uses only Markdown space

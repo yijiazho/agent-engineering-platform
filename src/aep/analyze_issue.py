@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from hashlib import sha256
+from pathlib import PurePosixPath, PureWindowsPath
+import re
 from typing import Any
 
 from aep.agent_invocation import AgentInvocationContractError, invoke_agent
@@ -256,6 +258,7 @@ class AnalyzeIssueTaskHandler:
             return []
         try:
             _validate_acceptance_criterion_insertions(output)
+            _validate_evaluator_owned_requirements(output)
         except AnalyzeIssueContractError as error:
             return [str(error)]
         return []
@@ -446,6 +449,93 @@ def _validate_acceptance_criterion_insertions(output: Any) -> None:
         raise AnalyzeIssueContractError(
             "acceptanceCriterionInsertions must map every acceptance criterion exactly once"
         )
+
+
+def _validate_evaluator_owned_requirements(output: Any) -> None:
+    """Reject untyped null-scope criteria before planning evidence is built."""
+    if not isinstance(output, Mapping):
+        return
+    declarations = output.get("planningPredicates", ())
+    if not isinstance(declarations, Sequence) or isinstance(declarations, (str, bytes)):
+        return
+    if any(isinstance(item, Mapping) and item.get("region") is None for item in declarations):
+        raise AnalyzeIssueContractError(
+            "evaluator-owned criteria must use evaluatorRequirements, not null-region document predicates"
+        )
+    for declaration in declarations:
+        if not isinstance(declaration, Mapping):
+            continue
+        for predicate in (declaration.get("predicate"), declaration.get("postcondition")):
+            if isinstance(predicate, Mapping) and predicate.get("kind") == "STATUS_EQUALS":
+                value = predicate.get("value")
+                region = declaration.get("region")
+                if (
+                    not isinstance(value, str)
+                    or value not in {"Not Started", "In Progress", "Blocked", "Completed"}
+                    or not isinstance(region, Mapping)
+                    or region.get("kind") != "MARKDOWN_SECTION"
+                    or not isinstance(region.get("name"), str)
+                    or not region["name"]
+                    or not isinstance(declaration.get("selectionReason"), str)
+                    or declaration["selectionReason"] not in output.get("acceptanceCriteria", ())
+                    or "status" not in declaration["selectionReason"].casefold()
+                ):
+                    raise AnalyzeIssueContractError(
+                        "STATUS_EQUALS requires a Markdown-section structured Status criterion"
+                    )
+    requirements = output.get("evaluatorRequirements", ())
+    if not isinstance(requirements, Sequence) or isinstance(requirements, (str, bytes)):
+        raise AnalyzeIssueContractError("evaluatorRequirements must be an array")
+    criteria_seen: set[str] = set()
+    evaluator_criteria = {
+        item.get("criterion") for item in requirements if isinstance(item, Mapping)
+    }
+    for declaration in declarations:
+        if (
+            isinstance(declaration, Mapping)
+            and (
+                declaration.get("selectionReason") not in output.get("acceptanceCriteria", ())
+                or declaration.get("selectionReason") in evaluator_criteria
+            )
+        ):
+            raise AnalyzeIssueContractError(
+                "planning predicates must bind one non-evaluator acceptance criterion exactly"
+            )
+    for item in requirements:
+        if not isinstance(item, Mapping):
+            raise AnalyzeIssueContractError("evaluatorRequirements must contain objects")
+        if (
+            item.get("owner") != "PATCH_EVALUATION"
+            or item.get("requirementId") != "DIFF_CHECK_PASSES"
+            or not isinstance(item.get("path"), str)
+            or not item["path"]
+            or not isinstance(item.get("criterion"), str)
+            or item["criterion"] not in output.get("acceptanceCriteria", ())
+            or not _safe_evaluator_requirement_path(item["path"])
+            or re.search(r"(?<![A-Za-z0-9_-])git\s+diff\s+--check(?![A-Za-z0-9_-])", item["criterion"], re.IGNORECASE) is None
+        ):
+            raise AnalyzeIssueContractError(
+                "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"
+            )
+        if item["criterion"] in criteria_seen:
+            raise AnalyzeIssueContractError("evaluatorRequirements must contain one requirement per criterion")
+        criteria_seen.add(item["criterion"])
+
+
+def _safe_evaluator_requirement_path(path: str) -> bool:
+    if path != path.strip() or "\\" in path:
+        return False
+    candidate = PurePosixPath(path)
+    return (
+        bool(path)
+        and not path.startswith("/")
+        and not PureWindowsPath(path).drive
+        and str(candidate) not in ("", ".")
+        and path == str(candidate)
+        and not candidate.is_absolute()
+        and ".." not in candidate.parts
+        and candidate.parts[0].casefold() != ".git"
+    )
 
 
 def _required_ref(value: Any, expected_kind: str, field: str) -> ResourceRef:

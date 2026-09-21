@@ -146,6 +146,7 @@ def evaluate(
     store: InMemoryRuntimeObjectStore | None = None,
     required_insertions: tuple[dict[str, str], ...] = (),
     deletion_authorized_paths: tuple[str, ...] = (),
+    evaluator_requirements: tuple[dict[str, str], ...] = (),
 ):
     _root, revision, adapter = repository
     content = b"" if fixture is None else (FIXTURES / fixture).read_bytes()
@@ -168,6 +169,7 @@ def evaluate(
         allowed_paths=allowed_paths,
         required_insertions=required_insertions,
         deletion_authorized_paths=deletion_authorized_paths,
+        evaluator_requirements=evaluator_requirements,
         working_branch="agent/work",
         correlation={
             "traceId": "trace-patch-evaluation",
@@ -197,6 +199,23 @@ def test_clean_patch_passes_without_mutating_repository(repository) -> None:
     assert result["outcome"] == "PASS"
     assert result["evidence"]["applicable"] is True
     assert result["evidence"]["changedFiles"] == ["tracked.txt"]
+
+
+def test_typed_diff_check_binding_is_persisted_with_its_result(repository) -> None:
+    root, revision, _adapter = repository
+    store, result = evaluate(
+        repository, "clean.patch",
+        evaluator_requirements=({
+            "selectionId": "planselection-evaluator", "criterion": "git diff --check passes",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+        },),
+    )
+
+    assert result["outcome"] == "PASS"
+    assert result["evidence"]["evaluatorRequirements"] == [{
+        "selectionId": "planselection-evaluator", "criterion": "git diff --check passes",
+        "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES", "result": "PASS",
+    }]
     assert result["evidence"]["boundaryChecks"] == [
         {"path": "tracked.txt", "allowed": True, "rule": "tracked.txt"},
     ]

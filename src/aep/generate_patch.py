@@ -529,6 +529,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     if item["path"] not in effective_no_change
                 ),
                 unsupported_acceptance_criteria=unsupported_criteria,
+                evaluator_requirements=tuple({
+                    "selectionId": item["selectionId"], "criterion": item["criterion"],
+                    "owner": item["owningEvaluator"], "requirementId": item["requirementId"],
+                } for item in plan.get("_trustedEvaluatorEvidence", ())),
                 working_branch=self._working_branch,
                 correlation=_correlation(task_execution),
                 timestamp=self._timestamp(),
@@ -933,6 +937,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
         context_id = producer.get("contextPackageId")
         context = self._runtime_store.get(str(context_id)) if isinstance(context_id, str) else None
         evidence_ids = result.get("pathEvidence", ())
+        evaluator_evidence_ids = result.get("evaluatorEvidence", ())
         if "authorizedPaths" in result:
             trusted = [item.get("content") for item in (context or {}).get("elements", ())
                 if isinstance(item, Mapping) and item.get("type") == "planning-evidence"
@@ -940,7 +945,17 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             selected = [item for item in trusted if item.get("selectionId") in evidence_ids]
             if len(selected) != len(evidence_ids):
                 raise GeneratePatchContractError("IMPLEMENTATION_PLAN planning evidence is missing or stale")
+            evaluator_selected = [
+                item for item in trusted if item.get("selectionId") in evaluator_evidence_ids
+            ]
+            if len(evaluator_selected) != len(evaluator_evidence_ids) or any(
+                item.get("authorizationRole") != "EVALUATOR_ONLY" for item in evaluator_selected
+            ):
+                raise GeneratePatchContractError(
+                    "IMPLEMENTATION_PLAN evaluator evidence is missing, stale, or authorizing"
+                )
             result["_trustedPathEvidence"] = selected
+            result["_trustedEvaluatorEvidence"] = evaluator_selected
         return result, producer_id
 
     def _patch_evaluation(self, task_spec: JsonMapping) -> Resource:
@@ -1159,7 +1174,8 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
     """Retain every postcondition with its own trusted selector."""
     result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
-        if isinstance(item, Mapping) and isinstance(item.get("path"), str):
+        if (isinstance(item, Mapping) and isinstance(item.get("path"), str)
+                and item.get("authorizationRole") != "EVALUATOR_ONLY"):
             values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
                 inspection = item.get("inspection", {})

@@ -45,6 +45,7 @@ def evaluate_patch(
     deletion_authorized_paths: Sequence[str] = (),
     required_insertions: Sequence[Mapping[str, str]] = (),
     unsupported_acceptance_criteria: Sequence[str] = (),
+    evaluator_requirements: Sequence[Mapping[str, str]] = (),
     working_branch: str,
     correlation: CorrelationContext | Mapping[str, Any],
     timestamp: str,
@@ -78,6 +79,19 @@ def evaluate_patch(
     changed_files: list[str] = []
     boundary_checks: list[dict[str, Any]] = []
     diagnostics: list[str] = []
+    evaluator_bindings = []
+    for requirement in evaluator_requirements:
+        if (
+            not isinstance(requirement, Mapping)
+            or requirement.get("owner") != "PATCH_EVALUATION"
+            or requirement.get("requirementId") != "DIFF_CHECK_PASSES"
+            or any(not isinstance(requirement.get(key), str) or not requirement[key]
+                   for key in ("selectionId", "criterion"))
+        ):
+            raise PatchEvaluationContractError("evaluator requirements must be trusted DIFF_CHECK_PASSES bindings")
+        evaluator_bindings.append({
+            key: requirement[key] for key in ("selectionId", "criterion", "owner", "requirementId")
+        })
     applicable = False
     git_status = "NOT_RUN"
     git_logs_ref: str | None = None
@@ -347,6 +361,10 @@ def evaluate_patch(
             "toolInvocationId": tool_invocation_id if git_status != "NOT_RUN" else None,
         },
         "checks": checks,
+        "evaluatorRequirements": [{
+            **binding,
+            "result": "PASS" if applicable and git_status in {"SUCCEEDED", "NOT_RUN"} else "FAIL",
+        } for binding in evaluator_bindings],
         "errors": errors,
     }
     evidence_json = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
