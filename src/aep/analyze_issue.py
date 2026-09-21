@@ -438,12 +438,18 @@ def _validate_acceptance_criterion_insertions(output: Any) -> None:
         raise AnalyzeIssueContractError(
             "acceptanceCriterionInsertions must map every acceptance criterion exactly once"
         )
+    criterion_ids = [
+        item.get("id") if isinstance(item, Mapping) else item for item in criteria
+    ]
     mapped = [
-        record.get("criterion") for record in records if isinstance(record, Mapping)
+        record.get("criterionId", record.get("criterion")) for record in records if isinstance(record, Mapping)
     ]
     if (
-        len(mapped) != len(records)
-        or sorted(mapped) != sorted(criteria)
+        len(criterion_ids) != len(criteria)
+        or any(not isinstance(value, str) or not value for value in criterion_ids)
+        or len(criterion_ids) != len(set(criterion_ids))
+        or len(mapped) != len(records)
+        or sorted(mapped) != sorted(criterion_ids)
         or len(mapped) != len(set(mapped))
     ):
         raise AnalyzeIssueContractError(
@@ -462,6 +468,16 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
         raise AnalyzeIssueContractError(
             "evaluator-owned criteria must use evaluatorRequirements, not null-region document predicates"
         )
+    criteria = output.get("acceptanceCriteria", ())
+    criterion_by_id = {
+        item.get("id"): item.get("text") for item in criteria
+        if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+        and isinstance(item.get("text"), str)
+    }
+    if not criterion_by_id:
+        criterion_by_id = {item: item for item in criteria if isinstance(item, str)}
+    if len(criterion_by_id) != len(criteria):
+        raise AnalyzeIssueContractError("acceptance criteria require unique stable IDs and text")
     for declaration in declarations:
         if not isinstance(declaration, Mapping):
             continue
@@ -476,9 +492,9 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
                     or region.get("kind") != "MARKDOWN_SECTION"
                     or not isinstance(region.get("name"), str)
                     or not region["name"]
-                    or not isinstance(declaration.get("selectionReason"), str)
-                    or declaration["selectionReason"] not in output.get("acceptanceCriteria", ())
-                    or "status" not in declaration["selectionReason"].casefold()
+                    or not isinstance(declaration.get("criterionId", declaration.get("selectionReason")), str)
+                    or declaration.get("criterionId", declaration.get("selectionReason")) not in criterion_by_id
+                    or "status" not in criterion_by_id[declaration.get("criterionId", declaration.get("selectionReason"))].casefold()
                 ):
                     raise AnalyzeIssueContractError(
                         "STATUS_EQUALS requires a Markdown-section structured Status criterion"
@@ -488,14 +504,15 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
         raise AnalyzeIssueContractError("evaluatorRequirements must be an array")
     criteria_seen: set[str] = set()
     evaluator_criteria = {
-        item.get("criterion") for item in requirements if isinstance(item, Mapping)
+        item.get("criterionId", item.get("criterion")) for item in requirements if isinstance(item, Mapping)
     }
     for declaration in declarations:
         if (
             isinstance(declaration, Mapping)
             and (
-                declaration.get("selectionReason") not in output.get("acceptanceCriteria", ())
-                or declaration.get("selectionReason") in evaluator_criteria
+                not isinstance(declaration.get("criterionId", declaration.get("selectionReason")), str)
+                or declaration.get("criterionId", declaration.get("selectionReason")) not in criterion_by_id
+                or declaration.get("criterionId", declaration.get("selectionReason")) in evaluator_criteria
             )
         ):
             raise AnalyzeIssueContractError(
@@ -509,17 +526,18 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             or item.get("requirementId") != "DIFF_CHECK_PASSES"
             or not isinstance(item.get("path"), str)
             or not item["path"]
-            or not isinstance(item.get("criterion"), str)
-            or item["criterion"] not in output.get("acceptanceCriteria", ())
+            or not isinstance(item.get("criterionId", item.get("criterion")), str)
+            or item.get("criterionId", item.get("criterion")) not in criterion_by_id
             or not _safe_evaluator_requirement_path(item["path"])
-            or re.search(r"(?<![A-Za-z0-9_-])git\s+diff\s+--check(?![A-Za-z0-9_-])", item["criterion"], re.IGNORECASE) is None
+            or re.search(r"(?<![A-Za-z0-9_-])git\s+diff\s+--check(?![A-Za-z0-9_-])", criterion_by_id[item.get("criterionId", item.get("criterion"))], re.IGNORECASE) is None
         ):
             raise AnalyzeIssueContractError(
                 "unsupported evaluator-owned requirement; expected PATCH_EVALUATION/DIFF_CHECK_PASSES"
             )
-        if item["criterion"] in criteria_seen:
+        criterion_id = item.get("criterionId", item.get("criterion"))
+        if criterion_id in criteria_seen:
             raise AnalyzeIssueContractError("evaluatorRequirements must contain one requirement per criterion")
-        criteria_seen.add(item["criterion"])
+        criteria_seen.add(criterion_id)
 
 
 def _safe_evaluator_requirement_path(path: str) -> bool:

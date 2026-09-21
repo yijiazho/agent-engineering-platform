@@ -6,6 +6,7 @@ import pytest
 
 from aep.analyze_issue import (
     AnalyzeIssueContractError, AnalyzeIssueTaskHandler,
+    _validate_acceptance_criterion_insertions,
     _validate_evaluator_owned_requirements,
 )
 from aep.context_builder import ContextBuilder
@@ -150,6 +151,34 @@ def test_evaluator_owned_requirement_accepts_markdown_delimited_diff_check() -> 
         }],
     }
 
+    _validate_evaluator_owned_requirements(output)
+
+
+def test_criterion_ids_allow_explanatory_selection_reasons() -> None:
+    output = {
+        "acceptanceCriteria": [
+            {"id": "criterion-layout", "text": "Show the deploy subdirectories."},
+            {"id": "criterion-diff", "text": "Ensure `git diff --check` passes."},
+        ],
+        "acceptanceCriterionInsertions": [
+            {"criterionId": "criterion-layout", "requiredInsertions": []},
+            {"criterionId": "criterion-diff", "requiredInsertions": []},
+        ],
+        "planningPredicates": [{
+            "criterionId": "criterion-layout", "path": "README.md",
+            "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+            "predicate": {"kind": "TEXT_ABSENT", "value": "deploy/local/"},
+            "postcondition": {"kind": "TEXT_PRESENT", "value": "deploy/local/"},
+            "selectionReason": "Add local under the layout block.",
+        }],
+        "evaluatorRequirements": [{
+            "criterionId": "criterion-diff", "path": "README.md",
+            "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+            "selectionReason": "Patch whitespace evaluation.",
+        }],
+    }
+
+    _validate_acceptance_criterion_insertions(output)
     _validate_evaluator_owned_requirements(output)
 
 

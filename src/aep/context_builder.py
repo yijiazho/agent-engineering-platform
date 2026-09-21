@@ -928,9 +928,17 @@ class ContextBuilder:
                     for requirement in requirements:
                         if not isinstance(requirement, Mapping):
                             raise RequiredContextError("prior ISSUE_ANALYSIS evaluatorRequirements must be objects")
+                        criteria = {
+                            item.get("id"): item.get("text")
+                            for item in content.get("acceptanceCriteria", ())
+                            if isinstance(item, Mapping)
+                        }
+                        criterion_id = requirement.get("criterionId")
+                        if not isinstance(criterion_id, str) or not isinstance(criteria.get(criterion_id), str):
+                            raise RequiredContextError("prior ISSUE_ANALYSIS evaluator requirement has invalid criterionId")
                         normalized.append({
                             "path": requirement.get("path"),
-                            "_evaluatorRequirement": dict(requirement),
+                            "_evaluatorRequirement": {**dict(requirement), "criterion": criteria[criterion_id]},
                         })
                     return normalized
         raise RequiredContextError(
