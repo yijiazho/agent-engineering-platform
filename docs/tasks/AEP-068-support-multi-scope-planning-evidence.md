@@ -81,6 +81,49 @@ Preserve WorkflowExecution `workflowexecution-d99d2b57-5936-50fb-9c9c-68514777ea
 and its linked evidence as immutable historical diagnostic evidence. Do not
 replay or rewrite it.
 
+## Criterion-Ownership Binding Discovery
+
+After the typed evaluator requirement work was implemented, a new controlled
+run at repository revision `afdd121970f28e971c7f73b9282e6bcbc81cfc57` failed
+earlier, during AnalyzeIssue. WorkflowExecution
+`workflowexecution-205e8e05-6799-5f8f-be3b-456a6870e977` used
+`issue-to-pr:1.29.0`; its AnalyzeIssue TaskExecution
+`taskexecution-be260bae-64d2-538d-9ed4-2661ab531f42` recorded:
+
+```text
+EVALUATION: structured output does not match outputSchema:
+planning predicates must bind one non-evaluator acceptance criterion exactly
+```
+
+The model correctly emitted the evaluator-owned `PATCH_EVALUATION` /
+`DIFF_CHECK_PASSES` requirement for the exact `git diff --check` criterion.
+It also emitted sensible localized document predicates for the README layout
+change. Each predicate's `selectionReason` was a human-readable explanation,
+such as `Add the local/ subdirectory under deploy/ in the layout block.` The
+acceptance criterion instead read `Show its existing local/, self-hosting/, and
+validation/ subdirectories.`
+
+Commit `d346abd` (`Bind planning predicates to criteria`) attempts to prevent
+an evaluator-owned criterion from also authorizing document mutation by
+requiring every planning predicate's `selectionReason` to exactly equal one
+non-evaluator acceptance-criterion string. The prompt requires a selection
+reason but does not require it to duplicate criterion prose, and descriptive
+reasons are useful audit evidence. The check therefore converts a valid scope
+and ownership model into a brittle model-prose equality condition.
+
+The corrected contract must use an explicit machine-readable criterion
+reference. Acceptance criteria need stable IDs (or IDs deterministically
+assigned before validation); each planning predicate and evaluator requirement
+must cite exactly one such ID. `selectionReason` remains explanatory evidence,
+not an authorization key. The control plane must then prove that a predicate
+references a non-evaluator criterion and an evaluator requirement references
+an evaluator-owned criterion, without requiring agents to reproduce arbitrary
+acceptance text byte-for-byte.
+
+Preserve WorkflowExecution `workflowexecution-205e8e05-6799-5f8f-be3b-456a6870e977`
+and its linked evidence as immutable historical diagnostic evidence. Do not
+replay or rewrite it.
+
 ## Reproduction
 
 Create deterministic, credential-free declarations for a revision-bound `README.md` target with a `Repository Layout` section and a separate section outside it.
@@ -108,6 +151,11 @@ Create deterministic, credential-free declarations for a revision-bound `README.
    validation at AnalyzeIssue, its safe persisted ownership evidence, and its
    later execution by the named deterministic evaluator.
 
+10. Declare non-evaluator README-layout criteria and an evaluator-owned
+    `git diff --check` criterion. Use explanatory planning-predicate selection
+    reasons that intentionally differ from the criterion prose, and demonstrate
+    that explicit criterion references preserve the correct ownership boundary.
+
 Fixtures must be deterministic and credential-free. Do not store provider requests, source or artifact bodies, credentials, or unrestricted logs.
 
 ## Deliverable
@@ -129,6 +177,15 @@ Implement a planning-evidence and plan-authority model that:
   and postcondition syntax, and rejects invalid or unsupported owner/requirement
   pairs during AnalyzeIssue evaluation;
 
+* represents acceptance criteria with stable criterion identities, and requires
+  each planning predicate and evaluator-owned requirement to reference exactly
+  one identity; validates that document predicates cite only non-evaluator
+  criteria and evaluator requirements cite only their owned criteria;
+
+* preserves `selectionReason` as free-form, safe explanatory provenance rather
+  than using it as a machine-readable criterion identity or requiring it to
+  duplicate acceptance-criterion prose;
+
 * permits `STATUS_EQUALS` only for an explicit structured-status criterion with
   a target whose trusted evidence supports that field; it must never encode a
   generic formatter, build, test, or patch-evaluation outcome;
@@ -147,6 +204,7 @@ Implement a planning-evidence and plan-authority model that:
 
 Do not implement this task by treating `region: null` as implicit whole-file
 write authority, encoding evaluator outcomes as arbitrary document predicates,
+using a human-readable selection reason as an authorization or ownership key,
 dropping semantic criteria silently, weakening trusted-region or anchor-span
 checks, making the model select authoritative scopes, or replaying either
 failed workflow.
@@ -203,6 +261,20 @@ failed workflow.
   candidate evidence. It does not first fail BuildImplementationPlan as
   `STATUS_FIELD_MISSING` or `CONFIGURATION`.
 
+* Planning predicates and evaluator requirements bind their acceptance criteria
+  through explicit stable criterion references. A predicate cannot cite an
+  evaluator-owned criterion, and an evaluator requirement cannot cite a
+  non-evaluator criterion.
+
+* A predicate's descriptive `selectionReason` may differ from its linked
+  acceptance-criterion text without affecting authorization. It remains
+  persisted explanatory evidence, while the stable criterion reference is the
+  sole ownership key.
+
+* Missing, duplicate, unknown, or ownership-incompatible criterion references
+  fail during AnalyzeIssue semantic validation with decisive evaluation
+  evidence; they do not depend on or compare arbitrary natural-language prose.
+
 * AnalyzeIssue, Context Builder, BuildImplementationPlan, GeneratePatch, Patch Evaluation, and inspection tests cover mixed scopes, multi-region paths, whole-file non-authority, classification, and evidence provenance.
 
 * A schema-valid mixed-scope candidate that cannot be evaluated records a decisive candidate/evaluation result, not `CONFIGURATION` unless immutable Resources are inconsistent or unavailable.
@@ -212,6 +284,9 @@ failed workflow.
 * WorkflowExecution `workflowexecution-31c5a968-a84d-51de-98d6-bd37faee99ad` remains immutable historical evidence and is not replayed or rewritten.
 
 * WorkflowExecution `workflowexecution-d99d2b57-5936-50fb-9c9c-68514777eadb`
+  remains immutable historical evidence and is not replayed or rewritten.
+
+* WorkflowExecution `workflowexecution-205e8e05-6799-5f8f-be3b-456a6870e977`
   remains immutable historical evidence and is not replayed or rewritten.
 
 * AEP-055 through AEP-067, architecture/operator docs, schemas, Resources, fixtures, this task, and `docs/execution-plan.md` describe the same contract.

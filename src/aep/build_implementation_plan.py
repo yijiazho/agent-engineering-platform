@@ -178,7 +178,15 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         analysis = json.loads(
             self._artifact_store.get_content(str(analyses[0]["id"])).decode("utf-8")
         )
-        criteria = analysis.get("acceptanceCriteria", ())
+        criterion_records = analysis.get("acceptanceCriteria", ())
+        criteria_by_id = {
+            item.get("id"): item.get("text") for item in criterion_records
+            if isinstance(item, Mapping) and isinstance(item.get("id"), str)
+            and isinstance(item.get("text"), str)
+        } if isinstance(criterion_records, Sequence) and not isinstance(criterion_records, (str, bytes)) else {}
+        if not criteria_by_id and isinstance(criterion_records, Sequence) and not isinstance(criterion_records, (str, bytes)):
+            criteria_by_id = {value: value for value in criterion_records if isinstance(value, str)}
+        criteria = list(criteria_by_id.values())
         expected_records = analysis.get("acceptanceCriterionInsertions", ())
         if (
             isinstance(expected_records, (str, bytes))
@@ -193,11 +201,12 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "issue analysis must provide per-criterion insertion requirements"
                 )
-            criterion = record.get("criterion")
+            criterion_id = record.get("criterionId", record.get("criterion"))
+            criterion = criteria_by_id.get(criterion_id)
             values = record.get("requiredInsertions")
             if (
-                not isinstance(criterion, str)
-                or not criterion
+                not isinstance(criterion_id, str)
+                or criterion is None
                 or criterion in expected_by_criterion
                 or isinstance(values, (str, bytes))
                 or not isinstance(values, Sequence)
@@ -227,8 +236,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
             item.get("criterion") for item in classifications if isinstance(item, Mapping)
         ] if isinstance(classifications, Sequence) and not isinstance(classifications, (str, bytes)) else []
         if (
-            not isinstance(criteria, Sequence)
-            or isinstance(criteria, (str, bytes))
+            not criteria_by_id
             or sorted(classified) != sorted(criteria)
             or len(classified) != len(set(classified))
         ):
@@ -252,9 +260,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         unsupported = set(unsupported_values)
         evaluator_requirements = analysis.get("evaluatorRequirements", ())
         evaluator_criteria = {
-            item.get("criterion") for item in evaluator_requirements
+            criteria_by_id.get(item.get("criterionId", item.get("criterion"))) for item in evaluator_requirements
             if isinstance(item, Mapping)
         } if isinstance(evaluator_requirements, Sequence) and not isinstance(evaluator_requirements, (str, bytes)) else set()
+        evaluator_criteria.discard(None)
         insertions = {
             (item.get("path"), item.get("value"))
             for item in plan.get("requiredInsertions", ())

@@ -1,74 +1,125 @@
 {
-  "resourceCounts": {
-    "Workspace": 1,
-    "Event": 1,
-    "Workflow": 1,
-    "Task": 6,
-    "Agent": 4,
-    "Prompt": 4,
-    "Model": 1,
-    "Tool": 5,
-    "KnowledgeBase": 1,
-    "Policy": 5,
-    "Evaluation": 7
-  },
-  "taskOrder": [
-    "analyze-issue",
-    "build-implementation-plan",
-    "generate-patch",
-    "run-validation",
-    "evaluate-acceptance",
-    "create-pull-request"
-  ],
-  "agentNames": ["code-generator", "issue-analyzer", "planner", "pr-writer"],
-  "resourceVersions": {
-    "workflow": "1.29.0",
-    "buildImplementationPlanTask": "1.12.0",
-    "plannerAgent": "1.11.0",
-    "implementationPlanningPrompt": "1.10.0",
-    "implementationPlanEvaluation": "1.9.0",
-    "generatePatchTask": "1.16.0",
-    "codeGeneratorAgent": "1.15.0",
-    "filesystemTool": "1.7.0",
-    "createPullRequestTask": "1.2.0",
-    "publicationEvidencePolicy": "1.1.0",
-    "model": "1.1.0",
-    "analyzeIssueTask": "1.9.0",
-    "issueAnalyzerAgent": "1.7.0",
-    "issueAnalysisPrompt": "1.5.0",
-    "issueAnalysisEvaluation": "1.4.0"
-  },
-  "publicationCapabilities": ["git.push", "github.create_pr"],
-  "forbiddenCapabilities": ["repository.retrieve", "secret.read", "github.merge_pr", "deployment.create"],
-  "validation": {
-    "offlineArtifactCount": 17,
-    "image": "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
-    "baseImage": "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
-    "aptSnapshot": "http://snapshot.debian.org/archive/debian/20260101T000000Z",
-    "requiredExecutables": [
-      {"argv": ["python", "--version"], "versionPattern": "^Python 3\\.12\\."},
-      {"argv": ["git", "--version"], "versionPattern": "^git version 2\\."}
-    ],
-    "commands": [
-      ["python", "/workspace/deploy/validation/offline_bootstrap.py", "--workspace", "/workspace"],
-      ["python", "-m", "pytest", "/workspace/tests"]
-    ],
-    "workspaceMount": {"containerPath": "/workspace", "readOnly": false},
-    "resources": {"cpuLimit": 2, "memoryBytes": 1073741824},
-    "timeoutMs": 600000,
-    "gate": {
-      "platform": "linux/amd64",
-      "network": "none",
-      "workdir": "/workspace",
-      "image": "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
-      "verifiedImage": "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
-      "verifiedImageId": "sha256:41a9ec7a58f93bf78d531a1cad4b521a66a0ec4b735a0c91f699969b5a6e56c4",
-      "dirtyChange": {
-        "path": "docs/execution-plan.md",
-        "append": "\n<!-- validation gate dirty-worktree proof -->\n"
-      }
-    },
-    "buildCommand": ["python", "/workspace/deploy/validation/offline_bootstrap.py", "--workspace", "/workspace"],
-    "testCommand": ["python", "-m", "pytest", "/workspace/tests"]
-  }
+    "resourceCounts":  {
+                           "Workspace":  1,
+                           "Event":  1,
+                           "Workflow":  1,
+                           "Task":  6,
+                           "Agent":  4,
+                           "Prompt":  4,
+                           "Model":  1,
+                           "Tool":  5,
+                           "KnowledgeBase":  1,
+                           "Policy":  5,
+                           "Evaluation":  7
+                       },
+    "taskOrder":  [
+                      "analyze-issue",
+                      "build-implementation-plan",
+                      "generate-patch",
+                      "run-validation",
+                      "evaluate-acceptance",
+                      "create-pull-request"
+                  ],
+    "agentNames":  [
+                       "code-generator",
+                       "issue-analyzer",
+                       "planner",
+                       "pr-writer"
+                   ],
+    "resourceVersions":  {
+                             "workflow":  "1.30.0",
+                             "buildImplementationPlanTask":  "1.12.0",
+                             "plannerAgent":  "1.11.0",
+                             "implementationPlanningPrompt":  "1.10.0",
+                             "implementationPlanEvaluation":  "1.9.0",
+                             "generatePatchTask":  "1.16.0",
+                             "codeGeneratorAgent":  "1.15.0",
+                             "filesystemTool":  "1.7.0",
+                             "createPullRequestTask":  "1.2.0",
+                             "publicationEvidencePolicy":  "1.1.0",
+                             "model":  "1.1.0",
+                             "analyzeIssueTask":  "1.10.0",
+                             "issueAnalyzerAgent":  "1.8.0",
+                             "issueAnalysisPrompt":  "1.6.0",
+                             "issueAnalysisEvaluation":  "1.5.0"
+                         },
+    "publicationCapabilities":  [
+                                    "git.push",
+                                    "github.create_pr"
+                                ],
+    "forbiddenCapabilities":  [
+                                  "repository.retrieve",
+                                  "secret.read",
+                                  "github.merge_pr",
+                                  "deployment.create"
+                              ],
+    "validation":  {
+                       "offlineArtifactCount":  17,
+                       "image":  "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
+                       "baseImage":  "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
+                       "aptSnapshot":  "http://snapshot.debian.org/archive/debian/20260101T000000Z",
+                       "requiredExecutables":  [
+                                                   {
+                                                       "argv":  [
+                                                                    "python",
+                                                                    "--version"
+                                                                ],
+                                                       "versionPattern":  "^Python 3\\.12\\."
+                                                   },
+                                                   {
+                                                       "argv":  [
+                                                                    "git",
+                                                                    "--version"
+                                                                ],
+                                                       "versionPattern":  "^git version 2\\."
+                                                   }
+                                               ],
+                       "commands":  [
+                                        [
+                                            "python",
+                                            "/workspace/deploy/validation/offline_bootstrap.py",
+                                            "--workspace",
+                                            "/workspace"
+                                        ],
+                                        [
+                                            "python",
+                                            "-m",
+                                            "pytest",
+                                            "/workspace/tests"
+                                        ]
+                                    ],
+                       "workspaceMount":  {
+                                              "containerPath":  "/workspace",
+                                              "readOnly":  false
+                                          },
+                       "resources":  {
+                                         "cpuLimit":  2,
+                                         "memoryBytes":  1073741824
+                                     },
+                       "timeoutMs":  600000,
+                       "gate":  {
+                                    "platform":  "linux/amd64",
+                                    "network":  "none",
+                                    "workdir":  "/workspace",
+                                    "image":  "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
+                                    "verifiedImage":  "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
+                                    "verifiedImageId":  "sha256:41a9ec7a58f93bf78d531a1cad4b521a66a0ec4b735a0c91f699969b5a6e56c4",
+                                    "dirtyChange":  {
+                                                        "path":  "docs/execution-plan.md",
+                                                        "append":  "\n\u003c!-- validation gate dirty-worktree proof --\u003e\n"
+                                                    }
+                                },
+                       "buildCommand":  [
+                                            "python",
+                                            "/workspace/deploy/validation/offline_bootstrap.py",
+                                            "--workspace",
+                                            "/workspace"
+                                        ],
+                       "testCommand":  [
+                                           "python",
+                                           "-m",
+                                           "pytest",
+                                           "/workspace/tests"
+                                       ]
+                   }
 }
