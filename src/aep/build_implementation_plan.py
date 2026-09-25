@@ -278,6 +278,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         ] if isinstance(classifications, Sequence) and not isinstance(classifications, (str, bytes)) else []
         if (
             not criteria_by_id
+            or any(value is None for value in classified)
             or sorted(classified) != sorted(criteria)
             or len(classified) != len(set(classified))
         ):
