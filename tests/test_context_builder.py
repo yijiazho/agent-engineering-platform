@@ -544,12 +544,14 @@ def test_planning_evidence_keeps_mixed_scoped_and_unscoped_declarations_separate
     task_resource = task("plan", ["planning-evidence"])
     common = {
         "path": "README.md",
+        "criterionId": "layout",
         "predicate": {"kind": "TEXT_PRESENT", "value": "old"},
         "postcondition": {"kind": "TEXT_PRESENT", "value": "new"},
         "selectionReason": "requested transition",
     }
     task_resource["spec"]["planningPredicates"] = [
-        {**common, "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"},
+        {**common, "criterionId": "preserve",
+         "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"},
          "postcondition": {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve surrounding guidance"}},
         {**common, "region": {
             "kind": "MARKDOWN_SECTION", "name": "Repository Layout"
@@ -576,6 +578,16 @@ def test_planning_evidence_keeps_mixed_scoped_and_unscoped_declarations_separate
     evaluator = next(item for item in evidence if item["authorizationRole"] == "EVALUATOR_ONLY")
     assert editable["inspection"]["region"]["name"] == "Repository Layout"
     assert evaluator["inspection"]["region"] is None
+    assert [dict(binding) for binding in editable["criterionBindings"]] == [{
+        "criterionId": "layout",
+        "predicate": {"kind": "TEXT_PRESENT", "value": "old"},
+        "postcondition": {"kind": "TEXT_PRESENT", "value": "new"},
+        "selectionReason": "requested transition",
+        "predicateResult": "MATCH",
+        "postconditionResult": "NO_MATCH",
+    }]
+    assert evaluator["criterionBindings"][0]["criterionId"] == "preserve"
+    assert evaluator["criterionBindings"][0]["predicateResult"] == "UNSUPPORTED"
     assert editable["selectionId"] != evaluator["selectionId"]
     assert "# Repository Layout" not in repr(evidence)
 

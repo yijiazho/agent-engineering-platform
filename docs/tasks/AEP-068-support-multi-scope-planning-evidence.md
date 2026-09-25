@@ -124,6 +124,59 @@ Preserve WorkflowExecution `workflowexecution-205e8e05-6799-5f8f-be3b-456a6870e9
 and its linked evidence as immutable historical diagnostic evidence. Do not
 replay or rewrite it.
 
+## Criterion-Scoped Evidence Accounting Discovery
+
+The next controlled issue, GitHub issue #103, used `issue-to-pr:1.30.0` at
+repository revision `b265d1db6a5f3cd4c79d3c4e1a6946947a432706`.
+AnalyzeIssue succeeded, including stable criterion references and the typed
+`PATCH_EVALUATION` / `DIFF_CHECK_PASSES` evaluator requirement. Its
+BuildImplementationPlan TaskExecution
+`taskexecution-650eee7a-dbaf-5b69-aeaa-6a2d82cec225` in WorkflowExecution
+`workflowexecution-faa14630-f79a-5bf3-a863-41bdabbbff19` then failed with:
+
+```text
+EVALUATION: structured output does not match outputSchema:
+required-insertion criterion cannot rely on unsupported path evidence
+```
+
+This does not mean that `README.md` or its requested mutation scope was
+unavailable. Trusted planning evidence completed a 41,230-byte scan under the
+262,144-byte ceiling and resolved the `Repository Layout` section. The four
+required insertion predicates for `deploy/`, `local/`, `self-hosting/`, and
+`validation/` each matched their absence precondition. The plan therefore
+correctly classified the first two acceptance criteria as
+`REQUIRED_INSERTION` and bound their canonical insertion on `README.md`.
+
+The same localized evidence record also contained `UNSUPPORTED_SEMANTIC`
+predicates for separate preservation and documentation-only criteria. Those
+criteria cannot be proven with a repository-text predicate and must be
+evaluator-owned or explicitly unsupported; their unsupported result says
+nothing about whether the concrete insertion predicates are trusted. The
+BuildImplementationPlan validator nevertheless reduces every non-evaluator
+planning-evidence record to a path-level set: an `UNSUPPORTED` result anywhere
+in a record places `README.md` in `unsupported_evidence_paths`. It then
+rejects every required insertion whose path intersects that set, including the
+fully supported insertion criteria.
+
+The path-level rejection was introduced in commit `370e38f`
+(`Close planning evidence validation gaps`) to prevent a required insertion
+from proceeding when its actual target evidence is unsupported. Its safety
+intent is correct, but it loses the criterion and predicate identity needed
+when one path has both supported insertion evidence and unrelated unsupported
+semantic evidence. The existing exception for `EVALUATOR_ONLY` whole-file
+evidence does not address this mixed localized record.
+
+The corrected contract must account for support at criterion and trusted-scope
+predicate granularity. A required insertion may proceed only when the
+deterministic predicates bound to that criterion and its insertion path are
+supported; an unsupported result for a different criterion must not poison it.
+Unsupported semantic criteria must retain their own evaluator-owned or
+unsupported disposition and may not silently become mutation authority.
+
+Preserve WorkflowExecution `workflowexecution-faa14630-f79a-5bf3-a863-41bdabbbff19`
+and its linked evidence as immutable historical diagnostic evidence. Do not
+replay or rewrite it.
+
 ## Reproduction
 
 Create deterministic, credential-free declarations for a revision-bound `README.md` target with a `Repository Layout` section and a separate section outside it.
@@ -156,6 +209,12 @@ Create deterministic, credential-free declarations for a revision-bound `README.
     reasons that intentionally differ from the criterion prose, and demonstrate
     that explicit criterion references preserve the correct ownership boundary.
 
+11. In one trusted README layout scope, combine matched required-insertion
+    predicates with unsupported semantic predicates bound to different stable
+    criteria. Demonstrate that criterion-scoped reconciliation permits the
+    supported insertion while preserving an independent evaluator-owned or
+    unsupported disposition for the semantic criteria.
+
 Fixtures must be deterministic and credential-free. Do not store provider requests, source or artifact bodies, credentials, or unrestricted logs.
 
 ## Deliverable
@@ -186,6 +245,11 @@ Implement a planning-evidence and plan-authority model that:
   than using it as a machine-readable criterion identity or requiring it to
   duplicate acceptance-criterion prose;
 
+* reconciles planning-evidence support by criterion, predicate, trusted scope,
+  and insertion binding rather than treating an unsupported result for any
+  declaration on a path as unsupported evidence for every criterion on that
+  path;
+
 * permits `STATUS_EQUALS` only for an explicit structured-status criterion with
   a target whose trusted evidence supports that field; it must never encode a
   generic formatter, build, test, or patch-evaluation outcome;
@@ -205,6 +269,8 @@ Implement a planning-evidence and plan-authority model that:
 Do not implement this task by treating `region: null` as implicit whole-file
 write authority, encoding evaluator outcomes as arbitrary document predicates,
 using a human-readable selection reason as an authorization or ownership key,
+poisoning supported insertion authority with an unrelated criterion's
+unsupported semantic result,
 dropping semantic criteria silently, weakening trusted-region or anchor-span
 checks, making the model select authoritative scopes, or replaying either
 failed workflow.
@@ -275,6 +341,16 @@ failed workflow.
   fail during AnalyzeIssue semantic validation with decisive evaluation
   evidence; they do not depend on or compare arbitrary natural-language prose.
 
+* For one path and trusted editable scope, a matched required-insertion
+  criterion remains implementable when another criterion's semantic predicate
+  is unsupported. Reconciliation evaluates the insertion criterion's bound
+  evidence rather than a path-level union of results.
+
+* An unsupported result bound to the same criterion, insertion path, and
+  trusted scope still fails closed. The correction does not permit unsupported
+  evidence to authorize mutation, nor does it discard the separate semantic
+  criterion's evaluator-owned or unsupported disposition.
+
 * AnalyzeIssue, Context Builder, BuildImplementationPlan, GeneratePatch, Patch Evaluation, and inspection tests cover mixed scopes, multi-region paths, whole-file non-authority, classification, and evidence provenance.
 
 * A schema-valid mixed-scope candidate that cannot be evaluated records a decisive candidate/evaluation result, not `CONFIGURATION` unless immutable Resources are inconsistent or unavailable.
@@ -287,6 +363,9 @@ failed workflow.
   remains immutable historical evidence and is not replayed or rewritten.
 
 * WorkflowExecution `workflowexecution-205e8e05-6799-5f8f-be3b-456a6870e977`
+  remains immutable historical evidence and is not replayed or rewritten.
+
+* WorkflowExecution `workflowexecution-faa14630-f79a-5bf3-a863-41bdabbbff19`
   remains immutable historical evidence and is not replayed or rewritten.
 
 * AEP-055 through AEP-067, architecture/operator docs, schemas, Resources, fixtures, this task, and `docs/execution-plan.md` describe the same contract.

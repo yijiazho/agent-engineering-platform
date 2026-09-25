@@ -476,7 +476,10 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
     }
     if not criterion_by_id:
         criterion_by_id = {item: item for item in criteria if isinstance(item, str)}
-    if len(criterion_by_id) != len(criteria):
+    if (
+        len(criterion_by_id) != len(criteria)
+        or len(set(criterion_by_id.values())) != len(criterion_by_id)
+    ):
         raise AnalyzeIssueContractError("acceptance criteria require unique stable IDs and text")
     for declaration in declarations:
         if not isinstance(declaration, Mapping):

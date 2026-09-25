@@ -123,32 +123,48 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 and isinstance(item.get("content"), Mapping)
             ]
             evidence_paths = {item.get("path") for item in evidence}
-            unsupported_evidence_paths = set()
+            unsupported_evidence_bindings: set[tuple[str, Any]] = set()
             for item in evidence:
                 # Whole-file evaluator evidence is deliberately not planning
                 # authorization. Its evaluator owns the criterion result and
                 # it must not poison a scoped insertion on the same path.
                 if item.get("authorizationRole") == "EVALUATOR_ONLY":
                     continue
-                states = [
-                    result.get("result")
-                    for result in item.get("predicateResults", ())
-                    if isinstance(result, Mapping)
-                ]
-                post_states = [
-                    result.get("result")
-                    for result in item.get("postconditionResults", ())
-                    if isinstance(result, Mapping)
-                ]
-                required = bool(states) and all(state == "MATCH" for state in states)
-                no_change = bool(post_states) and all(
-                    state == "MATCH" for state in post_states
-                )
-                if "UNSUPPORTED" in states or not (required or no_change):
-                    unsupported_evidence_paths.add(item.get("path"))
+                bindings = item.get("criterionBindings")
+                if isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)):
+                    for binding in bindings:
+                        if not isinstance(binding, Mapping):
+                            continue
+                        criterion_id = binding.get("criterionId")
+                        predicate_result = binding.get("predicateResult")
+                        postcondition_result = binding.get("postconditionResult")
+                        if not isinstance(criterion_id, str) or not criterion_id:
+                            continue
+                        if (
+                            predicate_result == "UNSUPPORTED"
+                            or (predicate_result != "MATCH"
+                                and postcondition_result != "MATCH")
+                        ):
+                            unsupported_evidence_bindings.add(
+                                (criterion_id, item.get("path"))
+                            )
+                    continue
+                # Older direct Task declarations do not carry an analyzed
+                # criterion reference.  Preserve their conservative path-wide
+                # behavior, while analysis-derived declarations reconcile by
+                # the durable criterion binding above.
+                states = [result.get("result") for result in item.get("predicateResults", ())
+                          if isinstance(result, Mapping)]
+                post_states = [result.get("result") for result in item.get("postconditionResults", ())
+                               if isinstance(result, Mapping)]
+                if "UNSUPPORTED" in states or not (
+                    bool(states) and all(state == "MATCH" for state in states)
+                    or bool(post_states) and all(state == "MATCH" for state in post_states)
+                ):
+                    unsupported_evidence_bindings.add(("__legacy__", item.get("path")))
             self._validate_acceptance_criteria_accounting(
                 task_execution, output,
-                unsupported_evidence_paths=unsupported_evidence_paths,
+                unsupported_evidence_bindings=unsupported_evidence_bindings,
             )
             insertion_paths = {
                 item.get("path") for item in output.get("requiredInsertions", ())
@@ -164,7 +180,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
 
     def _validate_acceptance_criteria_accounting(
         self, task_execution: Mapping[str, Any], plan: Any,
-        *, unsupported_evidence_paths: set[Any] | None = None,
+        *, unsupported_evidence_bindings: set[tuple[str, Any]] | None = None,
     ) -> None:
         if not isinstance(plan, Mapping):
             return
@@ -187,6 +203,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         if not criteria_by_id and isinstance(criterion_records, Sequence) and not isinstance(criterion_records, (str, bytes)):
             criteria_by_id = {value: value for value in criterion_records if isinstance(value, str)}
         criteria = list(criteria_by_id.values())
+        criterion_ids_by_text = {text: criterion_id for criterion_id, text in criteria_by_id.items()}
         expected_records = analysis.get("acceptanceCriterionInsertions", ())
         if (
             isinstance(expected_records, (str, bytes))
@@ -315,9 +332,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 expected_paths = {
                     path for path, _value in expected_by_criterion[str(criterion)]
                 }
+                criterion_id = criterion_ids_by_text[str(criterion)]
                 if (
-                    unsupported_evidence_paths is not None
-                    and expected_paths.intersection(unsupported_evidence_paths)
+                    unsupported_evidence_bindings is not None
+                    and any(
+                        (criterion_id, path) in unsupported_evidence_bindings
+                        or ("__legacy__", path) in unsupported_evidence_bindings
+                        for path in expected_paths
+                    )
                 ):
                     raise BuildImplementationPlanContractError(
                         "required-insertion criterion cannot rely on unsupported path evidence"
@@ -334,9 +356,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 expected_paths = {
                     path for path, _value in expected_by_criterion[str(criterion)]
                 }
+                criterion_id = criterion_ids_by_text[str(criterion)]
                 if (
-                    unsupported_evidence_paths is not None
-                    and not expected_paths.intersection(unsupported_evidence_paths)
+                    unsupported_evidence_bindings is not None
+                    and not any(
+                        (criterion_id, path) in unsupported_evidence_bindings
+                        or ("__legacy__", path) in unsupported_evidence_bindings
+                        for path in expected_paths
+                    )
                 ):
                     raise BuildImplementationPlanContractError(
                         "unsupported criterion requires trusted unsupported path evidence"

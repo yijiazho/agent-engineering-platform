@@ -488,6 +488,91 @@ def test_required_criterion_rejects_unsupported_path_evidence() -> None:
     ]
 
 
+def test_criterion_scoped_evidence_does_not_poison_a_supported_insertion() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": [
+                    {"id": "layout", "text": "Add the local directory."},
+                    {"id": "preserve", "text": "Preserve surrounding guidance."},
+                ],
+                "acceptanceCriterionInsertions": [
+                    {"criterionId": "layout", "requiredInsertions": [
+                        {"path": "README.md", "value": "local/"},
+                    ]},
+                    {"criterionId": "preserve", "requiredInsertions": []},
+                ],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    plan = {
+        "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        "unsupportedAcceptanceCriteria": ["Preserve surrounding guidance."],
+        "acceptanceCriteriaClassifications": [
+            {"criterion": "Add the local directory.",
+             "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [{"path": "README.md", "value": "local/"}]},
+            {"criterion": "Preserve surrounding guidance.",
+             "classification": "UNSUPPORTED", "requiredInsertions": []},
+        ],
+    }
+    context = {"elements": [{
+        "type": "planning-evidence",
+        "content": {
+            "path": "README.md",
+            "criterionBindings": [
+                {"criterionId": "layout", "predicateResult": "MATCH",
+                 "postconditionResult": "NO_MATCH"},
+                {"criterionId": "preserve", "predicateResult": "UNSUPPORTED",
+                 "postconditionResult": "UNSUPPORTED"},
+            ],
+        },
+    }]}
+
+    assert handler._invocation_output_errors(
+        {"dependencyTaskExecutionIds": ["analyze"]}, context, plan
+    ) == []
+
+
+def test_criterion_scoped_evidence_rejects_unsupported_insertion_binding() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": [{"id": "layout", "text": "Add local."}],
+                "acceptanceCriterionInsertions": [{
+                    "criterionId": "layout",
+                    "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+                }],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    plan = {
+        "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        "unsupportedAcceptanceCriteria": [],
+        "acceptanceCriteriaClassifications": [{
+            "criterion": "Add local.", "classification": "REQUIRED_INSERTION",
+            "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        }],
+    }
+    context = {"elements": [{"type": "planning-evidence", "content": {
+        "path": "README.md",
+        "criterionBindings": [{"criterionId": "layout", "predicateResult": "UNSUPPORTED",
+                               "postconditionResult": "UNSUPPORTED"}],
+    }}]}
+
+    assert handler._invocation_output_errors(
+        {"dependencyTaskExecutionIds": ["analyze"]}, context, plan
+    ) == ["required-insertion criterion cannot rely on unsupported path evidence"]
+
+
 def test_unsupported_list_must_exactly_match_classifications() -> None:
     output = dict(VALID_PLAN)
     insertion = {"path": "src/a.py", "value": "first"}

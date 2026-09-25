@@ -769,8 +769,8 @@ collection, and are owned deterministically by lexical criterion order, while
 unsupported criteria bind none. Reconciliation and planning-time no-change
 proofs require a distinct non-overlapping occurrence for every canonical value,
 so a longer insertion cannot prove a shorter overlapping insertion. The
-evaluated issue analysis records the
-independent expected set for every criterion in `acceptanceCriterionInsertions`;
+evaluated issue analysis records stable criterion IDs and the independent
+expected set for every criterion in `acceptanceCriterionInsertions`;
 planner validation requires each classification to match that set exactly, so
 aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
 validates exact criterion-map coverage before publishing its artifact, and the
@@ -778,11 +778,14 @@ Planner cross-field check runs inside invocation output validation before a
 successful AgentInvocation can be persisted.
 Every canonical insertion path must also have trusted planning evidence and
 therefore belong to the authoritative path set before planner success.
-An `UNSUPPORTED` criterion with expected insertions requires trusted evidence
-that at least one expected path is itself unsupported; supported path evidence
-cannot be discarded by classification alone. Symmetrically, a
-`REQUIRED_INSERTION` criterion is rejected if any expected path has unsupported
-evidence.
+Each trusted scope records the criterion, predicate, postcondition, and their
+individual results. An `UNSUPPORTED` criterion with expected insertions
+requires unsupported evidence bound to that same criterion and path; supported
+evidence for a different criterion cannot be discarded by classification
+alone. Symmetrically, a `REQUIRED_INSERTION` criterion is rejected only when
+its own bound evidence for an expected insertion path is unsupported. An
+unrelated unsupported semantic predicate in the same path or scope never
+poisons its supported mutation authority.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the
