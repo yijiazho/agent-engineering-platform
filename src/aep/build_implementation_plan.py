@@ -16,6 +16,22 @@ class BuildImplementationPlanContractError(AnalyzeIssueContractError):
     """Raised when planner inputs do not identify one issue analysis."""
 
 
+def _classification_criterion_id(
+    item: Mapping[str, Any], criteria_by_id: Mapping[str, str],
+) -> str | None:
+    """Resolve the versioned classifier field, retaining old test fixtures."""
+    criterion_id = item.get("criterionId")
+    if isinstance(criterion_id, str):
+        return criterion_id if criterion_id in criteria_by_id else None
+    criterion = item.get("criterion")
+    if not isinstance(criterion, str):
+        return None
+    if criterion in criteria_by_id:
+        return criterion
+    matches = [key for key, text in criteria_by_id.items() if text == criterion]
+    return matches[0] if len(matches) == 1 else None
+
+
 class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
     """Build an evaluated implementation plan without modifying the checkout."""
 
@@ -202,8 +218,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         } if isinstance(criterion_records, Sequence) and not isinstance(criterion_records, (str, bytes)) else {}
         if not criteria_by_id and isinstance(criterion_records, Sequence) and not isinstance(criterion_records, (str, bytes)):
             criteria_by_id = {value: value for value in criterion_records if isinstance(value, str)}
-        criteria = list(criteria_by_id.values())
-        criterion_ids_by_text = {text: criterion_id for criterion_id, text in criteria_by_id.items()}
+        criteria = list(criteria_by_id)
         expected_records = analysis.get("acceptanceCriterionInsertions", ())
         if (
             isinstance(expected_records, (str, bytes))
@@ -219,12 +234,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                     "issue analysis must provide per-criterion insertion requirements"
                 )
             criterion_id = record.get("criterionId", record.get("criterion"))
-            criterion = criteria_by_id.get(criterion_id)
             values = record.get("requiredInsertions")
             if (
                 not isinstance(criterion_id, str)
-                or criterion is None
-                or criterion in expected_by_criterion
+                or criterion_id not in criteria_by_id
+                or criterion_id in expected_by_criterion
                 or isinstance(values, (str, bytes))
                 or not isinstance(values, Sequence)
             ):
@@ -247,10 +261,11 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                         "issue analysis insertion requirements must be unique per criterion"
                     )
                 expected.append(key)
-            expected_by_criterion[criterion] = set(expected)
+            expected_by_criterion[criterion_id] = set(expected)
         classifications = plan.get("acceptanceCriteriaClassifications", ())
         classified = [
-            item.get("criterion") for item in classifications if isinstance(item, Mapping)
+            _classification_criterion_id(item, criteria_by_id)
+            for item in classifications if isinstance(item, Mapping)
         ] if isinstance(classifications, Sequence) and not isinstance(classifications, (str, bytes)) else []
         if (
             not criteria_by_id
@@ -277,10 +292,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         unsupported = set(unsupported_values)
         evaluator_requirements = analysis.get("evaluatorRequirements", ())
         evaluator_criteria = {
-            criteria_by_id.get(item.get("criterionId", item.get("criterion"))) for item in evaluator_requirements
+            item.get("criterionId", item.get("criterion")) for item in evaluator_requirements
             if isinstance(item, Mapping)
         } if isinstance(evaluator_requirements, Sequence) and not isinstance(evaluator_requirements, (str, bytes)) else set()
-        evaluator_criteria.discard(None)
+        evaluator_criteria &= set(criteria_by_id)
         insertions = {
             (item.get("path"), item.get("value"))
             for item in plan.get("requiredInsertions", ())
@@ -289,7 +304,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         bound_by_criterion: dict[str, list[tuple[Any, Any]]] = {}
         for item in classifications:
             disposition = item.get("classification")
-            criterion = item.get("criterion")
+            criterion = _classification_criterion_id(item, criteria_by_id)
             plural = item.get("requiredInsertions")
             legacy = item.get("requiredInsertion")
             if plural is not None and legacy is not None:
@@ -320,23 +335,26 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                         "each required-insertion classification must bind its own insertion evidence"
                     )
                 bindings.append(key)
-            bound_by_criterion[str(criterion)] = bindings
+            if criterion is None:
+                raise BuildImplementationPlanContractError(
+                    "implementation plan classifications require a known criterionId"
+                )
+            bound_by_criterion[criterion] = bindings
             if (
                 disposition == "REQUIRED_INSERTION"
-                and set(bindings) != expected_by_criterion[str(criterion)]
+                and set(bindings) != expected_by_criterion[criterion]
             ):
                 raise BuildImplementationPlanContractError(
                     "criterion insertion bindings must exactly match analyzed requirements"
                 )
             if disposition == "REQUIRED_INSERTION":
                 expected_paths = {
-                    path for path, _value in expected_by_criterion[str(criterion)]
+                    path for path, _value in expected_by_criterion[criterion]
                 }
-                criterion_id = criterion_ids_by_text[str(criterion)]
                 if (
                     unsupported_evidence_bindings is not None
                     and any(
-                        (criterion_id, path) in unsupported_evidence_bindings
+                        (criterion, path) in unsupported_evidence_bindings
                         or ("__legacy__", path) in unsupported_evidence_bindings
                         for path in expected_paths
                     )
@@ -352,15 +370,14 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must have no insertion bindings"
                 )
-            if disposition == "UNSUPPORTED" and expected_by_criterion[str(criterion)]:
+            if disposition == "UNSUPPORTED" and expected_by_criterion[criterion]:
                 expected_paths = {
-                    path for path, _value in expected_by_criterion[str(criterion)]
+                    path for path, _value in expected_by_criterion[criterion]
                 }
-                criterion_id = criterion_ids_by_text[str(criterion)]
                 if (
                     unsupported_evidence_bindings is not None
                     and not any(
-                        (criterion_id, path) in unsupported_evidence_bindings
+                        (criterion, path) in unsupported_evidence_bindings
                         or ("__legacy__", path) in unsupported_evidence_bindings
                         for path in expected_paths
                     )
@@ -377,7 +394,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                     criterion not in evaluator_criteria
                     or bindings
                     or criterion in unsupported
-                    or expected_by_criterion[str(criterion)]
+                    or expected_by_criterion[criterion]
                 ):
                     raise BuildImplementationPlanContractError(
                         "evaluator-owned criterion must bind one typed evaluator requirement and no insertions"
@@ -397,7 +414,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 "every required insertion must have deterministic criterion ownership"
             )
         classified_unsupported = {
-            str(item.get("criterion"))
+            _classification_criterion_id(item, criteria_by_id)
             for item in classifications
             if item.get("classification") == "UNSUPPORTED"
         }
@@ -406,7 +423,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
             )
         classified_evaluator_owned = {
-            str(item.get("criterion")) for item in classifications
+            _classification_criterion_id(item, criteria_by_id) for item in classifications
             if item.get("classification") == "EVALUATOR_OWNED"
         }
         if classified_evaluator_owned != evaluator_criteria:

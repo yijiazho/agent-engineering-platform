@@ -471,6 +471,27 @@ def finalize_planning_evidence(
 
 def scope_disposition(record: Mapping[str, Any]) -> str:
     """Classify one trusted scope without conflating sibling scopes."""
+    bindings = record.get("criterionBindings")
+    if isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)):
+        if not bindings:
+            raise PlanningEvidenceError("planning evidence has malformed criterion bindings")
+        dispositions = []
+        for binding in bindings:
+            if not isinstance(binding, Mapping):
+                raise PlanningEvidenceError("planning evidence has malformed criterion bindings")
+            predicate = binding.get("predicateResult")
+            postcondition = binding.get("postconditionResult")
+            if predicate == "MATCH":
+                dispositions.append("CHANGE")
+            elif postcondition == "MATCH":
+                dispositions.append("NO_CHANGE")
+            else:
+                dispositions.append("UNSUPPORTED")
+        if "CHANGE" in dispositions:
+            return "CHANGE"
+        if all(disposition == "NO_CHANGE" for disposition in dispositions):
+            return "NO_CHANGE"
+        return "UNSUPPORTED"
     results = record.get("predicateResults", ())
     postconditions = record.get("postconditionResults", ())
     if not isinstance(results, Sequence) or isinstance(results, (str, bytes)) or not results:

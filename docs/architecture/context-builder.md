@@ -770,8 +770,9 @@ unsupported criteria bind none. Reconciliation and planning-time no-change
 proofs require a distinct non-overlapping occurrence for every canonical value,
 so a longer insertion cannot prove a shorter overlapping insertion. The
 evaluated issue analysis records stable criterion IDs and the independent
-expected set for every criterion in `acceptanceCriterionInsertions`;
-planner validation requires each classification to match that set exactly, so
+expected set for every criterion in `acceptanceCriterionInsertions`; each
+planner classification carries the same `criterionId` alongside descriptive
+text. Planner validation requires each classification to match that set exactly, so
 aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
 validates exact criterion-map coverage before publishing its artifact, and the
 Planner cross-field check runs inside invocation output validation before a

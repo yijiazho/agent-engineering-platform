@@ -3,7 +3,7 @@
     "kind":  "Workflow",
     "metadata":  {
                      "name":  "issue-to-pr",
-                     "version":  "1.31.0",
+                     "version":  "1.32.0",
                      "description":  "Turn a repository issue into a validated, unmerged pull request."
                  },
     "spec":  {
@@ -28,7 +28,7 @@
                                    "taskRef":  {
                                                    "kind":  "Task",
                                                    "name":  "build-implementation-plan",
-                                                   "version":  "1.13.0"
+                                                   "version":  "1.14.0"
                                                },
                                    "dependsOn":  [
                                                      {
@@ -48,7 +48,7 @@
                                                      {
                                                          "kind":  "Task",
                                                          "name":  "build-implementation-plan",
-                                                         "version":  "1.13.0"
+                                                         "version":  "1.14.0"
                                                      }
                                                  ]
                                },

@@ -173,6 +173,47 @@ def test_authoritative_plan_does_not_treat_unknown_intermediate_state_as_no_chan
     assert result["unsupportedPaths"] == [path]
 
 
+def test_authoritative_plan_keeps_supported_criterion_change_in_mixed_scope() -> None:
+    _store, handler, _task, _adapter = setup_handler(VALID_PLAN)
+    path = "src/aep/build_implementation_plan.py"
+    record = evaluate_path_predicates(
+        path=path, content="Status: ready\n", repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "Status: ready"},
+            {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve prose"},
+        ], source_id="file:planner",
+    )
+    post = evaluate_path_predicates(
+        path=path, content="Status: ready\n", repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "Status: done"},
+            {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve prose"},
+        ], source_id="file:planner",
+    )
+    record["criterionBindings"] = [
+        {"criterionId": "add-status", "predicateResult": "MATCH",
+         "postconditionResult": "NO_MATCH"},
+        {"criterionId": "preserve", "predicateResult": "UNSUPPORTED",
+         "postconditionResult": "UNSUPPORTED"},
+    ]
+    record = finalize_planning_evidence(
+        record, postconditions=[
+            {"kind": "TEXT_PRESENT", "value": "Status: done"},
+            {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve prose"},
+        ], postcondition_results=post["predicateResults"],
+        selection_reasons=["add status", "preserve prose"],
+    )
+
+    result = handler._authoritative_output(
+        VALID_PLAN, task_execution(), workflow_execution(),
+        {"elements": [{"type": "planning-evidence", "content": record}],
+         "selection": {"requiredContext": ["planning-evidence"]}},
+    )
+
+    assert result["requiredChangePaths"] == [path]
+    assert result["unsupportedPaths"] == []
+
+
 def test_success_consumes_analysis_and_persists_evaluated_plan() -> None:
     store, handler, task, adapter = setup_handler(VALID_PLAN)
 
@@ -511,12 +552,12 @@ def test_criterion_scoped_evidence_does_not_poison_a_supported_insertion() -> No
     handler._artifact_store = AnalysisArtifacts()
     plan = {
         "requiredInsertions": [{"path": "README.md", "value": "local/"}],
-        "unsupportedAcceptanceCriteria": ["Preserve surrounding guidance."],
+        "unsupportedAcceptanceCriteria": ["preserve"],
         "acceptanceCriteriaClassifications": [
-            {"criterion": "Add the local directory.",
+            {"criterionId": "layout", "criterion": "Add the local directory.",
              "classification": "REQUIRED_INSERTION",
              "requiredInsertions": [{"path": "README.md", "value": "local/"}]},
-            {"criterion": "Preserve surrounding guidance.",
+            {"criterionId": "preserve", "criterion": "Preserve surrounding guidance.",
              "classification": "UNSUPPORTED", "requiredInsertions": []},
         ],
     }
@@ -558,7 +599,7 @@ def test_criterion_scoped_evidence_rejects_unsupported_insertion_binding() -> No
         "requiredInsertions": [{"path": "README.md", "value": "local/"}],
         "unsupportedAcceptanceCriteria": [],
         "acceptanceCriteriaClassifications": [{
-            "criterion": "Add local.", "classification": "REQUIRED_INSERTION",
+            "criterionId": "layout", "criterion": "Add local.", "classification": "REQUIRED_INSERTION",
             "requiredInsertions": [{"path": "README.md", "value": "local/"}],
         }],
     }

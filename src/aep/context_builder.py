@@ -426,17 +426,18 @@ class ContextBuilder:
                     ))
                     scope["reasons"].append(selection_reason)
                     criterion_id = declaration.get("criterionId")
-                    if isinstance(criterion_id, str) and criterion_id:
-                        # Keep criterion ownership with the exact predicate it
-                        # authorized.  A scope can safely contain predicates
-                        # for several criteria, so a path or scope identifier
-                        # alone is not enough for later reconciliation.
-                        scope["criterionBindings"].append({
+                    # Preserve a positional placeholder for every predicate.
+                    # Direct Task declarations predate criterion IDs, and a
+                    # mixed scope must not shift a later bound predicate onto
+                    # a legacy result during reconciliation.
+                    scope["criterionBindings"].append(
+                        None if not isinstance(criterion_id, str) or not criterion_id else {
                             "criterionId": criterion_id,
                             "predicate": dict(predicate),
                             "postcondition": dict(postcondition),
                             "selectionReason": selection_reason,
-                        })
+                        }
+                    )
                     hint = declaration.get("maxBytes")
                     if hint is not None:
                         hint = int(hint)
@@ -600,6 +601,8 @@ class ContextBuilder:
                             record["predicateResults"],
                             postcondition_record["predicateResults"],
                         ):
+                            if binding is None:
+                                continue
                             bindings.append({
                                 **binding,
                                 "predicateResult": predicate_result["result"],
