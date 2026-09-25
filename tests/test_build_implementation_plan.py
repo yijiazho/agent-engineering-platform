@@ -614,6 +614,49 @@ def test_criterion_scoped_evidence_rejects_unsupported_insertion_binding() -> No
     ) == ["required-insertion criterion cannot rely on unsupported path evidence"]
 
 
+def test_required_insertion_rejects_another_criterion_path_evidence() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": [
+                    {"id": "required", "text": "Add local."},
+                    {"id": "other", "text": "Document the layout."},
+                ],
+                "acceptanceCriterionInsertions": [
+                    {"criterionId": "required", "requiredInsertions": [
+                        {"path": "README.md", "value": "local/"},
+                    ]},
+                    {"criterionId": "other", "requiredInsertions": []},
+                ],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    plan = {
+        "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        "unsupportedAcceptanceCriteria": ["other"],
+        "acceptanceCriteriaClassifications": [
+            {"criterionId": "required", "criterion": "Add local.",
+             "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [{"path": "README.md", "value": "local/"}]},
+            {"criterionId": "other", "criterion": "Document the layout.",
+             "classification": "UNSUPPORTED", "requiredInsertions": []},
+        ],
+    }
+    context = {"elements": [{"type": "planning-evidence", "content": {
+        "path": "README.md",
+        "criterionBindings": [{"criterionId": "other", "predicateResult": "MATCH",
+                               "postconditionResult": "NO_MATCH"}],
+    }}]}
+
+    assert handler._invocation_output_errors(
+        {"dependencyTaskExecutionIds": ["analyze"]}, context, plan
+    ) == ["required-insertion criterion lacks trusted bound evidence"]
+
+
 def test_unsupported_list_must_exactly_match_classifications() -> None:
     output = dict(VALID_PLAN)
     insertion = {"path": "src/a.py", "value": "first"}

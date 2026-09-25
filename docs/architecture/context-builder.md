@@ -772,7 +772,8 @@ so a longer insertion cannot prove a shorter overlapping insertion. The
 evaluated issue analysis records stable criterion IDs and the independent
 expected set for every criterion in `acceptanceCriterionInsertions`; each
 planner classification carries the same `criterionId` alongside descriptive
-text. Planner validation requires each classification to match that set exactly, so
+text, and `unsupportedAcceptanceCriteria` contains those IDs rather than
+natural-language text. Planner validation requires each classification to match that set exactly, so
 aggregate coverage cannot hide reassigned or partial bindings. AnalyzeIssue
 validates exact criterion-map coverage before publishing its artifact, and the
 Planner cross-field check runs inside invocation output validation before a
@@ -786,7 +787,9 @@ evidence for a different criterion cannot be discarded by classification
 alone. Symmetrically, a `REQUIRED_INSERTION` criterion is rejected only when
 its own bound evidence for an expected insertion path is unsupported. An
 unrelated unsupported semantic predicate in the same path or scope never
-poisons its supported mutation authority.
+poisons its supported mutation authority. A required insertion also needs a
+positive matched predicate bound to its own criterion ID and path; the absence
+of an unsupported result or evidence for a sibling criterion cannot authorize it.
 
 The checkout-bound implementation reads `revision:path` through Git rather
 than trusting mutable worktree bytes. It verifies exact-path absence against the

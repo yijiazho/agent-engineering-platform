@@ -139,7 +139,16 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 and isinstance(item.get("content"), Mapping)
             ]
             evidence_paths = {item.get("path") for item in evidence}
+            insertion_paths = {
+                item.get("path") for item in output.get("requiredInsertions", ())
+                if isinstance(item, Mapping)
+            } if isinstance(output, Mapping) else set()
+            if evidence_paths and not insertion_paths.issubset(evidence_paths):
+                raise BuildImplementationPlanContractError(
+                    "required insertions must target trusted authorized paths"
+                )
             unsupported_evidence_bindings: set[tuple[str, Any]] = set()
+            supported_evidence_bindings: set[tuple[str, Any]] = set()
             for item in evidence:
                 # Whole-file evaluator evidence is deliberately not planning
                 # authorization. Its evaluator owns the criterion result and
@@ -156,6 +165,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                         postcondition_result = binding.get("postconditionResult")
                         if not isinstance(criterion_id, str) or not criterion_id:
                             continue
+                        if predicate_result == "MATCH":
+                            supported_evidence_bindings.add(
+                                (criterion_id, item.get("path"))
+                            )
                         if (
                             predicate_result == "UNSUPPORTED"
                             or (predicate_result != "MATCH"
@@ -178,18 +191,13 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                     or bool(post_states) and all(state == "MATCH" for state in post_states)
                 ):
                     unsupported_evidence_bindings.add(("__legacy__", item.get("path")))
+                elif states and all(state == "MATCH" for state in states):
+                    supported_evidence_bindings.add(("__legacy__", item.get("path")))
             self._validate_acceptance_criteria_accounting(
                 task_execution, output,
                 unsupported_evidence_bindings=unsupported_evidence_bindings,
+                supported_evidence_bindings=supported_evidence_bindings,
             )
-            insertion_paths = {
-                item.get("path") for item in output.get("requiredInsertions", ())
-                if isinstance(item, Mapping)
-            } if isinstance(output, Mapping) else set()
-            if evidence_paths and not insertion_paths.issubset(evidence_paths):
-                raise BuildImplementationPlanContractError(
-                    "required insertions must target trusted authorized paths"
-                )
         except BuildImplementationPlanContractError as error:
             return [str(error)]
         return []
@@ -197,6 +205,7 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
     def _validate_acceptance_criteria_accounting(
         self, task_execution: Mapping[str, Any], plan: Any,
         *, unsupported_evidence_bindings: set[tuple[str, Any]] | None = None,
+        supported_evidence_bindings: set[tuple[str, Any]] | None = None,
     ) -> None:
         if not isinstance(plan, Mapping):
             return
@@ -290,6 +299,15 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                 "unsupportedAcceptanceCriteria must contain unique criteria"
             )
         unsupported = set(unsupported_values)
+        classified_unsupported = {
+            _classification_criterion_id(item, criteria_by_id)
+            for item in classifications
+            if item.get("classification") == "UNSUPPORTED"
+        }
+        if unsupported != classified_unsupported:
+            raise BuildImplementationPlanContractError(
+                "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
+            )
         evaluator_requirements = analysis.get("evaluatorRequirements", ())
         evaluator_criteria = {
             item.get("criterionId", item.get("criterion")) for item in evaluator_requirements
@@ -362,6 +380,17 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                     raise BuildImplementationPlanContractError(
                         "required-insertion criterion cannot rely on unsupported path evidence"
                     )
+                if (
+                    supported_evidence_bindings is not None
+                    and any(
+                        (criterion, path) not in supported_evidence_bindings
+                        and ("__legacy__", path) not in supported_evidence_bindings
+                        for path in expected_paths
+                    )
+                ):
+                    raise BuildImplementationPlanContractError(
+                        "required-insertion criterion lacks trusted bound evidence"
+                    )
             if disposition == "UNSUPPORTED" and criterion not in unsupported:
                 raise BuildImplementationPlanContractError(
                     "unsupported criterion classification must be preserved in unsupportedAcceptanceCriteria"
@@ -412,15 +441,6 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
         if bound != insertions:
             raise BuildImplementationPlanContractError(
                 "every required insertion must have deterministic criterion ownership"
-            )
-        classified_unsupported = {
-            _classification_criterion_id(item, criteria_by_id)
-            for item in classifications
-            if item.get("classification") == "UNSUPPORTED"
-        }
-        if unsupported != classified_unsupported:
-            raise BuildImplementationPlanContractError(
-                "unsupportedAcceptanceCriteria must exactly match UNSUPPORTED classifications"
             )
         classified_evaluator_owned = {
             _classification_criterion_id(item, criteria_by_id) for item in classifications
