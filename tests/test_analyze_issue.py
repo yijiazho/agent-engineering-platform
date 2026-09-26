@@ -6,6 +6,7 @@ import pytest
 
 from aep.analyze_issue import (
     AnalyzeIssueContractError, AnalyzeIssueTaskHandler,
+    _normalize_evaluator_owned_predicates,
     _validate_acceptance_criterion_insertions,
     _validate_evaluator_owned_requirements,
 )
@@ -180,6 +181,43 @@ def test_criterion_ids_allow_explanatory_selection_reasons() -> None:
 
     _validate_acceptance_criterion_insertions(output)
     _validate_evaluator_owned_requirements(output)
+
+
+def test_evaluator_owned_predicate_is_normalized_without_mutation_authority() -> None:
+    output = {
+        "acceptanceCriteria": [
+            {"id": "layout", "text": "Update the layout."},
+            {"id": "diff", "text": "Ensure `git diff --check` passes."},
+        ],
+        "acceptanceCriterionInsertions": [
+            {"criterionId": "layout", "requiredInsertions": []},
+            {"criterionId": "diff", "requiredInsertions": []},
+        ],
+        "planningPredicates": [
+            {"criterionId": "layout", "path": "README.md",
+             "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+             "predicate": {"kind": "TEXT_ABSENT", "value": "deploy/"},
+             "postcondition": {"kind": "TEXT_PRESENT", "value": "deploy/"},
+             "selectionReason": "Add deployment layout."},
+            {"criterionId": "diff", "path": "README.md",
+             "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+             "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+             "postcondition": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+             "selectionReason": "Redundant diff predicate."},
+        ],
+        "evaluatorRequirements": [{
+            "criterionId": "diff", "path": "README.md", "owner": "PATCH_EVALUATION",
+            "requirementId": "DIFF_CHECK_PASSES", "selectionReason": "Evaluate diff.",
+        }],
+    }
+
+    result, evidence = _normalize_evaluator_owned_predicates(output)
+
+    assert [item["criterionId"] for item in result["planningPredicates"]] == ["layout"]
+    assert evidence == ({
+        "criterionId": "diff", "path": "README.md",
+        "reason": "EVALUATOR_OWNED_PREDICATE_REMOVED",
+    },)
 
 
 def test_criterion_ids_reject_duplicate_criterion_text() -> None:

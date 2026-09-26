@@ -179,6 +179,11 @@ class AnalyzeIssueTaskHandler:
             authoritative_output = self._authoritative_output(
                 invocation["output"], task_execution, workflow, context_package
             )
+            normalization_evidence: tuple[dict[str, Any], ...] = ()
+            if self.task_name == "analyze-issue":
+                authoritative_output, normalization_evidence = (
+                    _normalize_evaluator_owned_predicates(authoritative_output)
+                )
             artifact_id = self._runtime_id("generatedartifact", str(task_execution["id"]))
             evaluation_result = self._run_schema_evaluation(
                 task_execution=task_execution,
@@ -217,6 +222,7 @@ class AnalyzeIssueTaskHandler:
                     "repositoryRevision": workflow["repositoryRevision"],
                     "mediaType": "application/json",
                     "evaluationResultIds": [evaluation_id],
+                    "normalizationEvidence": list(normalization_evidence),
                 },
                 authoritative_output,
             )
@@ -529,7 +535,6 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
             and (
                 not isinstance(declaration.get("criterionId", declaration.get("selectionReason")), str)
                 or declaration.get("criterionId", declaration.get("selectionReason")) not in criterion_by_id
-                or declaration.get("criterionId", declaration.get("selectionReason")) in evaluator_criteria
             )
         ):
             raise AnalyzeIssueContractError(
@@ -555,6 +560,40 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
         if criterion_id in criteria_seen:
             raise AnalyzeIssueContractError("evaluatorRequirements must contain one requirement per criterion")
         criteria_seen.add(criterion_id)
+
+
+def _normalize_evaluator_owned_predicates(
+    output: Any,
+) -> tuple[Any, tuple[dict[str, Any], ...]]:
+    """Remove non-authorizing duplicate predicates after ownership validation."""
+    if not isinstance(output, Mapping):
+        return output, ()
+    _validate_evaluator_owned_requirements(output)
+    requirements = output.get("evaluatorRequirements", ())
+    declarations = output.get("planningPredicates", ())
+    evaluator_criteria = {
+        item.get("criterionId", item.get("criterion"))
+        for item in requirements if isinstance(item, Mapping)
+    }
+    retained, normalized = [], []
+    for declaration in declarations:
+        if not isinstance(declaration, Mapping):
+            retained.append(declaration)
+            continue
+        criterion_id = declaration.get("criterionId", declaration.get("selectionReason"))
+        if criterion_id not in evaluator_criteria:
+            retained.append(declaration)
+            continue
+        normalized.append({
+            "criterionId": criterion_id,
+            "path": declaration.get("path", declaration.get("pathPrefix")),
+            "reason": "EVALUATOR_OWNED_PREDICATE_REMOVED",
+        })
+    if not normalized:
+        return output, ()
+    result = dict(output)
+    result["planningPredicates"] = retained
+    return result, tuple(normalized)
 
 
 def _safe_evaluator_requirement_path(path: str) -> bool:
