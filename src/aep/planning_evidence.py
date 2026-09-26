@@ -563,7 +563,11 @@ def validate_plan_path_contract(
                     f"planning evidence for {path!r} does not match trusted Context Builder evidence"
                 )
         dispositions = [scope_disposition(item) for item in deciding_records]
-        if path in required and ("UNSUPPORTED" in dispositions or "CHANGE" not in dispositions):
+        # A supported editable scope authorizes this path even when a
+        # separate scope records an unrelated unsupported criterion.  The
+        # criterion/path accounting at the planner boundary remains the
+        # authority for individual insertions.
+        if path in required and "CHANGE" not in dispositions:
             raise PlanningEvidenceError(f"required-change path {path!r} does not satisfy its planning predicates")
         if path in no_change and (not dispositions or any(value != "NO_CHANGE" for value in dispositions)):
             raise PlanningEvidenceError(f"no-change path {path!r} lacks satisfied planning-time postconditions")

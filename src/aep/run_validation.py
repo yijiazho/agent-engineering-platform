@@ -326,17 +326,16 @@ class RunValidationTaskHandler:
         producer_task = self._resources.get(
             ResourceRef.from_mapping(dict(producer_ref))
         )
-        expects_reconciliation = bool(
-            producer_task
-            and any(
-                isinstance(reference, Mapping)
-                and (evaluation := self._resources.get(
-                    ResourceRef.from_mapping(dict(reference))
-                )) is not None
-                and _spec(evaluation).get("type") == "reconciliation"
-                for reference in _spec(producer_task).get("evaluations", ())
-            )
-        )
+        reconciliation_evaluation = next((
+            evaluation
+            for reference in _spec(producer_task).get("evaluations", ())
+            if isinstance(reference, Mapping)
+            and (evaluation := self._resources.get(
+                ResourceRef.from_mapping(dict(reference))
+            )) is not None
+            and _spec(evaluation).get("type") == "reconciliation"
+        ), None) if producer_task else None
+        expects_reconciliation = reconciliation_evaluation is not None
         def is_correlated_patch_evaluation(evaluation: Any) -> bool:
             target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
             provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
@@ -369,7 +368,9 @@ class RunValidationTaskHandler:
                 and evaluation.get("traceId") == task_execution.get("traceId")
                 and isinstance(target, Mapping)
                 and target.get("type") == "AgentInvocation"
-                and isinstance(target.get("id"), str) and target["id"]
+                and target.get("id") in producer.get("agentInvocationIds", ())
+                and evaluation.get("evaluationRef")
+                == _ref_record(reconciliation_evaluation.ref)
                 and isinstance(provenance, Mapping)
                 and provenance.get("workflowExecutionId") == workflow.get("id")
                 and provenance.get("taskExecutionId") == producer_id
