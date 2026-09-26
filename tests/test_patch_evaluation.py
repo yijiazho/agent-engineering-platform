@@ -374,6 +374,28 @@ def test_required_insertion_newline_does_not_match_a_prefix() -> None:
     assert not _insertion_matches("admin=false\n", "notadmin=false")
 
 
+@pytest.mark.parametrize(
+    ("required", "block"),
+    [
+        ("deploy/\n  local/\n", "deploy/\n  local/\n"),
+        ("deploy/\r\n  local/\r\n", "deploy/\n  local/\n"),
+        ("deploy/\n  local/\n", "deploy/\r\n  local/\r\n"),
+        ("deploy/\n  local/", "deploy/\n  local/\n"),
+    ],
+)
+def test_required_tree_insertions_share_canonical_line_matching(required: str, block: str) -> None:
+    from aep.patch_evaluation import _insertion_matches
+
+    assert _insertion_matches(required, block)
+
+
+@pytest.mark.parametrize("block", ["review-aep-pr/deploy/\n", "  deploy/\n"])
+def test_required_tree_insertions_do_not_match_embedded_or_indented_text(block: str) -> None:
+    from aep.patch_evaluation import _insertion_matches
+
+    assert not _insertion_matches("deploy/", block)
+
+
 def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:
     from aep.patch_evaluation import _added_blocks_by_path
 

@@ -17,6 +17,7 @@ from referencing.jsonschema import DRAFT202012
 
 from aep.git_tool import GitTool, GitToolAdapter, _decode_patch_path, git_tool_validator
 from aep.observability import CorrelationContext, bind_correlation
+from aep.planning_evidence import canonical_line_match
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.tool_runtime import ToolCaller, ToolRequest, ToolResultStatus, invoke_tool
 
@@ -534,24 +535,8 @@ def _added_blocks_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
 
 
 def _insertion_matches(required: str, block: str) -> bool:
-    """Normalize transport newlines without weakening a logical-line boundary."""
-    required = _canonical_insertion(required)
-    block = _canonical_insertion(block)
-    candidates = (required, required[:-1]) if required.endswith("\n") else (required,)
-    for candidate in candidates:
-        start = block.find(candidate)
-        while start >= 0:
-            end = start + len(candidate)
-            if (start == 0 or block[start - 1] == "\n") and (
-                candidate.endswith("\n") or end == len(block) or block[end] == "\n"
-            ):
-                return True
-            start = block.find(candidate, start + 1)
-    return False
-
-
-def _canonical_insertion(value: str) -> str:
-    return value.replace("\r\n", "\n").replace("\r", "\n")
+    """Apply the shared structural-insertion comparison to added diff text."""
+    return canonical_line_match(required, block)
 
 
 def _replaced_paths(content: bytes) -> set[str]:

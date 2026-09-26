@@ -462,6 +462,12 @@ inside the authorized region. They do not prescribe how a model partitions an
 otherwise authorized edit: a single subtree insertion may satisfy several
 literal values, and several safe operations may jointly satisfy one value.
 
+Structural required insertions use canonical logical-line matching: newline
+style and a final newline are transport details, but line boundaries and
+indentation are content. Localized multiline inserts must preserve a boundary
+on both sides of their splice unless a future immutable plan explicitly
+authorizes an inline insertion.
+
 The `RunValidation` handler requires that successful patch evidence at the same
 repository revision and performs no Agent or model invocation. Its versioned
 Task configuration identifies the immutable Docker Tool, digest-pinned image,

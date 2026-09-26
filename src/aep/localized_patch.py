@@ -170,6 +170,12 @@ def apply_localized_operations(
             )
         ):
             raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
+        if operation == "insert":
+            _validate_line_splice(
+                preimage=preimage,
+                offset=start,
+                content=content,
+            )
         record = {"ordinal": ordinal, "operation": operation, "span": [start, end],
                   "anchorSha256": sha256(anchor.encode()).hexdigest(),
                   "modelDeclaredRegionId": declared_region}
@@ -252,6 +258,32 @@ def _positions(content: str, needle: str) -> list[int]:
             return positions
         positions.append(index)
         offset = index + 1
+
+
+def _validate_line_splice(*, preimage: str, offset: int, content: str) -> None:
+    """Reject a multiline insertion that silently joins an existing line.
+
+    Line-oriented content is structural: its first and last logical lines must
+    remain distinct from adjacent target text unless a future plan explicitly
+    authorizes an inline insertion.  The operation contract has no such
+    authorization today, so fail closed before constructing a postimage.
+    """
+    if not content or "\n" not in content and "\r" not in content:
+        return
+    left_is_boundary = offset == 0 or preimage[offset - 1] in "\r\n"
+    right_is_boundary = offset == len(preimage) or preimage[offset] in "\r\n"
+    content_opens_boundary = content.startswith(("\r", "\n"))
+    content_closes_boundary = content.endswith(("\r", "\n"))
+    if not left_is_boundary and not content_opens_boundary:
+        raise LocalizedPatchError(
+            "INVALID_LINE_SPLICE",
+            "line-oriented insertion is concatenated onto the preceding anchor line",
+        )
+    if not right_is_boundary and not content_closes_boundary:
+        raise LocalizedPatchError(
+            "INVALID_LINE_SPLICE",
+            "line-oriented insertion is concatenated onto following target text",
+        )
 
 
 def _safe_path(value: str) -> None:

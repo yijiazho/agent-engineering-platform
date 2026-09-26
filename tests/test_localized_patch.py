@@ -428,3 +428,55 @@ def test_generate_patch_accepts_one_subtree_insert_for_many_required_values() ->
         required_insertions=tuple({"path": "README.md", "value": value} for value in subtree.splitlines()),
     )
     assert all(value in changes[0]["content"] for value in subtree.splitlines())
+
+
+def test_line_oriented_insert_rejects_same_line_splice_before_materialization() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/",
+        placement="after",
+        content=subtree,
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(
+            preimage,
+            [item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+
+    assert error.value.code == "INVALID_LINE_SPLICE"
+    with pytest.raises(RejectedPatchCandidateError, match="INVALID_LINE_SPLICE"):
+        _validated_changes(
+            {"changes": [item]},
+            ("README.md",),
+            ({
+                "path": "README.md", "content": preimage,
+                "preimageSha256": sha256(preimage.encode()).hexdigest(),
+            },),
+            repository_revision=REVISION,
+            regions_by_path={"README.md": {
+                "kind": "MARKDOWN_SECTION", "name": "Repository Layout",
+            }},
+        )
+
+
+def test_line_oriented_insert_preserves_explicit_tree_boundaries() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/\n",
+        placement="after",
+        content=subtree,
+    )
+
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert result.content == "## Repository Layout\n  review-aep-pr/\n" + subtree
