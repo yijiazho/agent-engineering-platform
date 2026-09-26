@@ -509,6 +509,20 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
     evaluator_criteria = {
         item.get("criterionId", item.get("criterion")) for item in requirements if isinstance(item, Mapping)
     }
+    insertions_by_criterion = {
+        item.get("criterionId", item.get("criterion")): item.get("requiredInsertions")
+        for item in output.get("acceptanceCriterionInsertions", ())
+        if isinstance(item, Mapping)
+    }
+    if any(
+        isinstance(insertions_by_criterion.get(criterion_id), Sequence)
+        and not isinstance(insertions_by_criterion[criterion_id], (str, bytes))
+        and insertions_by_criterion[criterion_id]
+        for criterion_id in evaluator_criteria
+    ):
+        raise AnalyzeIssueContractError(
+            "evaluator-owned acceptance criteria must not require insertions"
+        )
     for declaration in declarations:
         if (
             isinstance(declaration, Mapping)

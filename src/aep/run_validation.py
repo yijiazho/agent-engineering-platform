@@ -323,6 +323,20 @@ class RunValidationTaskHandler:
                 "prior PATCH must reference its producer EvaluationResult"
             )
         patch_provenance = patch.get("provenance")
+        producer_task = self._resources.get(
+            ResourceRef.from_mapping(dict(producer_ref))
+        )
+        expects_reconciliation = bool(
+            producer_task
+            and any(
+                isinstance(reference, Mapping)
+                and (evaluation := self._resources.get(
+                    ResourceRef.from_mapping(dict(reference))
+                )) is not None
+                and _spec(evaluation).get("type") == "reconciliation"
+                for reference in _spec(producer_task).get("evaluations", ())
+            )
+        )
         def is_correlated_patch_evaluation(evaluation: Any) -> bool:
             target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
             provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
@@ -342,17 +356,46 @@ class RunValidationTaskHandler:
                 and provenance.get("repositoryRevision") == workflow.get("repositoryRevision")
             )
 
+        def is_correlated_reconciliation(evaluation: Any) -> bool:
+            target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
+            provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
+            return (
+                isinstance(evaluation, Mapping)
+                and evaluation.get("kind") == "EvaluationResult"
+                and evaluation.get("status") == "SUCCEEDED"
+                and evaluation.get("outcome") == "PASS"
+                and evaluation.get("taskExecutionId") == producer_id
+                and evaluation.get("traceId") == producer.get("traceId")
+                and evaluation.get("traceId") == task_execution.get("traceId")
+                and isinstance(target, Mapping)
+                and target.get("type") == "AgentInvocation"
+                and isinstance(target.get("id"), str) and target["id"]
+                and isinstance(provenance, Mapping)
+                and provenance.get("workflowExecutionId") == workflow.get("id")
+                and provenance.get("taskExecutionId") == producer_id
+                and provenance.get("repositoryRevision") == workflow.get("repositoryRevision")
+            )
+
+        evaluations = [self._runtime_store.get(str(value)) for value in evaluation_ids]
+        patch_evaluations = [
+            evaluation for evaluation in evaluations
+            if is_correlated_patch_evaluation(evaluation)
+        ]
+        auxiliary_evaluations = [
+            evaluation for evaluation in evaluations
+            if not is_correlated_patch_evaluation(evaluation)
+        ]
         if (
             not isinstance(patch_provenance, Mapping)
             or patch_provenance.get("workflowExecutionId") != workflow.get("id")
             or patch_provenance.get("taskExecutionId") != producer_id
             or patch_provenance.get("repositoryRevision") != workflow.get("repositoryRevision")
-            or sum(
-                is_correlated_patch_evaluation(
-                    self._runtime_store.get(str(evaluation_id))
-                )
-                for evaluation_id in evaluation_ids
-            ) != 1
+            or len(patch_evaluations) != 1
+            or (expects_reconciliation and (
+                len(auxiliary_evaluations) != 1
+                or not is_correlated_reconciliation(auxiliary_evaluations[0])
+            ))
+            or (not expects_reconciliation and auxiliary_evaluations)
         ):
             raise RunValidationContractError(
                 "prior PATCH does not have a correlated PASS EvaluationResult"

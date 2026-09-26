@@ -135,7 +135,9 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             deletion_authorized_paths = _deletion_authorized_paths(plan, allowed_paths)
             no_change_paths = _no_change_paths(plan, allowed_paths)
             required_insertions = _required_insertions(plan, allowed_paths)
-            unsupported_criteria = _unsupported_acceptance_criteria(plan)
+            unsupported_criteria = _unsupported_acceptance_criteria(
+                plan, required_change_paths
+            )
             task_spec = _spec(task)
             patch_evaluation = self._patch_evaluation(task_spec)
             reconciliation_evaluation = (
@@ -1253,11 +1255,40 @@ def _single_regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
             if len(regions) == 1}
 
 
-def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
+def _unsupported_acceptance_criteria(
+    plan: JsonMapping, required_change_paths: Sequence[str] = (),
+) -> tuple[str, ...]:
     values = plan.get("unsupportedAcceptanceCriteria", ())
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or any(not isinstance(value, str) or not value for value in values):
         raise GeneratePatchContractError("IMPLEMENTATION_PLAN.unsupportedAcceptanceCriteria must contain non-empty strings")
-    return tuple(dict.fromkeys(values))
+    # A criterion unsupported in one scope of a path must not invalidate a
+    # supported mutation owned by a different criterion in another scope.
+    # The path's scoped reconciliation is authoritative for that criterion;
+    # passing it to the path-wide patch evaluator would otherwise roll back a
+    # valid candidate solely because its sibling is unsupported.
+    required = set(required_change_paths)
+    supported_sibling_ids = {
+        binding.get("criterionId")
+        for evidence in plan.get("_trustedPathEvidence", ())
+        if isinstance(evidence, Mapping) and evidence.get("path") in required
+        for binding in evidence.get("criterionBindings", ())
+        if isinstance(binding, Mapping) and binding.get("predicateResult") == "MATCH"
+        and isinstance(binding.get("criterionId"), str)
+    }
+    scoped_unsupported_ids = {
+        binding.get("criterionId")
+        for evidence in plan.get("_trustedPathEvidence", ())
+        if isinstance(evidence, Mapping) and evidence.get("path") in required
+        for binding in evidence.get("criterionBindings", ())
+        if isinstance(binding, Mapping)
+        and binding.get("criterionId") in values
+        and binding.get("predicateResult") != "MATCH"
+        and binding.get("postconditionResult") != "MATCH"
+    }
+    return tuple(dict.fromkeys(
+        value for value in values
+        if value not in scoped_unsupported_ids or value in supported_sibling_ids
+    ))
 
 
 def _validated_changes(
