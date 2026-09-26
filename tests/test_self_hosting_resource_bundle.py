@@ -159,6 +159,17 @@ def test_context_and_agent_boundaries_are_explicit(
         "Agent", "issue-analyzer", EXPECTED["resourceVersions"]["issueAnalyzerAgent"]
     ))
     assert issue_analyzer is not None
+    issue_analysis_prompt = resources.get(ResourceRef(
+        "Prompt", "issue-analysis", EXPECTED["resourceVersions"]["issueAnalysisPrompt"]
+    ))
+    assert issue_analysis_prompt is not None
+    assert "complete newline and indentation semantics" in issue_analysis_prompt.data["spec"]["system"]
+    implementation_planning_prompt = resources.get(ResourceRef(
+        "Prompt", "implementation-planning",
+        EXPECTED["resourceVersions"]["implementationPlanningPrompt"],
+    ))
+    assert implementation_planning_prompt is not None
+    assert "Preserve every structural insertion value byte-for-byte" in implementation_planning_prompt.data["spec"]["system"]
     assert "acceptanceCriterionInsertions" in issue_analyzer.data["spec"][
         "outputSchema"
     ]["required"]

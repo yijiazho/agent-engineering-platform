@@ -27,10 +27,10 @@
                        "pr-writer"
                    ],
     "resourceVersions":  {
-                             "workflow":  "1.33.0",
-                             "buildImplementationPlanTask":  "1.15.0",
-                             "plannerAgent":  "1.14.0",
-                             "implementationPlanningPrompt":  "1.13.0",
+                             "workflow":  "1.34.0",
+                             "buildImplementationPlanTask":  "1.16.0",
+                             "plannerAgent":  "1.15.0",
+                             "implementationPlanningPrompt":  "1.14.0",
                              "implementationPlanEvaluation":  "1.11.0",
                              "generatePatchTask":  "1.16.0",
                              "codeGeneratorAgent":  "1.15.0",
@@ -38,9 +38,9 @@
                              "createPullRequestTask":  "1.2.0",
                              "publicationEvidencePolicy":  "1.1.0",
                              "model":  "1.1.0",
-                             "analyzeIssueTask":  "1.11.0",
-                             "issueAnalyzerAgent":  "1.9.0",
-                             "issueAnalysisPrompt":  "1.7.0",
+                             "analyzeIssueTask":  "1.12.0",
+                             "issueAnalyzerAgent":  "1.10.0",
+                             "issueAnalysisPrompt":  "1.8.0",
                              "issueAnalysisEvaluation":  "1.5.0"
                          },
     "publicationCapabilities":  [

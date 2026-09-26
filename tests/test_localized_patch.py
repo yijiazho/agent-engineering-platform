@@ -480,3 +480,18 @@ def test_line_oriented_insert_preserves_explicit_tree_boundaries() -> None:
     )
 
     assert result.content == "## Repository Layout\n  review-aep-pr/\n" + subtree
+
+
+def test_line_oriented_insert_cannot_split_a_crlf_separator() -> None:
+    preimage = "head\r\nnext\r\n"
+    item = operation(
+        preimage,
+        anchor="head\r",
+        placement="after",
+        content="new\r\n",
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(preimage, [item])
+
+    assert error.value.code == "INVALID_LINE_SPLICE"

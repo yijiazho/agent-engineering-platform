@@ -268,6 +268,11 @@ def _validate_line_splice(*, preimage: str, offset: int, content: str) -> None:
     authorizes an inline insertion.  The operation contract has no such
     authorization today, so fail closed before constructing a postimage.
     """
+    if 0 < offset < len(preimage) and preimage[offset - 1:offset + 1] == "\r\n":
+        raise LocalizedPatchError(
+            "INVALID_LINE_SPLICE",
+            "insertion offset splits a CRLF line separator",
+        )
     if not content or "\n" not in content and "\r" not in content:
         return
     left_is_boundary = offset == 0 or preimage[offset - 1] in "\r\n"
