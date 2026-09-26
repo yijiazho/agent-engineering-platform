@@ -45,6 +45,7 @@ def evaluate_patch(
     no_change_paths: Sequence[str] = (),
     deletion_authorized_paths: Sequence[str] = (),
     required_insertions: Sequence[Mapping[str, str]] = (),
+    postimage_contents_by_path: Mapping[str, str] | None = None,
     unsupported_acceptance_criteria: Sequence[str] = (),
     evaluator_requirements: Sequence[Mapping[str, str]] = (),
     working_branch: str,
@@ -244,8 +245,12 @@ def evaluate_patch(
             {"path": item["path"], "value": item["value"]}
             for item in required_insertions
             if not any(
-                _insertion_matches(item["value"], block)
-                for block in postimage_blocks_by_path.get(item["path"], ())
+                _insertion_matches(item["value"], candidate)
+                for candidate in (
+                    (postimage_contents_by_path or {}).get(item["path"]),
+                    *postimage_blocks_by_path.get(item["path"], ()),
+                )
+                if isinstance(candidate, str)
             )
         ),
         key=lambda item: (item["path"].casefold(), item["path"], item["value"]),

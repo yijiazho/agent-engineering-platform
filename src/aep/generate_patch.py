@@ -530,6 +530,10 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                     item for item in required_insertions
                     if item["path"] not in effective_no_change
                 ),
+                postimage_contents_by_path={
+                    item["path"]: item["content"] for item in changes
+                    if item["operation"] == "write"
+                },
                 unsupported_acceptance_criteria=unsupported_criteria,
                 evaluator_requirements=tuple({
                     "selectionId": item["selectionId"], "criterion": item["criterion"],
@@ -1547,7 +1551,7 @@ def _verify_no_change_targets(
                 path=path,
                 content=content,
                 repository_revision=str(target.get("repositoryRevision", "")),
-                predicates=[{"kind": "LINE_PRESENT", "value": value}
+                predicates=[{"kind": "LINE_PRESENT" if "\n" in value or "\r" in value else "TEXT_PRESENT", "value": value}
                             for value in criteria],
                 source_id="editable-target-no-change",
                 region=(regions_by_path or {}).get(path),

@@ -728,7 +728,10 @@ def reconcile_dispositions(
             if len(scopes) == 1 and scopes[0].get("selectionId") is None:
                 insertion_record = evaluate_path_predicates(
                     path=path, content=output, repository_revision=repository_revision,
-                    predicates=[{"kind": "LINE_PRESENT", "value": value} for value in insertion_values],
+                    predicates=[{
+                        "kind": "LINE_PRESENT" if "\n" in value or "\r" in value else "TEXT_PRESENT",
+                        "value": value,
+                    } for value in insertion_values],
                     source_id="generated-insertion-reconciliation", region=scopes[0].get("region"),
                     max_bytes=max_bytes, distinct_text_matches=True,
                 )
@@ -744,7 +747,10 @@ def reconcile_dispositions(
                             continue
                         result = evaluate_path_predicates(
                             path=path, content=output, repository_revision=repository_revision,
-                            predicates=[{"kind": "LINE_PRESENT", "value": value}],
+                            predicates=[{
+                                "kind": "LINE_PRESENT" if "\n" in value or "\r" in value else "TEXT_PRESENT",
+                                "value": value,
+                            }],
                             source_id="generated-insertion-reconciliation",
                             region=scope.get("region"), max_bytes=max_bytes,
                         )
