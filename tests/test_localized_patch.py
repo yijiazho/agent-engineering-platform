@@ -106,17 +106,17 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
         {"kind": "MARKDOWN_SECTION", "name": "Second", "selectionId": "second"},
     )}
     change = _validated_changes(
-        {"changes": [operation(preimage, anchor="two", content="updated", regionId="model-label")]},
+        {"changes": [operation(preimage, anchor="two\n", content="updated\n", regionId="model-label")]},
         ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
     )
     assert "updated" in change[0]["content"]
     assert '"selectionId": "second"' in change[0]["localizedOperations"]
     combined = _validated_changes(
-        {"changes": [
-            operation(preimage, anchor="one", content="first", regionId="first"),
-            operation(preimage, anchor="two", content="second", regionId="second"),
-        ]}, ("README.md",),
+            {"changes": [
+                operation(preimage, anchor="one\n", content="first\n", regionId="first"),
+                operation(preimage, anchor="two\n", content="second\n", regionId="second"),
+            ]}, ("README.md",),
         ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
     )
@@ -489,6 +489,21 @@ def test_line_oriented_insert_cannot_split_a_crlf_separator() -> None:
         anchor="head\r",
         placement="after",
         content="new\r\n",
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(preimage, [item])
+
+    assert error.value.code == "INVALID_LINE_SPLICE"
+
+
+def test_single_line_insert_cannot_concatenate_onto_an_anchor_line() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/",
+        placement="after",
+        content="deploy/",
     )
 
     with pytest.raises(LocalizedPatchError) as error:

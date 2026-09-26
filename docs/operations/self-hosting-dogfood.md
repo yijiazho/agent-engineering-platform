@@ -877,7 +877,7 @@ updating the Workflow, never by rewriting historical analysis evidence.
   and selection ID; an unsupported semantic criterion on the same path does
   not invalidate a separately supported insertion criterion;
   full file bodies are intentionally absent.
-* `generate-patch:1.16.0` uses `code-generator:1.15.0` and requires one exact
+* `generate-patch:1.17.0` uses `code-generator:1.15.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
   reconciliation and patch EvaluationResults for original/effective sets.

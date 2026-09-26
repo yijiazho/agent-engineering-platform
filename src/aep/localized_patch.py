@@ -273,7 +273,7 @@ def _validate_line_splice(*, preimage: str, offset: int, content: str) -> None:
             "INVALID_LINE_SPLICE",
             "insertion offset splits a CRLF line separator",
         )
-    if not content or "\n" not in content and "\r" not in content:
+    if not content:
         return
     left_is_boundary = offset == 0 or preimage[offset - 1] in "\r\n"
     right_is_boundary = offset == len(preimage) or preimage[offset] in "\r\n"
