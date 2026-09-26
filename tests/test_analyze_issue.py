@@ -83,6 +83,20 @@ VALID_ANALYSIS = {
     "likelyRepositoryAreas": ["src/aep", "tests"],
 }
 
+NORMALIZED_ISSUE_ANALYSIS_SCHEMA = {
+    **ISSUE_ANALYSIS_SCHEMA,
+    "required": [
+        *ISSUE_ANALYSIS_SCHEMA["required"],
+        "planningPredicates",
+        "evaluatorRequirements",
+    ],
+    "properties": {
+        **ISSUE_ANALYSIS_SCHEMA["properties"],
+        "planningPredicates": {"type": "array", "minItems": 0},
+        "evaluatorRequirements": {"type": "array"},
+    },
+}
+
 
 def test_evaluator_owned_requirement_rejects_null_scope_status_predicate() -> None:
     output = {
@@ -220,6 +234,57 @@ def test_evaluator_owned_predicate_is_normalized_without_mutation_authority() ->
     },)
 
 
+def test_evaluator_only_analysis_normalizes_to_an_empty_predicate_partition() -> None:
+    output = {
+        "acceptanceCriteria": [{
+            "id": "diff", "text": "Ensure `git diff --check` passes.",
+        }],
+        "acceptanceCriterionInsertions": [{
+            "criterionId": "diff", "requiredInsertions": [],
+        }],
+        "planningPredicates": [{
+            "criterionId": "diff", "path": "README.md",
+            "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+            "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+            "postcondition": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+            "selectionReason": "Redundant diff predicate.",
+        }],
+        "evaluatorRequirements": [{
+            "criterionId": "diff", "path": "README.md", "owner": "PATCH_EVALUATION",
+            "requirementId": "DIFF_CHECK_PASSES", "selectionReason": "Evaluate diff.",
+        }],
+    }
+
+    result, evidence = _normalize_evaluator_owned_predicates(output)
+
+    assert result["planningPredicates"] == []
+    assert evidence[0]["criterionId"] == "diff"
+
+
+def test_unowned_criterion_fails_closed() -> None:
+    output = {
+        "acceptanceCriteria": [
+            {"id": "layout", "text": "Update the layout."},
+            {"id": "preserve", "text": "Preserve surrounding guidance."},
+        ],
+        "acceptanceCriterionInsertions": [
+            {"criterionId": "layout", "requiredInsertions": []},
+            {"criterionId": "preserve", "requiredInsertions": []},
+        ],
+        "planningPredicates": [{
+            "criterionId": "layout", "path": "README.md",
+            "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+            "predicate": {"kind": "TEXT_ABSENT", "value": "deploy/"},
+            "postcondition": {"kind": "TEXT_PRESENT", "value": "deploy/"},
+            "selectionReason": "Add deployment layout.",
+        }],
+        "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="requires document or evaluator ownership"):
+        _validate_evaluator_owned_requirements(output)
+
+
 def test_criterion_ids_reject_duplicate_criterion_text() -> None:
     output = {
         "acceptanceCriteria": [
@@ -318,6 +383,56 @@ def test_success_composes_boundaries_and_attaches_complete_task_evidence() -> No
     assert artifact["evaluationResultIds"] == [evaluation["id"]]
     assert artifact["repositoryRevision"] == REVISION
     assert json.loads(handler._artifact_store.get_content(artifact["id"])) == VALID_ANALYSIS
+
+
+def test_normalized_output_is_evaluated_as_the_published_artifact() -> None:
+    output = deepcopy(VALID_ANALYSIS)
+    output["acceptanceCriteria"].append("Ensure `git diff --check` passes.")
+    output["acceptanceCriterionInsertions"].append({
+        "criterion": "Ensure `git diff --check` passes.", "requiredInsertions": [],
+    })
+    output["planningPredicates"] = [
+        {
+            "selectionReason": "Persist a typed issue analysis artifact.",
+            "path": "README.md",
+            "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+            "predicate": {"kind": "TEXT_ABSENT", "value": "artifact"},
+            "postcondition": {"kind": "TEXT_PRESENT", "value": "artifact"},
+        },
+        {
+            "selectionReason": "Ensure `git diff --check` passes.",
+            "path": "README.md",
+            "region": {"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+            "predicate": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+            "postcondition": {"kind": "UNSUPPORTED_SEMANTIC", "value": "format"},
+        },
+    ]
+    output["evaluatorRequirements"] = [{
+        "criterion": "Ensure `git diff --check` passes.", "path": "README.md",
+        "owner": "PATCH_EVALUATION", "requirementId": "DIFF_CHECK_PASSES",
+        "selectionReason": "Evaluate formatting.",
+    }]
+    store, handler, task, _adapter = setup_handler(
+        ModelResponse(output=output, usage=ModelUsage(31, 19), latency_ms=12),
+        resource_set=resource_collection(NORMALIZED_ISSUE_ANALYSIS_SCHEMA),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    execution = store.get(TASK_EXECUTION_ID)
+    artifact = store.get(execution["generatedArtifactIds"][0])
+    evaluation = store.get(execution["evaluationResultIds"][0])
+    assert evaluation["target"] == {"type": "GeneratedArtifact", "id": artifact["id"]}
+    assert artifact["normalizationEvidence"][0]["criterionId"] == (
+        "Ensure `git diff --check` passes."
+    )
+    assert [
+        item["selectionReason"]
+        for item in json.loads(handler._artifact_store.get_content(artifact["id"]))[
+            "planningPredicates"
+        ]
+    ] == ["Persist a typed issue analysis artifact."]
 
 
 def test_scheduler_owns_terminal_transition_and_propagates_revision_evidence() -> None:
@@ -506,7 +621,10 @@ def setup_handler(
     return store, handler, task, adapter
 
 
-def resource_collection() -> tuple[ResourceCollection, Resource]:
+def resource_collection(
+    output_schema: dict | None = None,
+) -> tuple[ResourceCollection, Resource]:
+    schema = output_schema or ISSUE_ANALYSIS_SCHEMA
     workspace = resource("Workspace", "local", {"repository": "octo/repo"})
     task = resource(
         "Task",
@@ -514,7 +632,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
         {
             "objective": "Analyze the normalized GitHub issue.",
             "agentRef": ref("Agent", "issue-analyzer"),
-            "outputs": ISSUE_ANALYSIS_SCHEMA,
+            "outputs": schema,
             "requiredContext": ["issue"],
             "inputContextTokenBudget": 32_000,
             "evaluations": [ref("Evaluation", "issue-analysis-schema")],
@@ -527,7 +645,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
             "role": "Issue Analyzer",
             "promptRef": ref("Prompt", "issue-analysis"),
             "modelRef": ref("Model", "fake-reasoning"),
-            "outputSchema": ISSUE_ANALYSIS_SCHEMA,
+            "outputSchema": schema,
         },
     )
     prompt = resource(
@@ -552,7 +670,7 @@ def resource_collection() -> tuple[ResourceCollection, Resource]:
     evaluation = resource(
         "Evaluation",
         "issue-analysis-schema",
-        {"type": "schema", "inputSchema": ISSUE_ANALYSIS_SCHEMA},
+        {"type": "schema", "inputSchema": schema},
     )
     values = (workspace, task, agent, prompt, model, evaluation)
     return ResourceCollection(workspace=workspace, resources=values), task

@@ -191,6 +191,10 @@ class AnalyzeIssueTaskHandler:
                 evaluation=evaluation,
                 invocation_id=invocation_id,
                 content=authoritative_output,
+                target=(
+                    {"type": "GeneratedArtifact", "id": artifact_id}
+                    if normalization_evidence else None
+                ),
             )
             evaluation_id = str(evaluation_result["id"])
             if evaluation_result["outcome"] != "PASS":
@@ -363,6 +367,7 @@ class AnalyzeIssueTaskHandler:
         evaluation: Resource,
         invocation_id: str,
         content: Any,
+        target: JsonMapping | None = None,
     ) -> RuntimeObject:
         evaluation_ref = _ref_record(evaluation.ref)
         evaluation_id = self._runtime_id(
@@ -373,7 +378,7 @@ class AnalyzeIssueTaskHandler:
             result_id=evaluation_id,
             task_execution_id=str(task_execution["id"]),
             evaluation_ref=evaluation_ref,
-            target={"type": "AgentInvocation", "id": invocation_id},
+            target=target or {"type": "AgentInvocation", "id": invocation_id},
             content=content,
             schema=_evaluation_schema(evaluation),
             correlation=_correlation(task_execution),
@@ -560,6 +565,17 @@ def _validate_evaluator_owned_requirements(output: Any) -> None:
         if criterion_id in criteria_seen:
             raise AnalyzeIssueContractError("evaluatorRequirements must contain one requirement per criterion")
         criteria_seen.add(criterion_id)
+    predicate_criteria = {
+        item.get("criterionId", item.get("selectionReason"))
+        for item in declarations if isinstance(item, Mapping)
+    }
+    if (
+        ("planningPredicates" in output or "evaluatorRequirements" in output)
+        and predicate_criteria | evaluator_criteria != set(criterion_by_id)
+    ):
+        raise AnalyzeIssueContractError(
+            "every acceptance criterion requires document or evaluator ownership"
+        )
 
 
 def _normalize_evaluator_owned_predicates(
