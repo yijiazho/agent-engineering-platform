@@ -1174,6 +1174,15 @@ def _validated_dispositions(output: object, allowed_paths: Sequence[str], change
 
 def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
     """Retain every postcondition with its own trusted selector."""
+    insertion_values_by_criterion = {
+        classification.get("criterionId"): tuple(
+            item.get("value") for item in classification.get("requiredInsertions", ())
+            if isinstance(item, Mapping) and isinstance(item.get("value"), str)
+        )
+        for classification in plan.get("acceptanceCriteriaClassifications", ())
+        if isinstance(classification, Mapping)
+        and isinstance(classification.get("criterionId"), str)
+    }
     result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
         if (isinstance(item, Mapping) and isinstance(item.get("path"), str)
@@ -1195,12 +1204,26 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
                 predicates = tuple(value for value in values if isinstance(value, Mapping))
                 if not predicates:
                     continue
+                criterion_ids = tuple(
+                    binding.get("criterionId") for binding in bindings
+                    if isinstance(binding, Mapping)
+                    and (
+                        binding.get("predicateResult") == "MATCH"
+                        or binding.get("postconditionResult") == "MATCH"
+                    )
+                    and isinstance(binding.get("criterionId"), str)
+                ) if isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)) else ()
                 inspection = item.get("inspection", {})
                 region = inspection.get("region") if isinstance(inspection, Mapping) else None
                 result.setdefault(item["path"], []).append({
                     "predicates": predicates,
                     "region": region,
                     "selectionId": item.get("selectionId"),
+                    "criterionIds": criterion_ids,
+                    "requiredInsertionValues": tuple(
+                        value for criterion_id in criterion_ids
+                        for value in insertion_values_by_criterion.get(criterion_id, ())
+                    ),
                 })
     return {path: tuple(values) for path, values in result.items()}
 

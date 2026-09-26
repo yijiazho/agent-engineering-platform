@@ -2,13 +2,13 @@ apiVersion: aep.dev/v1alpha1
 kind: Task
 metadata:
   name: build-implementation-plan
-  version: 1.0.0
+  version: 1.1.0
 spec:
   objective: Plan the fixture change.
   agentRef:
     kind: Agent
     name: planner
-    version: 1.0.0
+    version: 1.1.0
   requiredContext:
     - prior-artifacts
     - repository-inventory
@@ -33,7 +33,7 @@ spec:
   evaluations:
     - kind: Evaluation
       name: plan-schema
-      version: 1.0.0
+      version: 1.1.0
   outputs:
     type: object
     additionalProperties: false

@@ -64,7 +64,7 @@ python -m pip install -e ".[dev,yaml]"
 python -m pytest
 ```
 
-`PyYAML` is optional for full YAML parsing in local `.ai/` resource files. JSON content in `.yaml` files works without that extra dependency.
+`PyYAML` is installed with the base package so local `.ai/` resource files may use either YAML or JSON-compatible YAML.
 
 Installed development package versions are captured in [requirements-dev.lock](requirements-dev.lock). Refresh it after dependency changes with `.\.venv\Scripts\python.exe -m pip list --format=freeze`.
 

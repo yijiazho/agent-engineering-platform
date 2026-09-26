@@ -710,6 +710,9 @@ def reconcile_dispositions(
                 for value in insertion_values:
                     matches = []
                     for scope in scopes:
+                        owned_values = scope.get("requiredInsertionValues", ())
+                        if owned_values and value not in owned_values:
+                            continue
                         result = evaluate_path_predicates(
                             path=path, content=output, repository_revision=repository_revision,
                             predicates=[{"kind": "TEXT_PRESENT", "value": value}],

@@ -2,7 +2,7 @@ apiVersion: aep.dev/v1alpha1
 kind: Evaluation
 metadata:
   name: plan-schema
-  version: 1.0.0
+  version: 1.1.0
 spec:
   type: schema
   inputSchema:
