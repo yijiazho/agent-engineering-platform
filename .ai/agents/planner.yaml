@@ -3,14 +3,14 @@
   "kind": "Agent",
   "metadata": {
     "name": "planner",
-    "version": "1.11.0"
+    "version": "1.14.0"
   },
   "spec": {
     "role": "Implementation Planner",
     "promptRef": {
       "kind": "Prompt",
       "name": "implementation-planning",
-      "version": "1.10.0"
+      "version": "1.13.0"
     },
     "modelRef": {
       "kind": "Model",
@@ -95,6 +95,7 @@
         },
         "unsupportedAcceptanceCriteria": {
           "type": "array",
+          "description": "Stable acceptance criterion IDs classified as UNSUPPORTED.",
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -109,11 +110,16 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
+              "criterionId",
               "criterion",
               "classification",
               "requiredInsertions"
             ],
             "properties": {
+              "criterionId": {
+                "type": "string",
+                "minLength": 1
+              },
               "criterion": {
                 "type": "string",
                 "minLength": 1

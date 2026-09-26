@@ -41,7 +41,7 @@ def test_fixture_issue_runs_the_complete_mvp_dag_deterministically() -> None:
         "EVALUATION_REPORT",
         "PULL_REQUEST_DESCRIPTION",
     ]
-    assert len(result.evaluation_results) == 6
+    assert len(result.evaluation_results) == 7
     assert {item["outcome"] for item in result.evaluation_results} == {"PASS"}
     assert [item["decision"] for item in result.policy_decisions] == [
         "ALLOW",

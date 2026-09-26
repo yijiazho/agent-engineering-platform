@@ -3,7 +3,7 @@
   "kind": "Evaluation",
   "metadata": {
     "name": "implementation-plan-schema",
-    "version": "1.9.0"
+    "version": "1.11.0"
   },
   "spec": {
     "type": "schema",
@@ -78,6 +78,7 @@
         },
         "unsupportedAcceptanceCriteria": {
           "type": "array",
+          "description": "Stable acceptance criterion IDs classified as UNSUPPORTED.",
           "uniqueItems": true,
           "items": {
             "type": "string",
@@ -92,11 +93,16 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
+              "criterionId",
               "criterion",
               "classification",
               "requiredInsertions"
             ],
             "properties": {
+              "criterionId": {
+                "type": "string",
+                "minLength": 1
+              },
               "criterion": {
                 "type": "string",
                 "minLength": 1

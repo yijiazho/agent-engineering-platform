@@ -313,41 +313,90 @@ class RunValidationTaskHandler:
         if (
             isinstance(evaluation_ids, (str, bytes))
             or not isinstance(evaluation_ids, Sequence)
-            or len(evaluation_ids) != 1
-            or evaluation_ids[0] not in producer.get("evaluationResultIds", ())
+            or not evaluation_ids
+            or not all(
+                evaluation_id in producer.get("evaluationResultIds", ())
+                for evaluation_id in evaluation_ids
+            )
         ):
             raise RunValidationContractError(
                 "prior PATCH must reference its producer EvaluationResult"
             )
-        evaluation = self._runtime_store.get(str(evaluation_ids[0]))
-        target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
-        provenance = (
-            evaluation.get("provenance")
-            if isinstance(evaluation, Mapping)
-            else None
-        )
         patch_provenance = patch.get("provenance")
-        if not (
-            isinstance(evaluation, Mapping)
-            and evaluation.get("kind") == "EvaluationResult"
-            and evaluation.get("status") == "SUCCEEDED"
-            and evaluation.get("outcome") == "PASS"
-            and evaluation.get("taskExecutionId") == producer_id
-            and evaluation.get("traceId") == producer.get("traceId")
-            and evaluation.get("traceId") == task_execution.get("traceId")
-            and isinstance(target, Mapping)
-            and dict(target)
-            == {"type": "GeneratedArtifact", "id": patch.get("id")}
-            and isinstance(provenance, Mapping)
-            and provenance.get("workflowExecutionId") == workflow.get("id")
-            and provenance.get("taskExecutionId") == producer_id
-            and provenance.get("repositoryRevision")
-            == workflow.get("repositoryRevision")
-            and isinstance(patch_provenance, Mapping)
-            and patch_provenance.get("workflowExecutionId") == workflow.get("id")
-            and patch_provenance.get("taskExecutionId") == producer_id
-            and patch_provenance.get("repositoryRevision")
-            == workflow.get("repositoryRevision")
+        producer_task = self._resources.get(
+            ResourceRef.from_mapping(dict(producer_ref))
+        )
+        reconciliation_evaluation = next((
+            evaluation
+            for reference in _spec(producer_task).get("evaluations", ())
+            if isinstance(reference, Mapping)
+            and (evaluation := self._resources.get(
+                ResourceRef.from_mapping(dict(reference))
+            )) is not None
+            and _spec(evaluation).get("type") == "reconciliation"
+        ), None) if producer_task else None
+        expects_reconciliation = reconciliation_evaluation is not None
+        def is_correlated_patch_evaluation(evaluation: Any) -> bool:
+            target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
+            provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
+            return (
+                isinstance(evaluation, Mapping)
+                and evaluation.get("kind") == "EvaluationResult"
+                and evaluation.get("status") == "SUCCEEDED"
+                and evaluation.get("outcome") == "PASS"
+                and evaluation.get("taskExecutionId") == producer_id
+                and evaluation.get("traceId") == producer.get("traceId")
+                and evaluation.get("traceId") == task_execution.get("traceId")
+                and isinstance(target, Mapping)
+                and dict(target) == {"type": "GeneratedArtifact", "id": patch.get("id")}
+                and isinstance(provenance, Mapping)
+                and provenance.get("workflowExecutionId") == workflow.get("id")
+                and provenance.get("taskExecutionId") == producer_id
+                and provenance.get("repositoryRevision") == workflow.get("repositoryRevision")
+            )
+
+        def is_correlated_reconciliation(evaluation: Any) -> bool:
+            target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
+            provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
+            return (
+                isinstance(evaluation, Mapping)
+                and evaluation.get("kind") == "EvaluationResult"
+                and evaluation.get("status") == "SUCCEEDED"
+                and evaluation.get("outcome") == "PASS"
+                and evaluation.get("taskExecutionId") == producer_id
+                and evaluation.get("traceId") == producer.get("traceId")
+                and evaluation.get("traceId") == task_execution.get("traceId")
+                and isinstance(target, Mapping)
+                and target.get("type") == "AgentInvocation"
+                and target.get("id") in producer.get("agentInvocationIds", ())
+                and evaluation.get("evaluationRef")
+                == _ref_record(reconciliation_evaluation.ref)
+                and isinstance(provenance, Mapping)
+                and provenance.get("workflowExecutionId") == workflow.get("id")
+                and provenance.get("taskExecutionId") == producer_id
+                and provenance.get("repositoryRevision") == workflow.get("repositoryRevision")
+            )
+
+        evaluations = [self._runtime_store.get(str(value)) for value in evaluation_ids]
+        patch_evaluations = [
+            evaluation for evaluation in evaluations
+            if is_correlated_patch_evaluation(evaluation)
+        ]
+        auxiliary_evaluations = [
+            evaluation for evaluation in evaluations
+            if not is_correlated_patch_evaluation(evaluation)
+        ]
+        if (
+            not isinstance(patch_provenance, Mapping)
+            or patch_provenance.get("workflowExecutionId") != workflow.get("id")
+            or patch_provenance.get("taskExecutionId") != producer_id
+            or patch_provenance.get("repositoryRevision") != workflow.get("repositoryRevision")
+            or len(patch_evaluations) != 1
+            or (expects_reconciliation and (
+                len(auxiliary_evaluations) != 1
+                or not is_correlated_reconciliation(auxiliary_evaluations[0])
+            ))
+            or (not expects_reconciliation and auxiliary_evaluations)
         ):
             raise RunValidationContractError(
                 "prior PATCH does not have a correlated PASS EvaluationResult"

@@ -173,6 +173,47 @@ def test_authoritative_plan_does_not_treat_unknown_intermediate_state_as_no_chan
     assert result["unsupportedPaths"] == [path]
 
 
+def test_authoritative_plan_keeps_supported_criterion_change_in_mixed_scope() -> None:
+    _store, handler, _task, _adapter = setup_handler(VALID_PLAN)
+    path = "src/aep/build_implementation_plan.py"
+    record = evaluate_path_predicates(
+        path=path, content="Status: ready\n", repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "Status: ready"},
+            {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve prose"},
+        ], source_id="file:planner",
+    )
+    post = evaluate_path_predicates(
+        path=path, content="Status: ready\n", repository_revision=REVISION,
+        predicates=[
+            {"kind": "TEXT_PRESENT", "value": "Status: done"},
+            {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve prose"},
+        ], source_id="file:planner",
+    )
+    record["criterionBindings"] = [
+        {"criterionId": "add-status", "predicateResult": "MATCH",
+         "postconditionResult": "NO_MATCH"},
+        {"criterionId": "preserve", "predicateResult": "UNSUPPORTED",
+         "postconditionResult": "UNSUPPORTED"},
+    ]
+    record = finalize_planning_evidence(
+        record, postconditions=[
+            {"kind": "TEXT_PRESENT", "value": "Status: done"},
+            {"kind": "UNSUPPORTED_SEMANTIC", "value": "preserve prose"},
+        ], postcondition_results=post["predicateResults"],
+        selection_reasons=["add status", "preserve prose"],
+    )
+
+    result = handler._authoritative_output(
+        VALID_PLAN, task_execution(), workflow_execution(),
+        {"elements": [{"type": "planning-evidence", "content": record}],
+         "selection": {"requiredContext": ["planning-evidence"]}},
+    )
+
+    assert result["requiredChangePaths"] == [path]
+    assert result["unsupportedPaths"] == []
+
+
 def test_success_consumes_analysis_and_persists_evaluated_plan() -> None:
     store, handler, task, adapter = setup_handler(VALID_PLAN)
 
@@ -486,6 +527,134 @@ def test_required_criterion_rejects_unsupported_path_evidence() -> None:
     assert errors == [
         "required-insertion criterion cannot rely on unsupported path evidence"
     ]
+
+
+def test_criterion_scoped_evidence_does_not_poison_a_supported_insertion() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": [
+                    {"id": "layout", "text": "Add the local directory."},
+                    {"id": "preserve", "text": "Preserve surrounding guidance."},
+                ],
+                "acceptanceCriterionInsertions": [
+                    {"criterionId": "layout", "requiredInsertions": [
+                        {"path": "README.md", "value": "local/"},
+                    ]},
+                    {"criterionId": "preserve", "requiredInsertions": []},
+                ],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    plan = {
+        "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        "unsupportedAcceptanceCriteria": ["preserve"],
+        "acceptanceCriteriaClassifications": [
+            {"criterionId": "layout", "criterion": "Add the local directory.",
+             "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [{"path": "README.md", "value": "local/"}]},
+            {"criterionId": "preserve", "criterion": "Preserve surrounding guidance.",
+             "classification": "UNSUPPORTED", "requiredInsertions": []},
+        ],
+    }
+    context = {"elements": [{
+        "type": "planning-evidence",
+        "content": {
+            "path": "README.md",
+            "criterionBindings": [
+                {"criterionId": "layout", "predicateResult": "MATCH",
+                 "postconditionResult": "NO_MATCH"},
+                {"criterionId": "preserve", "predicateResult": "UNSUPPORTED",
+                 "postconditionResult": "UNSUPPORTED"},
+            ],
+        },
+    }]}
+
+    assert handler._invocation_output_errors(
+        {"dependencyTaskExecutionIds": ["analyze"]}, context, plan
+    ) == []
+
+
+def test_criterion_scoped_evidence_rejects_unsupported_insertion_binding() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": [{"id": "layout", "text": "Add local."}],
+                "acceptanceCriterionInsertions": [{
+                    "criterionId": "layout",
+                    "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+                }],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    plan = {
+        "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        "unsupportedAcceptanceCriteria": [],
+        "acceptanceCriteriaClassifications": [{
+            "criterionId": "layout", "criterion": "Add local.", "classification": "REQUIRED_INSERTION",
+            "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        }],
+    }
+    context = {"elements": [{"type": "planning-evidence", "content": {
+        "path": "README.md",
+        "criterionBindings": [{"criterionId": "layout", "predicateResult": "UNSUPPORTED",
+                               "postconditionResult": "UNSUPPORTED"}],
+    }}]}
+
+    assert handler._invocation_output_errors(
+        {"dependencyTaskExecutionIds": ["analyze"]}, context, plan
+    ) == ["required-insertion criterion cannot rely on unsupported path evidence"]
+
+
+def test_required_insertion_rejects_another_criterion_path_evidence() -> None:
+    class AnalysisArtifacts:
+        def list_by_task_execution(self, _task_execution_id):
+            return [{"id": "analysis", "artifactType": "ISSUE_ANALYSIS"}]
+
+        def get_content(self, _artifact_id):
+            return json.dumps({
+                "acceptanceCriteria": [
+                    {"id": "required", "text": "Add local."},
+                    {"id": "other", "text": "Document the layout."},
+                ],
+                "acceptanceCriterionInsertions": [
+                    {"criterionId": "required", "requiredInsertions": [
+                        {"path": "README.md", "value": "local/"},
+                    ]},
+                    {"criterionId": "other", "requiredInsertions": []},
+                ],
+            }).encode()
+
+    handler = object.__new__(BuildImplementationPlanTaskHandler)
+    handler._artifact_store = AnalysisArtifacts()
+    plan = {
+        "requiredInsertions": [{"path": "README.md", "value": "local/"}],
+        "unsupportedAcceptanceCriteria": ["other"],
+        "acceptanceCriteriaClassifications": [
+            {"criterionId": "required", "criterion": "Add local.",
+             "classification": "REQUIRED_INSERTION",
+             "requiredInsertions": [{"path": "README.md", "value": "local/"}]},
+            {"criterionId": "other", "criterion": "Document the layout.",
+             "classification": "UNSUPPORTED", "requiredInsertions": []},
+        ],
+    }
+    context = {"elements": [{"type": "planning-evidence", "content": {
+        "path": "README.md",
+        "criterionBindings": [{"criterionId": "other", "predicateResult": "MATCH",
+                               "postconditionResult": "NO_MATCH"}],
+    }}]}
+
+    assert handler._invocation_output_errors(
+        {"dependencyTaskExecutionIds": ["analyze"]}, context, plan
+    ) == ["required-insertion criterion lacks trusted bound evidence"]
 
 
 def test_unsupported_list_must_exactly_match_classifications() -> None:

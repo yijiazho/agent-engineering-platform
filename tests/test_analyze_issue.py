@@ -182,6 +182,20 @@ def test_criterion_ids_allow_explanatory_selection_reasons() -> None:
     _validate_evaluator_owned_requirements(output)
 
 
+def test_criterion_ids_reject_duplicate_criterion_text() -> None:
+    output = {
+        "acceptanceCriteria": [
+            {"id": "first", "text": "Add the layout entry."},
+            {"id": "second", "text": "Add the layout entry."},
+        ],
+        "planningPredicates": [],
+        "evaluatorRequirements": [],
+    }
+
+    with pytest.raises(AnalyzeIssueContractError, match="unique stable IDs and text"):
+        _validate_evaluator_owned_requirements(output)
+
+
 def test_status_equals_requires_a_bound_status_acceptance_criterion() -> None:
     output = {
         "acceptanceCriteria": ["Tests pass"],

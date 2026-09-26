@@ -135,7 +135,9 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             deletion_authorized_paths = _deletion_authorized_paths(plan, allowed_paths)
             no_change_paths = _no_change_paths(plan, allowed_paths)
             required_insertions = _required_insertions(plan, allowed_paths)
-            unsupported_criteria = _unsupported_acceptance_criteria(plan)
+            unsupported_criteria = _unsupported_acceptance_criteria(
+                plan, required_change_paths
+            )
             task_spec = _spec(task)
             patch_evaluation = self._patch_evaluation(task_spec)
             reconciliation_evaluation = (
@@ -1172,18 +1174,56 @@ def _validated_dispositions(output: object, allowed_paths: Sequence[str], change
 
 def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, Any], ...]]:
     """Retain every postcondition with its own trusted selector."""
+    insertion_values_by_criterion = {
+        classification.get("criterionId"): tuple(
+            item.get("value") for item in classification.get("requiredInsertions", ())
+            if isinstance(item, Mapping) and isinstance(item.get("value"), str)
+        )
+        for classification in plan.get("acceptanceCriteriaClassifications", ())
+        if isinstance(classification, Mapping)
+        and isinstance(classification.get("criterionId"), str)
+    }
     result: dict[str, list[Mapping[str, Any]]] = {}
     for item in plan.get("_trustedPathEvidence", ()):
         if (isinstance(item, Mapping) and isinstance(item.get("path"), str)
                 and item.get("authorizationRole") != "EVALUATOR_ONLY"):
-            values = item.get("postconditions", ())
+            bindings = item.get("criterionBindings")
+            if isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)):
+                values = [
+                    binding.get("postcondition") for binding in bindings
+                    if isinstance(binding, Mapping)
+                    and (
+                        binding.get("predicateResult") == "MATCH"
+                        or binding.get("postconditionResult") == "MATCH"
+                    )
+                    and isinstance(binding.get("postcondition"), Mapping)
+                ]
+            else:
+                values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                predicates = tuple(value for value in values if isinstance(value, Mapping))
+                if not predicates:
+                    continue
+                criterion_ids = tuple(
+                    binding.get("criterionId") for binding in bindings
+                    if isinstance(binding, Mapping)
+                    and (
+                        binding.get("predicateResult") == "MATCH"
+                        or binding.get("postconditionResult") == "MATCH"
+                    )
+                    and isinstance(binding.get("criterionId"), str)
+                ) if isinstance(bindings, Sequence) and not isinstance(bindings, (str, bytes)) else ()
                 inspection = item.get("inspection", {})
                 region = inspection.get("region") if isinstance(inspection, Mapping) else None
                 result.setdefault(item["path"], []).append({
-                    "predicates": tuple(value for value in values if isinstance(value, Mapping)),
+                    "predicates": predicates,
                     "region": region,
                     "selectionId": item.get("selectionId"),
+                    "criterionIds": criterion_ids,
+                    "requiredInsertionValues": tuple(
+                        value for criterion_id in criterion_ids
+                        for value in insertion_values_by_criterion.get(criterion_id, ())
+                    ),
                 })
     return {path: tuple(values) for path, values in result.items()}
 
@@ -1238,11 +1278,40 @@ def _single_regions_by_path(plan: JsonMapping) -> dict[str, Mapping[str, Any]]:
             if len(regions) == 1}
 
 
-def _unsupported_acceptance_criteria(plan: JsonMapping) -> tuple[str, ...]:
+def _unsupported_acceptance_criteria(
+    plan: JsonMapping, required_change_paths: Sequence[str] = (),
+) -> tuple[str, ...]:
     values = plan.get("unsupportedAcceptanceCriteria", ())
     if isinstance(values, (str, bytes)) or not isinstance(values, Sequence) or any(not isinstance(value, str) or not value for value in values):
         raise GeneratePatchContractError("IMPLEMENTATION_PLAN.unsupportedAcceptanceCriteria must contain non-empty strings")
-    return tuple(dict.fromkeys(values))
+    # A criterion unsupported in one scope of a path must not invalidate a
+    # supported mutation owned by a different criterion in another scope.
+    # The path's scoped reconciliation is authoritative for that criterion;
+    # passing it to the path-wide patch evaluator would otherwise roll back a
+    # valid candidate solely because its sibling is unsupported.
+    required = set(required_change_paths)
+    supported_sibling_ids = {
+        binding.get("criterionId")
+        for evidence in plan.get("_trustedPathEvidence", ())
+        if isinstance(evidence, Mapping) and evidence.get("path") in required
+        for binding in evidence.get("criterionBindings", ())
+        if isinstance(binding, Mapping) and binding.get("predicateResult") == "MATCH"
+        and isinstance(binding.get("criterionId"), str)
+    }
+    scoped_unsupported_ids = {
+        binding.get("criterionId")
+        for evidence in plan.get("_trustedPathEvidence", ())
+        if isinstance(evidence, Mapping) and evidence.get("path") in required
+        for binding in evidence.get("criterionBindings", ())
+        if isinstance(binding, Mapping)
+        and binding.get("criterionId") in values
+        and binding.get("predicateResult") != "MATCH"
+        and binding.get("postconditionResult") != "MATCH"
+    }
+    return tuple(dict.fromkeys(
+        value for value in values
+        if value not in scoped_unsupported_ids or value in supported_sibling_ids
+    ))
 
 
 def _validated_changes(

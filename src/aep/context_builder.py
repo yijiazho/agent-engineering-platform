@@ -417,11 +417,27 @@ class ContextBuilder:
                     scope_key = json.dumps(declared_region, sort_keys=True, separators=(",", ":"))
                     scope = scoped_declarations.setdefault(scope_key, {
                         "region": declared_region, "predicates": [],
-                        "postconditions": [], "reasons": [],
+                        "postconditions": [], "reasons": [], "criterionBindings": [],
                     })
                     scope["predicates"].append(dict(predicate))
                     scope["postconditions"].append(dict(postcondition))
-                    scope["reasons"].append(str(declaration.get("selectionReason", "TASK_DECLARED_PREDICATE")))
+                    selection_reason = str(declaration.get(
+                        "selectionReason", "TASK_DECLARED_PREDICATE"
+                    ))
+                    scope["reasons"].append(selection_reason)
+                    criterion_id = declaration.get("criterionId")
+                    # Preserve a positional placeholder for every predicate.
+                    # Direct Task declarations predate criterion IDs, and a
+                    # mixed scope must not shift a later bound predicate onto
+                    # a legacy result during reconciliation.
+                    scope["criterionBindings"].append(
+                        None if not isinstance(criterion_id, str) or not criterion_id else {
+                            "criterionId": criterion_id,
+                            "predicate": dict(predicate),
+                            "postcondition": dict(postcondition),
+                            "selectionReason": selection_reason,
+                        }
+                    )
                     hint = declaration.get("maxBytes")
                     if hint is not None:
                         hint = int(hint)
@@ -429,6 +445,7 @@ class ContextBuilder:
                 for requirement in evaluator_requirements:
                     requirement_id = str(requirement["requirementId"])
                     criterion = str(requirement["criterion"])
+                    criterion_id = str(requirement["criterionId"])
                     selection_reason = str(requirement["selectionReason"])
                     record = {
                         "path": path,
@@ -452,6 +469,7 @@ class ContextBuilder:
                         "authorizationRole": "EVALUATOR_ONLY",
                         "owningEvaluator": requirement["owner"],
                         "requirementId": requirement_id,
+                        "criterionId": criterion_id,
                         "criterion": criterion,
                     }
                     record = finalize_planning_evidence(
@@ -577,6 +595,25 @@ class ContextBuilder:
                             declared_max_bytes=declared_max_bytes, inspection_strategy=scope_strategy,
                             status_fields=(status_fields if scope_strategy == "STRUCTURED_STATUS_FIELD_SCAN" else None),
                             inspected_bytes=inspected_bytes, status_scan_bytes=status_ceiling, region=scope_region)
+                        bindings = []
+                        for binding, predicate_result, postcondition_result in zip(
+                            scope["criterionBindings"],
+                            record["predicateResults"],
+                            postcondition_record["predicateResults"],
+                        ):
+                            if binding is None:
+                                continue
+                            bindings.append({
+                                **binding,
+                                "predicateResult": predicate_result["result"],
+                                "postconditionResult": postcondition_result["result"],
+                            })
+                        # A direct legacy declaration in this scope has no
+                        # criterion identity.  Preserve the entire scope's
+                        # conservative legacy result instead of silently
+                        # dropping that declaration from criterion accounting.
+                        if bindings and len(bindings) == len(scope["criterionBindings"]):
+                            record["criterionBindings"] = bindings
                         scope_records.append(finalize_planning_evidence(
                             record, postconditions=scope["postconditions"],
                             selection_reasons=scope["reasons"],
