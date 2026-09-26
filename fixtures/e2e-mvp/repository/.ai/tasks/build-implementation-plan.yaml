@@ -21,6 +21,9 @@ spec:
   planningPredicates:
     - path: src/app.py
       selectionReason: Fixture value is ready for its deterministic update.
+      region:
+        kind: WHOLE_FILE
+        name: WHOLE_FILE
       predicate:
         kind: TEXT_PRESENT
         value: value = 1

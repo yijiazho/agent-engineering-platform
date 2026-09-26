@@ -1181,16 +1181,22 @@ def _postconditions_by_path(plan: JsonMapping) -> dict[str, tuple[Mapping[str, A
                 values = [
                     binding.get("postcondition") for binding in bindings
                     if isinstance(binding, Mapping)
-                    and binding.get("predicateResult") == "MATCH"
+                    and (
+                        binding.get("predicateResult") == "MATCH"
+                        or binding.get("postconditionResult") == "MATCH"
+                    )
                     and isinstance(binding.get("postcondition"), Mapping)
                 ]
             else:
                 values = item.get("postconditions", ())
             if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+                predicates = tuple(value for value in values if isinstance(value, Mapping))
+                if not predicates:
+                    continue
                 inspection = item.get("inspection", {})
                 region = inspection.get("region") if isinstance(inspection, Mapping) else None
                 result.setdefault(item["path"], []).append({
-                    "predicates": tuple(value for value in values if isinstance(value, Mapping)),
+                    "predicates": predicates,
                     "region": region,
                     "selectionId": item.get("selectionId"),
                 })
