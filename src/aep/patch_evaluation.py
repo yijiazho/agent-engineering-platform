@@ -238,14 +238,14 @@ def evaluate_patch(
                 }
             )
 
-    added_blocks_by_path = _added_blocks_by_path(content)
+    postimage_blocks_by_path = _postimage_blocks_by_path(content)
     missing_insertions = sorted(
         (
             {"path": item["path"], "value": item["value"]}
             for item in required_insertions
             if not any(
                 _insertion_matches(item["value"], block)
-                for block in added_blocks_by_path.get(item["path"], ())
+                for block in postimage_blocks_by_path.get(item["path"], ())
             )
         ),
         key=lambda item: (item["path"].casefold(), item["path"], item["value"]),
@@ -528,6 +528,42 @@ def _added_blocks_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
             finish()
         elif current is not None and line.startswith("+") and not line.startswith("+++"):
             active.append(line[1:])
+        else:
+            finish()
+    finish()
+    return {path: tuple(blocks) for path, blocks in values.items()}
+
+
+def _postimage_blocks_by_path(content: bytes) -> dict[str, tuple[str, ...]]:
+    """Reconstruct changed-hunk postimages, retaining unchanged context lines."""
+    current: str | None = None
+    active: list[str] = []
+    has_addition = False
+    values: dict[str, list[str]] = {}
+
+    def finish() -> None:
+        nonlocal has_addition
+        if current is not None and active and has_addition:
+            values.setdefault(current, []).append("\n".join(active))
+        active.clear()
+        has_addition = False
+
+    for line in content.decode("utf-8", errors="replace").splitlines():
+        marker = _patch_marker_path(line, "+++ ")
+        if marker is not None:
+            finish()
+            current = None if marker == "/dev/null" else marker
+        elif line.startswith("@@ "):
+            finish()
+        elif current is not None and line.startswith("+") and not line.startswith("+++"):
+            active.append(line[1:])
+            has_addition = True
+        elif current is not None and line.startswith(" "):
+            active.append(line[1:])
+        elif current is not None and line.startswith("-") and not line.startswith("---"):
+            continue
+        elif line.startswith("\\ No newline at end of file"):
+            continue
         else:
             finish()
     finish()

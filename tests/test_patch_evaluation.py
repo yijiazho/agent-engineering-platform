@@ -360,6 +360,22 @@ def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
     assert added["tracked.txt"] == ("first line\nsecond line",)
 
 
+def test_required_block_is_checked_against_changed_hunk_postimage() -> None:
+    from aep.patch_evaluation import _postimage_blocks_by_path
+
+    patch = b"""--- a/README.md
++++ b/README.md
+@@ -1,2 +1,3 @@
+ deploy/
++  local/
+ retained
+"""
+
+    assert _postimage_blocks_by_path(patch) == {
+        "README.md": ("deploy/\n  local/\nretained",)
+    }
+
+
 @pytest.mark.parametrize("required", ["updated\n", "updated\r\n"])
 def test_multiline_insertions_normalize_line_endings_and_final_newline(repository, required) -> None:
     _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": required},))

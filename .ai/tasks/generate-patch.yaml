@@ -1,10 +1,10 @@
 {
   "apiVersion": "aep.dev/v1alpha1",
   "kind": "Task",
-  "metadata": {"name": "generate-patch", "version": "1.17.0"},
+  "metadata": {"name": "generate-patch", "version": "1.18.0"},
   "spec": {
     "objective": "Generate explicit evidence-reconciled localized edit operations for every plan-authorized path.",
-    "agentRef": {"kind": "Agent", "name": "code-generator", "version": "1.15.0"},
+    "agentRef": {"kind": "Agent", "name": "code-generator", "version": "1.16.0"},
     "outputs": {
       "type": "object",
       "additionalProperties": false,
