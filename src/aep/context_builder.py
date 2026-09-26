@@ -608,7 +608,11 @@ class ContextBuilder:
                                 "predicateResult": predicate_result["result"],
                                 "postconditionResult": postcondition_result["result"],
                             })
-                        if bindings:
+                        # A direct legacy declaration in this scope has no
+                        # criterion identity.  Preserve the entire scope's
+                        # conservative legacy result instead of silently
+                        # dropping that declaration from criterion accounting.
+                        if bindings and len(bindings) == len(scope["criterionBindings"]):
                             record["criterionBindings"] = bindings
                         scope_records.append(finalize_planning_evidence(
                             record, postconditions=scope["postconditions"],

@@ -44,6 +44,7 @@ from aep.github_events import EventDeduplicator, normalize_github_issue_created
 from aep.github_tool import GitHubToolAdapter
 from aep.execution_checkout import RepositoryIdentity
 from aep.model_invocation import FakeModelAdapter, ModelResponse, ModelUsage
+from aep.planning_evidence import PlanningEvidenceInspection
 from aep.repository_knowledge import (
     InMemoryRepositoryKnowledgeProvider,
     RepositoryFile,
@@ -120,6 +121,32 @@ class _LocalGitSandbox(GitSandbox):
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
+
+
+class _FixturePlanningEvidenceReader:
+    """Revision-bound file reader used by the deterministic MVP fixture."""
+
+    def __init__(self, root: Path) -> None:
+        self._root = root
+
+    def inspect(
+        self, path: str, revision: str, *, max_bytes: int,
+        strategy: str, status_scan_bytes: int,
+    ) -> PlanningEvidenceInspection:
+        encoded = (self._root / path).read_bytes()
+        content = encoded.decode("utf-8")
+        if len(encoded) > max_bytes:
+            raise ValueError("fixture planning evidence exceeds declared bound")
+        return PlanningEvidenceInspection(
+            content=content,
+            blob_size=len(encoded),
+            blob_sha256=sha256(encoded).hexdigest(),
+            inspected_bytes=len(encoded),
+            status_fields=(),
+        )
+
+    def verify_absent(self, path: str, revision: str) -> bool:
+        return not (self._root / path).exists()
 
 
 class _FakeDockerExecution(DockerExecution):
@@ -287,6 +314,7 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
             repository_knowledge=_repository_provider(revision),
             artifact_store=artifacts,
             runtime_store=store,
+            repository_file_reader=_FixturePlanningEvidenceReader(workspace),
         )
         model = FakeModelAdapter(
             [
@@ -314,6 +342,7 @@ def run_mvp_harness(fixture_root: Path | str, *, block_publication: bool = False
                         "risks": ["Validation may fail."],
                         "implementationSteps": ["Update src/app.py.", "Run tests."],
                         "acceptanceCriteriaClassifications": [{
+                            "criterionId": "The value is updated and tests pass.",
                             "criterion": "The value is updated and tests pass.",
                             "classification": "REQUIRED_INSERTION",
                             "requiredInsertion": {"path": "src/app.py", "value": "value = 2"},

@@ -313,41 +313,46 @@ class RunValidationTaskHandler:
         if (
             isinstance(evaluation_ids, (str, bytes))
             or not isinstance(evaluation_ids, Sequence)
-            or len(evaluation_ids) != 1
-            or evaluation_ids[0] not in producer.get("evaluationResultIds", ())
+            or not evaluation_ids
+            or not all(
+                evaluation_id in producer.get("evaluationResultIds", ())
+                for evaluation_id in evaluation_ids
+            )
         ):
             raise RunValidationContractError(
                 "prior PATCH must reference its producer EvaluationResult"
             )
-        evaluation = self._runtime_store.get(str(evaluation_ids[0]))
-        target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
-        provenance = (
-            evaluation.get("provenance")
-            if isinstance(evaluation, Mapping)
-            else None
-        )
         patch_provenance = patch.get("provenance")
-        if not (
-            isinstance(evaluation, Mapping)
-            and evaluation.get("kind") == "EvaluationResult"
-            and evaluation.get("status") == "SUCCEEDED"
-            and evaluation.get("outcome") == "PASS"
-            and evaluation.get("taskExecutionId") == producer_id
-            and evaluation.get("traceId") == producer.get("traceId")
-            and evaluation.get("traceId") == task_execution.get("traceId")
-            and isinstance(target, Mapping)
-            and dict(target)
-            == {"type": "GeneratedArtifact", "id": patch.get("id")}
-            and isinstance(provenance, Mapping)
-            and provenance.get("workflowExecutionId") == workflow.get("id")
-            and provenance.get("taskExecutionId") == producer_id
-            and provenance.get("repositoryRevision")
-            == workflow.get("repositoryRevision")
-            and isinstance(patch_provenance, Mapping)
-            and patch_provenance.get("workflowExecutionId") == workflow.get("id")
-            and patch_provenance.get("taskExecutionId") == producer_id
-            and patch_provenance.get("repositoryRevision")
-            == workflow.get("repositoryRevision")
+        def is_correlated_patch_evaluation(evaluation: Any) -> bool:
+            target = evaluation.get("target") if isinstance(evaluation, Mapping) else None
+            provenance = evaluation.get("provenance") if isinstance(evaluation, Mapping) else None
+            return (
+                isinstance(evaluation, Mapping)
+                and evaluation.get("kind") == "EvaluationResult"
+                and evaluation.get("status") == "SUCCEEDED"
+                and evaluation.get("outcome") == "PASS"
+                and evaluation.get("taskExecutionId") == producer_id
+                and evaluation.get("traceId") == producer.get("traceId")
+                and evaluation.get("traceId") == task_execution.get("traceId")
+                and isinstance(target, Mapping)
+                and dict(target) == {"type": "GeneratedArtifact", "id": patch.get("id")}
+                and isinstance(provenance, Mapping)
+                and provenance.get("workflowExecutionId") == workflow.get("id")
+                and provenance.get("taskExecutionId") == producer_id
+                and provenance.get("repositoryRevision") == workflow.get("repositoryRevision")
+            )
+
+        if (
+            not isinstance(patch_provenance, Mapping)
+            or patch_provenance.get("workflowExecutionId") != workflow.get("id")
+            or patch_provenance.get("taskExecutionId") != producer_id
+            or patch_provenance.get("repositoryRevision") != workflow.get("repositoryRevision")
+            or sum(
+                is_correlated_patch_evaluation(
+                    self._runtime_store.get(str(evaluation_id))
+                )
+                for evaluation_id in evaluation_ids
+            ) != 1
         ):
             raise RunValidationContractError(
                 "prior PATCH does not have a correlated PASS EvaluationResult"

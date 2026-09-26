@@ -1,0 +1,9 @@
+apiVersion: aep.dev/v1alpha1
+kind: Evaluation
+metadata:
+  name: plan-reconciliation
+  version: 1.0.0
+spec:
+  type: reconciliation
+  successCriteria:
+    - Each required fixture path has a deterministic disposition.

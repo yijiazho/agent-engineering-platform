@@ -22,7 +22,12 @@ def _classification_criterion_id(
     """Resolve the versioned classifier field, retaining old test fixtures."""
     criterion_id = item.get("criterionId")
     if isinstance(criterion_id, str):
-        return criterion_id if criterion_id in criteria_by_id else None
+        return (
+            criterion_id
+            if criterion_id in criteria_by_id
+            and item.get("criterion") == criteria_by_id[criterion_id]
+            else None
+        )
     criterion = item.get("criterion")
     if not isinstance(criterion, str):
         return None
@@ -94,10 +99,10 @@ class BuildImplementationPlanTaskHandler(AnalyzeIssueTaskHandler):
                         if record.get("authorizationRole") != "EVALUATOR_ONLY"]
             deciding = editable or records
             dispositions = [scope_disposition(record) for record in deciding]
-            if "UNSUPPORTED" in dispositions:
-                unsupported.append(path)
-            elif "CHANGE" in dispositions:
+            if "CHANGE" in dispositions:
                 required.append(path)
+            elif "UNSUPPORTED" in dispositions:
+                unsupported.append(path)
             elif dispositions and all(value == "NO_CHANGE" for value in dispositions):
                 no_change.append(path)
             else:
