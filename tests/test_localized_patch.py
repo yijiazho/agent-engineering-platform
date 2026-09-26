@@ -106,17 +106,17 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
         {"kind": "MARKDOWN_SECTION", "name": "Second", "selectionId": "second"},
     )}
     change = _validated_changes(
-        {"changes": [operation(preimage, anchor="two", content="updated", regionId="model-label")]},
+        {"changes": [operation(preimage, anchor="two\n", content="updated\n", regionId="model-label")]},
         ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
     )
     assert "updated" in change[0]["content"]
     assert '"selectionId": "second"' in change[0]["localizedOperations"]
     combined = _validated_changes(
-        {"changes": [
-            operation(preimage, anchor="one", content="first", regionId="first"),
-            operation(preimage, anchor="two", content="second", regionId="second"),
-        ]}, ("README.md",),
+            {"changes": [
+                operation(preimage, anchor="one\n", content="first\n", regionId="first"),
+                operation(preimage, anchor="two\n", content="second\n", regionId="second"),
+            ]}, ("README.md",),
         ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
     )
@@ -428,3 +428,85 @@ def test_generate_patch_accepts_one_subtree_insert_for_many_required_values() ->
         required_insertions=tuple({"path": "README.md", "value": value} for value in subtree.splitlines()),
     )
     assert all(value in changes[0]["content"] for value in subtree.splitlines())
+
+
+def test_line_oriented_insert_rejects_same_line_splice_before_materialization() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/",
+        placement="after",
+        content=subtree,
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(
+            preimage,
+            [item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+
+    assert error.value.code == "INVALID_LINE_SPLICE"
+    with pytest.raises(RejectedPatchCandidateError, match="INVALID_LINE_SPLICE"):
+        _validated_changes(
+            {"changes": [item]},
+            ("README.md",),
+            ({
+                "path": "README.md", "content": preimage,
+                "preimageSha256": sha256(preimage.encode()).hexdigest(),
+            },),
+            repository_revision=REVISION,
+            regions_by_path={"README.md": {
+                "kind": "MARKDOWN_SECTION", "name": "Repository Layout",
+            }},
+        )
+
+
+def test_line_oriented_insert_preserves_explicit_tree_boundaries() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/\n",
+        placement="after",
+        content=subtree,
+    )
+
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert result.content == "## Repository Layout\n  review-aep-pr/\n" + subtree
+
+
+def test_line_oriented_insert_cannot_split_a_crlf_separator() -> None:
+    preimage = "head\r\nnext\r\n"
+    item = operation(
+        preimage,
+        anchor="head\r",
+        placement="after",
+        content="new\r\n",
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(preimage, [item])
+
+    assert error.value.code == "INVALID_LINE_SPLICE"
+
+
+def test_single_line_insert_cannot_concatenate_onto_an_anchor_line() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/",
+        placement="after",
+        content="deploy/",
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(preimage, [item])
+
+    assert error.value.code == "INVALID_LINE_SPLICE"

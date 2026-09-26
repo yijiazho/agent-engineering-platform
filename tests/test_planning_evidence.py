@@ -562,6 +562,63 @@ def test_required_insertions_must_have_independent_occurrences() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("required", "content"),
+    [
+        ("deploy/\n  local/\n", "deploy/\n  local/\n"),
+        ("deploy/\r\n  local/\r\n", "deploy/\n  local/\n"),
+        ("deploy/\n  local/\n", "deploy/\r\n  local/\r\n"),
+        ("deploy/\n  local/", "deploy/\n  local/\n"),
+    ],
+)
+def test_line_required_insertions_use_canonical_tree_matching(required: str, content: str) -> None:
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "LINE_PRESENT", "value": required}],
+        source_id="generated-insertion-reconciliation",
+    )
+
+    assert record["predicateResults"][0]["result"] == "MATCH"
+
+
+@pytest.mark.parametrize("content", ["review-aep-pr/deploy/\n", "  deploy/\n"])
+def test_line_required_insertions_reject_embedded_or_indented_substrings(content: str) -> None:
+    record = evaluate_path_predicates(
+        path="README.md", content=content, repository_revision=REVISION,
+        predicates=[{"kind": "LINE_PRESENT", "value": "deploy/"}],
+        source_id="generated-insertion-reconciliation",
+    )
+
+    assert record["predicateResults"][0]["result"] == "NO_MATCH"
+
+
+def test_reconciliation_proves_a_canonical_structural_tree() -> None:
+    content = "# Repository Layout\n\ndeploy/\n  local/\n  self-hosting/\n  validation/\n"
+    target = {
+        "path": "README.md", "content": content,
+        "preimageSha256": sha256(content.encode()).hexdigest(),
+        "repositoryRevision": REVISION, "provenance": {},
+    }
+
+    result = reconcile_dispositions(
+        plan_id="artifact-1", repository_revision=REVISION,
+        original_required_paths=["README.md"], targets=[target],
+        dispositions=[{"path": "README.md", "disposition": "NO_CHANGE"}],
+        postconditions_by_path={
+            "README.md": ({"kind": "TEXT_PRESENT", "value": "deploy/"},)
+        },
+        required_insertions_by_path={
+            "README.md": ("deploy/\n  local/\n  self-hosting/\n  validation/",)
+        },
+        evaluator_ref={"kind": "Evaluation", "name": "reconcile", "version": "1.0.0"},
+    )
+
+    assert result["pathDispositions"][0]["requiredInsertionProof"] == [{
+        "value": "deploy/\n  local/\n  self-hosting/\n  validation/",
+        "result": "MATCH",
+    }]
+
+
 def test_reconciliation_keeps_insertions_inside_the_trusted_region() -> None:
     content = (
         "# Repository Layout\n\n```text\nsrc/\n```\n\n"

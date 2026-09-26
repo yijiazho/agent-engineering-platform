@@ -360,6 +360,22 @@ def test_multiline_added_text_preserves_order_for_required_insertions() -> None:
     assert added["tracked.txt"] == ("first line\nsecond line",)
 
 
+def test_required_block_is_checked_against_changed_hunk_postimage() -> None:
+    from aep.patch_evaluation import _postimage_blocks_by_path
+
+    patch = b"""--- a/README.md
++++ b/README.md
+@@ -1,2 +1,3 @@
+ deploy/
++  local/
+ retained
+"""
+
+    assert _postimage_blocks_by_path(patch) == {
+        "README.md": ("deploy/\n  local/\nretained",)
+    }
+
+
 @pytest.mark.parametrize("required", ["updated\n", "updated\r\n"])
 def test_multiline_insertions_normalize_line_endings_and_final_newline(repository, required) -> None:
     _, result = evaluate(repository, "clean.patch", required_insertions=({"path": "tracked.txt", "value": required},))
@@ -372,6 +388,28 @@ def test_required_insertion_newline_does_not_match_a_prefix() -> None:
     assert _insertion_matches("admin=false\n", "admin=false")
     assert not _insertion_matches("admin=false\n", "admin=falsehood")
     assert not _insertion_matches("admin=false\n", "notadmin=false")
+
+
+@pytest.mark.parametrize(
+    ("required", "block"),
+    [
+        ("deploy/\n  local/\n", "deploy/\n  local/\n"),
+        ("deploy/\r\n  local/\r\n", "deploy/\n  local/\n"),
+        ("deploy/\n  local/\n", "deploy/\r\n  local/\r\n"),
+        ("deploy/\n  local/", "deploy/\n  local/\n"),
+    ],
+)
+def test_required_tree_insertions_share_canonical_line_matching(required: str, block: str) -> None:
+    from aep.patch_evaluation import _insertion_matches
+
+    assert _insertion_matches(required, block)
+
+
+@pytest.mark.parametrize("block", ["review-aep-pr/deploy/\n", "  deploy/\n"])
+def test_required_tree_insertions_do_not_match_embedded_or_indented_text(block: str) -> None:
+    from aep.patch_evaluation import _insertion_matches
+
+    assert not _insertion_matches("deploy/", block)
 
 
 def test_multiline_added_blocks_do_not_cross_hunk_boundaries() -> None:

@@ -125,6 +125,60 @@ postcondition and does not introduce an unauthorized mutation. A
 schema-valid-but-unsatisfied candidate is a rejected proposal with evaluation
 evidence, not a configuration failure of the immutable Resource graph.
 
+## Structural Insertion Boundary Discovery
+
+After the aggregate postimage and criterion-scoped planning work was
+implemented, controlled GitHub issue #105 reached Patch Evaluation in
+`issue-to-pr:1.33.0`. WorkflowExecution
+`workflowexecution-c7355345-8391-55bc-ad19-d5f5528d0117`, at repository
+revision `e90003ee836fce1de580944441446b881a8ac44c`, completed AnalyzeIssue
+and BuildImplementationPlan. GeneratePatch TaskExecution
+`taskexecution-de5c899d-d359-5017-9679-8d497dc13602` applied a single
+localized README operation and correctly passed plan reconciliation, but Patch
+Evaluation rejected the retained PATCH artifact with four
+`REQUIRED_INSERTION_MISSING` errors.
+
+The authoritative patch body is decisive evidence:
+
+```diff
+-  review-aep-pr/
++  review-aep-pr/deploy/
++  local/
++  self-hosting/
++  validation/
+```
+
+The model selected `after` placement for the anchor `  review-aep-pr/`, but
+neither the anchor nor the proposed content supplied the line separator at the
+splice. The localized applier therefore performed the permitted byte-level
+operation at the anchor's end and produced `review-aep-pr/deploy/`, not a new
+top-level `deploy/` entry. It also preserved the model's two-space
+indentation for the intended subdirectories.
+
+The plan represented the required tree as four bare literals: `deploy/`,
+`local/`, `self-hosting/`, and `validation/`. Plan reconciliation used
+region-scoped `TEXT_PRESENT` substring checks and therefore considered the
+malformed postimage sufficient. Patch Evaluation correctly uses logical-line
+boundaries when matching added text (the boundary check was strengthened by
+commit `a59170a`, `Require insertion line boundaries`), so it rejected the
+embedded `deploy/` token and the indented subdirectory tokens as non-exact
+insertions. This is an evaluator disagreement caused by incompatible
+representations, not an unavailable README target, stale preimage, invalid
+region, path-boundary violation, or `git diff --check` failure.
+
+The corrected contract must make structural insertion intent explicit and use
+one canonical comparison in deterministic application, plan reconciliation,
+and Patch Evaluation. A tree addition must preserve its newline and
+indentation semantics as an exact multiline block (or as individually exact,
+line-qualified literals). Localized insertion validation must reject a splice
+that turns a line-oriented required insertion into a token appended to an
+anchor line. It must not paper over the defect by weakening Patch Evaluation's
+line-boundary matcher or accepting substrings as required insertions.
+
+Preserve WorkflowExecution `workflowexecution-c7355345-8391-55bc-ad19-d5f5528d0117`
+and all linked artifacts and EvaluationResults as immutable historical
+diagnostic evidence. Do not replay or rewrite it.
+
 ## Reproduction
 
 Create credential-free regressions derived from issue #88:
@@ -150,6 +204,15 @@ Create credential-free regressions derived from issue #88:
    intended final layout.
 9. Demonstrate the corrected postimage-based representation, application,
    evaluation, rejected-artifact retention, and terminal explanation.
+10. For a line-oriented README layout, return an `after` insertion whose anchor
+    omits its terminal newline and whose content begins with `deploy/`. Prove
+    that deterministic localized-operation validation rejects the same-line
+    splice before it becomes a patch artifact.
+11. Represent the requested `deploy/` subtree as one exact multiline
+    canonical insertion, including its indentation. Verify that application,
+    reconciliation, and Patch Evaluation agree for LF, CRLF, final-newline,
+    and no-final-newline forms; a bare substring inside an existing line or
+    inside an indented line must not satisfy a line-qualified requirement.
 
 Add adjacent cases for a legitimate explicit rewrite, a small replacement, an
 anchor mismatch, ambiguous anchors, stale preimage evidence, overlapping edits,
@@ -185,6 +248,13 @@ deterministic patch disposition model that:
   content, reconciliation evidence, unified-diff added blocks, LF, CRLF, a
   final newline, and no-final-newline cases without weakening exact content
   requirements;
+* represents line-oriented required insertions with their required newline and
+  indentation structure, and applies one line-boundary-aware matching contract
+  to proposed postimages, reconciliation evidence, and unified-diff additions;
+* validates `before` and `after` localized insertion splice boundaries against
+  the target's line structure, rejecting a candidate that concatenates a
+  line-oriented required insertion onto an anchor line unless the plan
+  explicitly authorizes an inline insertion;
 * verifies each literal required insertion and other deterministic acceptance
   criterion against the aggregate applied postimage in its authorized region;
   permits one or more safe localized operations to jointly satisfy multiple
@@ -219,8 +289,8 @@ deterministic patch disposition model that:
 Do not implement this task by increasing the destructive-rewrite threshold,
 silently ignoring unsupported criteria, assuming a schema-valid model response
 preserved unrelated content, reintroducing a one-operation-per-required-value
-or exact-operation-content rule, or pushing a rejected patch solely so a human
-can inspect it.
+or exact-operation-content rule, weakening line-boundary checks to accept a
+substring, or pushing a rejected patch solely so a human can inspect it.
 
 ## Dependencies
 
@@ -278,6 +348,18 @@ can inspect it.
   reconciliation and Patch Evaluation for LF, CRLF, final-newline, and
   no-final-newline variants. The issue #88 insertion is not falsely reported
   missing.
+* The issue #105 regression rejects `after` insertion of `deploy/` immediately
+  after the anchor `  review-aep-pr/` when neither side supplies the necessary
+  newline. It does not publish a malformed `review-aep-pr/deploy/` patch only
+  for a later evaluator to discover.
+* A valid README tree insertion uses an exact canonical block of `deploy/` and
+  its indented `local/`, `self-hosting/`, and `validation/` lines. Deterministic
+  application, plan reconciliation, and Patch Evaluation all accept it;
+  `deploy/` appended to another line and an unindented literal matched inside
+  `  local/` do not satisfy that structural requirement.
+* The line-boundary correction preserves aggregate postimage authorization:
+  one safe multiline operation may satisfy the complete canonical tree block
+  without reintroducing operation-count or model-content partitioning rules.
 * Preservation, path-boundary, requested-scope, and configured validation
   criteria are assigned to deterministic evaluators and do not enter the plan
   as generic unsupported criteria when the platform has an owning check.
@@ -313,6 +395,8 @@ can inspect it.
   remains immutable diagnostic evidence. A later controlled issue, rather than
   replaying that execution, verifies the corrected contract through
   GeneratePatch and then RunValidation.
+* WorkflowExecution `workflowexecution-c7355345-8391-55bc-ad19-d5f5528d0117`
+  remains immutable diagnostic evidence and is not replayed or rewritten.
 * `README.md`, relevant ADRs and architecture documents, Resource authoring,
   evaluation and policy guidance, schemas, fixtures, the self-hosting runbook,
   this task, and `docs/execution-plan.md` describe the same localized patch and

@@ -639,6 +639,12 @@ artifacts, and explicit pass, review-required, or reject dispositions. Accidenta
 unrelated deletion remains fail-closed; an explicitly authorized risky rewrite
 may proceed only through artifact-bound human approval.
 
+Structural insertions use the same canonical logical-line comparison during
+application, reconciliation, and patch evaluation. Newline transport variants
+are accepted, while indentation and line boundaries remain exact; a multiline
+insert that would concatenate onto an anchor line is rejected before a patch is
+created.
+
 AEP-067 extends that contract: localized-edit authority is derived server-side
 from immutable planning evidence. Model region labels are not authorization;
 the persisted operation evidence records the trusted selector, selection, and
