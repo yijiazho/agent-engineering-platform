@@ -862,10 +862,10 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `analyze-issue:1.11.0` derives bounded exact or prefix document predicates and
+* `analyze-issue:1.12.0` derives bounded exact or prefix document predicates and
   separate typed evaluatorRequirements from the request; evaluator ownership
   and stable criterion IDs are persisted without granting mutation authority;
-  `build-implementation-plan:1.15.0` uses those declarations
+  `build-implementation-plan:1.16.0` uses those declarations
   to create trusted `planning-evidence` records
 
 The planning Task owns trusted limits of 256 KiB per file, 1 MiB in aggregate,
@@ -877,7 +877,7 @@ updating the Workflow, never by rewriting historical analysis evidence.
   and selection ID; an unsupported semantic criterion on the same path does
   not invalidate a separately supported insertion criterion;
   full file bodies are intentionally absent.
-* `generate-patch:1.16.0` uses `code-generator:1.15.0` and requires one exact
+* `generate-patch:1.17.0` uses `code-generator:1.15.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
   reconciliation and patch EvaluationResults for original/effective sets.

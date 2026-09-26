@@ -3,14 +3,14 @@
     "kind":  "Agent",
     "metadata":  {
                      "name":  "issue-analyzer",
-                     "version":  "1.9.0"
+                     "version":  "1.10.0"
                  },
     "spec":  {
                  "role":  "Issue Analyzer",
                  "promptRef":  {
                                    "kind":  "Prompt",
                                    "name":  "issue-analysis",
-                                   "version":  "1.7.0"
+                                   "version":  "1.8.0"
                                },
                  "modelRef":  {
                                   "kind":  "Model",

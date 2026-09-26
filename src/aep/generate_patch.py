@@ -1547,7 +1547,7 @@ def _verify_no_change_targets(
                 path=path,
                 content=content,
                 repository_revision=str(target.get("repositoryRevision", "")),
-                predicates=[{"kind": "TEXT_PRESENT", "value": value}
+                predicates=[{"kind": "LINE_PRESENT", "value": value}
                             for value in criteria],
                 source_id="editable-target-no-change",
                 region=(regions_by_path or {}).get(path),

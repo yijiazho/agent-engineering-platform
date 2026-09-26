@@ -768,7 +768,12 @@ remain bound to every criterion they support, are deduplicated in the canonical
 collection, and are owned deterministically by lexical criterion order, while
 unsupported criteria bind none. Reconciliation and planning-time no-change
 proofs require a distinct non-overlapping occurrence for every canonical value,
-so a longer insertion cannot prove a shorter overlapping insertion. The
+using the same logical-line boundary matcher as Patch Evaluation. Newline style
+and a terminal newline are normalized transport details; indentation and line
+boundaries are not. Thus a structural tree is represented either as one exact
+multiline block or as exact line-qualified values, and an embedded token or an
+unindented token inside an indented line cannot satisfy it. A longer insertion
+cannot prove a shorter overlapping insertion. The
 evaluated issue analysis records stable criterion IDs and the independent
 expected set for every criterion in `acceptanceCriterionInsertions`; each
 planner classification carries the same `criterionId` alongside descriptive

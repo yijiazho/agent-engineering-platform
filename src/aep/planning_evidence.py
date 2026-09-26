@@ -331,7 +331,7 @@ def evaluate_path_predicates(
             actual, line = fields[0]
             satisfied = actual == expected
             selected = {"kind": "STRUCTURED_FIELD", "field": "Status", "line": line}
-        elif kind in {"TEXT_PRESENT", "TEXT_ABSENT"}:
+        elif kind in {"TEXT_PRESENT", "TEXT_ABSENT", "LINE_PRESENT", "LINE_ABSENT"}:
             if not isinstance(expected, str) or not expected:
                 raise PlanningEvidenceError("text predicates require a non-empty value")
             # The same logical multiline insertion can be represented by a
@@ -340,16 +340,20 @@ def evaluate_path_predicates(
             # transport boundary consistently with Patch Evaluation.
             expected_text = _canonical_insertion(expected)
             scoped_text = _canonical_insertion(scoped_content)
-            positions = _logical_text_positions(scoped_text, expected_text)
+            positions = (
+                _logical_line_positions(scoped_text, expected_text)
+                if kind in {"LINE_PRESENT", "LINE_ABSENT"}
+                else _logical_text_positions(scoped_text, expected_text)
+            )
             actual = bool(positions)
-            satisfied = actual if kind == "TEXT_PRESENT" else not actual
+            satisfied = actual if kind in {"TEXT_PRESENT", "LINE_PRESENT"} else not actual
             selected = {"kind": "TEXT_MATCH", "occurrences": len(positions)}
         else:
             results.append({"predicate": dict(predicate), "result": "UNSUPPORTED", "selectedEvidence": None})
             continue
         result_index = len(results)
         results.append({"predicate": dict(predicate), "result": "MATCH" if satisfied else "NO_MATCH", "selectedEvidence": selected})
-        if distinct_text_matches and kind == "TEXT_PRESENT":
+        if distinct_text_matches and kind in {"TEXT_PRESENT", "LINE_PRESENT"}:
             distinct_candidates.append((result_index, expected_text, positions))
     if distinct_candidates:
         selected_positions = _independent_text_positions(distinct_candidates)
@@ -417,6 +421,31 @@ def _logical_text_positions(content: str, expected: str) -> list[int]:
         if positions:
             return positions
     return positions
+
+
+def _logical_line_positions(content: str, expected: str) -> list[int]:
+    """Match a canonical logical line/block, tolerating only final newline transport."""
+    candidates = (expected, expected[:-1]) if expected.endswith("\n") else (expected,)
+    positions: list[int] = []
+    for candidate in candidates:
+        start = content.find(candidate)
+        while start >= 0:
+            end = start + len(candidate)
+            if (start == 0 or content[start - 1] == "\n") and (
+                candidate.endswith("\n") or end == len(content) or content[end] == "\n"
+            ):
+                positions.append(start)
+            start = content.find(candidate, start + 1)
+        if positions:
+            return positions
+    return positions
+
+
+def canonical_line_match(required: str, content: str) -> bool:
+    """Compare one structural insertion with transport newline normalization."""
+    return bool(_logical_line_positions(
+        _canonical_insertion(content), _canonical_insertion(required)
+    ))
 
 
 def _independent_text_positions(
@@ -699,7 +728,7 @@ def reconcile_dispositions(
             if len(scopes) == 1 and scopes[0].get("selectionId") is None:
                 insertion_record = evaluate_path_predicates(
                     path=path, content=output, repository_revision=repository_revision,
-                    predicates=[{"kind": "TEXT_PRESENT", "value": value} for value in insertion_values],
+                    predicates=[{"kind": "LINE_PRESENT", "value": value} for value in insertion_values],
                     source_id="generated-insertion-reconciliation", region=scopes[0].get("region"),
                     max_bytes=max_bytes, distinct_text_matches=True,
                 )
@@ -715,7 +744,7 @@ def reconcile_dispositions(
                             continue
                         result = evaluate_path_predicates(
                             path=path, content=output, repository_revision=repository_revision,
-                            predicates=[{"kind": "TEXT_PRESENT", "value": value}],
+                            predicates=[{"kind": "LINE_PRESENT", "value": value}],
                             source_id="generated-insertion-reconciliation",
                             region=scope.get("region"), max_bytes=max_bytes,
                         )
