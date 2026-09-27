@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import errno
 
 import pytest
 
@@ -7,6 +8,7 @@ from aep.runtime_store import (
     ImmutableRuntimeObjectError,
     InMemoryRuntimeObjectStore,
     RuntimeObjectAlreadyExistsError,
+    RuntimeStoreError,
     StatusConflictError,
 )
 
@@ -290,3 +292,52 @@ def test_durable_json_store_restores_objects_claims_and_indexes(tmp_path) -> Non
     )
     assert accepted is False
     assert prior["id"] == "event-durable"
+
+
+def test_durable_json_store_persists_events_and_uses_collision_safe_checkpoint_names(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(runtime_object("taskexecution-event"), deterministic_key="task")
+    store.append_event({
+        "kind": "ExecutionEvent", "id": "executionevent-event",
+        "provenance": {"workflowExecutionId": WORKFLOW_ID}, "sequence": 1,
+    })
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    assert restarted.get("executionevent-event") is not None
+    assert not (path.parent / "objects.json.tmp").exists()
+
+
+def test_durable_checkpoint_failure_has_safe_phase_diagnostic_and_cause(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    def fail_replace(source, target):
+        error = OSError(errno.EACCES, "sensitive host path should not leak")
+        raise error
+
+    monkeypatch.setattr("aep.runtime_store.os.replace", fail_replace)
+    with pytest.raises(RuntimeStoreError) as raised:
+        store.create(runtime_object("taskexecution-failure"), deterministic_key="task")
+
+    assert raised.value.diagnostic == {
+        "operation": "checkpoint", "phase": "replace",
+        "category": "permission_denied", "errno": errno.EACCES,
+    }
+    assert "sensitive" not in str(raised.value)
+    assert raised.value.__cause__ is not None
+
+
+def test_independent_durable_stores_refresh_under_writer_fence_without_lost_claims(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    first = DurableJsonRuntimeObjectStore(path)
+    second = DurableJsonRuntimeObjectStore(path)
+    first.create(runtime_object("taskexecution-one"), deterministic_key="task-one")
+    second.create(runtime_object("taskexecution-two"), deterministic_key="task-two")
+    accepted, prior = first.claim("delivery", {"id": "first"})
+    duplicate, same = second.claim("delivery", {"id": "second"})
+
+    assert accepted is True
+    assert duplicate is False
+    assert prior == same == {"id": "first"}
+    assert first.get("taskexecution-one") is not None
+    assert first.get("taskexecution-two") is not None

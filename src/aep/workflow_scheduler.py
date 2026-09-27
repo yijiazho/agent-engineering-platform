@@ -21,7 +21,7 @@ from aep.workflow_execution import _runtime_validator
 _FAILURE_DETAIL_FIELDS = frozenset({
     "reason", "path", "declaredMaxBytesHint", "blobSize",
     "appliedTrustedCeiling", "predicateType", "inspectionStrategy",
-    "evaluationComplete",
+    "evaluationComplete", "operation", "phase", "category", "errno",
 })
 
 
@@ -29,7 +29,7 @@ def _validate_failure_details(details: Mapping[str, Any]) -> None:
     unexpected = set(details) - _FAILURE_DETAIL_FIELDS
     if unexpected:
         raise ValueError("failure details contain unapproved fields")
-    for field in ("reason", "path", "predicateType", "inspectionStrategy"):
+    for field in ("reason", "path", "predicateType", "inspectionStrategy", "operation", "phase", "category"):
         value = details.get(field)
         if value is not None and (
             not isinstance(value, str) or not value or len(value) > 4096
@@ -45,6 +45,21 @@ def _validate_failure_details(details: Mapping[str, Any]) -> None:
         details["evaluationComplete"], bool
     ):
         raise ValueError("failure details evaluationComplete must be boolean")
+
+
+def _safe_persistence_details(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Allow only bounded store diagnostics into runtime failure evidence."""
+    if not isinstance(value, Mapping):
+        return {"operation": "append_execution_event", "phase": "unknown", "category": "store_error"}
+    result = {
+        key: value[key]
+        for key in ("operation", "phase", "category", "errno")
+        if key in value and (key != "errno" or isinstance(value[key], int) or value[key] is None)
+    }
+    result.setdefault("operation", "append_execution_event")
+    result.setdefault("phase", "unknown")
+    result.setdefault("category", "store_error")
+    return result
 
 
 class InvalidSchedulerInputError(ValueError):
@@ -223,31 +238,32 @@ class WorkflowScheduler:
 
         for attempt in scheduled:
             try:
-                running = self._lifecycle.start(
-                    str(attempt["id"]), timestamp=timestamp
+                running = self._transition_and_emit(
+                    attempt, TaskStatus.RUNNING,
+                    event_type="TaskExecutionStarted", timestamp=timestamp,
+                    changes={"startedAt": timestamp},
                 )
             except (InvalidTaskTransitionError, StatusConflictError):
                 # Another reconciler acquired this PENDING attempt atomically.
                 continue
-            except Exception:
+            except Exception as error:
                 # Without owner-token evidence, an ambiguous RUNNING record may
                 # belong to another live reconciler and must not be reclaimed.
+                if getattr(error, "diagnostic", None):
+                    raise
                 continue
-            try:
-                self._emit(
-                    running,
-                    "TaskExecutionStarted",
-                    sequence=2,
-                    timestamp=timestamp,
-                )
-            except Exception as error:
-                self._fail_running(
-                    running,
-                    FailureClass.RECOVERABLE,
-                    f"could not record TaskExecutionStarted: {type(error).__name__}",
-                    timestamp,
-                )
-                raise
+            if not getattr(self._store, "supports_atomic_task_transitions", False):
+                try:
+                    self._emit(running, "TaskExecutionStarted", sequence=2, timestamp=timestamp)
+                except Exception as error:
+                    diagnostic = getattr(error, "diagnostic", {})
+                    self._fail_running(
+                        running, FailureClass.RECOVERABLE,
+                        "ExecutionEvent persistence failure",
+                        timestamp,
+                        details=_safe_persistence_details(diagnostic),
+                    )
+                    raise
             node = plan.get_node(_ref_from_record(running["taskRef"]))
             if node is None:  # Plan validation above makes this defensive only.
                 raise InvalidSchedulerInputError("TaskExecution is not present in plan")
@@ -262,19 +278,47 @@ class WorkflowScheduler:
                     f"Task executor failed: {type(error).__name__}",
                 )
             if result.succeeded:
-                terminal = self._complete_success(running, timestamp)
+                terminal_changes: dict[str, Any] = {}
                 event_type = "TaskExecutionSucceeded"
             else:
-                terminal = self._fail_running(
+                failure: dict[str, Any] = {
+                    "class": result.failure_class.value,  # type: ignore[union-attr]
+                    "message": result.message or "Task execution failed",
+                    "retryable": result.failure_class is FailureClass.RECOVERABLE,
+                }
+                if result.retry_not_before is not None:
+                    failure["retryNotBefore"] = result.retry_not_before
+                if result.details is not None:
+                    failure["details"] = dict(result.details)
+                terminal_changes = {"failure": failure}
+                event_type = "TaskExecutionFailed"
+            if getattr(self._store, "supports_atomic_task_transitions", False):
+                self._store.update_status(
+                    str(running["id"]), "RUNNING", expected_status="RUNNING",
+                    updated_at=timestamp,
+                    changes={
+                        "terminalEvidence": {
+                            "status": "SUCCEEDED" if result.succeeded else "FAILED",
+                            **terminal_changes,
+                        }
+                    },
+                )
+                terminal = self._transition_and_emit(
                     running,
-                    result.failure_class,  # type: ignore[arg-type]
-                    result.message or "Task execution failed",
-                    timestamp,
-                    retry_not_before=result.retry_not_before,
+                    TaskStatus.SUCCEEDED if result.succeeded else TaskStatus.FAILED,
+                    event_type=event_type, timestamp=timestamp,
+                    changes=terminal_changes,
+                )
+            elif result.succeeded:
+                terminal = self._complete_success(running, timestamp)
+                self._emit(terminal, event_type, sequence=3, timestamp=timestamp)
+            else:
+                terminal = self._fail_running(
+                    running, result.failure_class, result.message or "Task execution failed",
+                    timestamp, retry_not_before=result.retry_not_before,
                     details=result.details,
                 )
-                event_type = "TaskExecutionFailed"
-            self._emit(terminal, event_type, sequence=3, timestamp=timestamp)
+                self._emit(terminal, event_type, sequence=3, timestamp=timestamp)
 
         persisted = tuple(
             self._store.get(str(attempt["id"])) for attempt in scheduled
@@ -363,6 +407,18 @@ class WorkflowScheduler:
         sequence: int,
         timestamp: str,
     ) -> RuntimeObject:
+        event = self._event_record(task_execution, event_type, sequence=sequence, timestamp=timestamp)
+        _validate_runtime_record(event, "executionevent.schema.json")
+        return self._store.append_event(event)
+
+    def _event_record(
+        self,
+        task_execution: RuntimeObject,
+        event_type: str,
+        *,
+        sequence: int,
+        timestamp: str,
+    ) -> dict[str, Any]:
         task_execution_id = str(task_execution["id"])
         event_id = _event_id(task_execution_id, event_type)
         event = {
@@ -396,8 +452,56 @@ class WorkflowScheduler:
         if event_type == "TaskExecutionFailed" and isinstance(failure, Mapping):
             event["payload"]["failureClass"] = failure["class"]
             event["payload"]["retryable"] = failure.get("retryable", False)
+        return event
+
+    def _transition_and_emit(
+        self,
+        task_execution: RuntimeObject,
+        status: TaskStatus,
+        *,
+        event_type: str,
+        timestamp: str,
+        changes: Mapping[str, Any] | None = None,
+    ) -> RuntimeObject:
+        """Commit a lifecycle transition and its audit event in one checkpoint."""
+        if not getattr(self._store, "supports_atomic_task_transitions", False):
+            if status is TaskStatus.RUNNING:
+                updated = self._lifecycle.start(str(task_execution["id"]), timestamp=timestamp)
+                return updated
+            if status is TaskStatus.SUCCEEDED:
+                updated = self._complete_success(task_execution, timestamp)
+            else:
+                failure = (changes or {}).get("failure", {})
+                updated = self._fail_running(
+                    task_execution,
+                    FailureClass(str(failure.get("class", FailureClass.RECOVERABLE.value))),
+                    str(failure.get("message", "Task execution failed")), timestamp,
+                    retry_not_before=failure.get("retryNotBefore"),
+                    details=failure.get("details"),
+                )
+            self._emit(updated, event_type, sequence=3, timestamp=timestamp)
+            return updated
+
+        preview = dict(task_execution)
+        preview.update(dict(changes or {}))
+        preview["status"] = status.value
+        preview["updatedAt"] = timestamp
+        if status is TaskStatus.RUNNING:
+            preview.setdefault("startedAt", timestamp)
+        if status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED}:
+            preview.setdefault("completedAt", timestamp)
+        event = self._event_record(
+            preview, event_type,
+            sequence=2 if status is TaskStatus.RUNNING else 3,
+            timestamp=timestamp,
+        )
         _validate_runtime_record(event, "executionevent.schema.json")
-        return self._store.append_event(event)
+        return self._store.commit_task_execution_transition(
+            str(task_execution["id"]), status.value,
+            workflow_execution_id=str(task_execution["workflowExecutionId"]),
+            event=event, expected_status=str(task_execution["status"]),
+            updated_at=timestamp, changes=changes,
+        )
 
     def _repair_attempt_evidence(self, workflow_id: str, timestamp: str) -> None:
         records = self._store.list_by_workflow_execution(workflow_id)
@@ -417,6 +521,17 @@ class WorkflowScheduler:
                     sequence=2,
                     timestamp=timestamp,
                 )
+            evidence = attempt.get("terminalEvidence")
+            if attempt.get("status") == TaskStatus.RUNNING.value and isinstance(evidence, Mapping):
+                terminal_status = evidence.get("status")
+                if terminal_status in {TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value}:
+                    changes = {key: value for key, value in evidence.items() if key != "status"}
+                    repaired = self._store.update_status(
+                        str(attempt["id"]), terminal_status,
+                        expected_status=TaskStatus.RUNNING.value,
+                        updated_at=timestamp, changes=changes,
+                    )
+                    attempt = repaired
             status = attempt.get("status")
             event_type = {
                 TaskStatus.SUCCEEDED.value: "TaskExecutionSucceeded",

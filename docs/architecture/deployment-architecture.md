@@ -636,12 +636,14 @@ durable host directory, and injects provider credentials through service-scoped
 secret files. Its public Event Controller sits behind trusted HTTPS ingress;
 all other service ports bind to loopback.
 
-The dogfood Workflow Runtime is the single MVP reconciliation consumer. It
+The dogfood Workflow Runtime is the single MVP reconciliation consumer, and
+the JSON runtime store is configured as a fenced single-writer backend. It
 polls the transactional webhook outbox, resolves the bound default branch
 through the GitHub App, creates the deterministic WorkflowExecution, provisions
 the revision-bound checkout, scans repository knowledge, and composes the
 scheduler with all six existing production handlers. Runtime objects are
-atomically checkpointed to durable JSON and GeneratedArtifact bodies use a
+atomically checkpointed to durable JSON with collision-safe temporary files and
+GeneratedArtifact bodies use a
 filesystem content-addressed store. A row becomes completed only after the
 WorkflowExecution has terminal evidence; safe configuration failures are
 persisted separately. Logical Agent, Context, Tool, and Evaluation boundaries

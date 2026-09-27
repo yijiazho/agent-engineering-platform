@@ -105,7 +105,11 @@
             "appliedTrustedCeiling": {"type": ["integer", "null"], "minimum": 0},
             "predicateType": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096},
             "inspectionStrategy": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096},
-            "evaluationComplete": {"type": "boolean"}
+            "evaluationComplete": {"type": "boolean"},
+            "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+            "phase": {"type": "string", "minLength": 1, "maxLength": 128},
+            "category": {"type": "string", "minLength": 1, "maxLength": 128},
+            "errno": {"type": ["integer", "null"], "minimum": 0}
           }
         }
       }
@@ -247,7 +251,16 @@
             "policyDecisionIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
             "startedAt": { "$ref": "#/$defs/timestamp" },
             "completedAt": { "$ref": "#/$defs/timestamp" },
-            "failure": { "$ref": "#/$defs/failure" }
+            "failure": { "$ref": "#/$defs/failure" },
+            "terminalEvidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["SUCCEEDED", "FAILED"] },
+                "failure": { "$ref": "#/$defs/failure" }
+              }
+            }
           },
           "additionalProperties": true
         }

@@ -6,7 +6,7 @@ from threading import Event
 import pytest
 
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import DurableJsonRuntimeObjectStore, InMemoryRuntimeObjectStore
 from aep.task_dag import resolve_task_dag
 from aep.task_dag import TaskDagPlan
 from aep.task_execution import FailureClass
@@ -246,6 +246,27 @@ def test_events_cover_queued_started_succeeded_and_failed_states() -> None:
         task_validator.validate(dict(task))
     for event in events:
         event_validator.validate(dict(event))
+
+
+def test_durable_scheduler_commits_one_start_event_and_restart_does_not_dispatch_again(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    executor = FakeExecutor()
+    first = scheduler(store, executor).reconcile(plan, execution)
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    second_executor = FakeExecutor()
+    repeated = scheduler(restarted, second_executor).reconcile(plan, execution)
+
+    assert first.task_executions[0]["status"] == "SUCCEEDED"
+    assert repeated.task_executions == ()
+    assert executor.calls == [("analyze", 1)]
+    assert second_executor.calls == []
+    assert [event["eventType"] for event in execution_events(restarted)].count(
+        "TaskExecutionStarted"
+    ) == 1
 
 
 def test_concurrent_reconcilers_execute_attempt_once_and_link_it_once() -> None:

@@ -665,6 +665,13 @@ App, provisions the execution checkout, and invokes the six handlers through
 the deterministic scheduler. Runtime checkpoints are stored under
 `runtime/objects.json`; GeneratedArtifact bodies, Docker logs, and redacted Git
 logs are stored under their respective content-addressed state directories.
+The runtime store also maintains a sibling writer-fence file and uses unique
+temporary checkpoint names; do not bind the same state directory to a second
+active runtime writer. A forced checkpoint failure is safe to inspect through
+the persisted operation phase, sanitized OS category, and optional errno, but
+never through raw paths or exception text. A restart repairs missing lifecycle
+events before dispatch and does not replay a task whose terminal-return marker
+is already durable.
 The shared image keeps `/opt/aep/src` on `PYTHONPATH` so runtime validators load
 the schemas copied to `/opt/aep/schemas`; removing that image binding causes
 reconciliation to fail before the first WorkflowExecution checkpoint.

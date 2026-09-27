@@ -40,3 +40,12 @@ Workflow schedulers can atomically and idempotently attach a persisted
 TaskExecution identifier to its owning WorkflowExecution. The store verifies
 both objects and their ownership relationship, preventing concurrent
 reconcilers from losing or duplicating `taskExecutionIds` membership.
+
+The durable implementation extends this contract with a cross-process writer
+fence and `commit_task_execution_transition`, which checkpoints a TaskExecution
+status change, WorkflowExecution attachment, and its ExecutionEvent together.
+Its JSON adapter refreshes state while holding the fence, writes a uniquely
+named sibling checkpoint, flushes and syncs it, replaces the configured file,
+and syncs the directory where supported. Failures expose only bounded
+operation/phase/category/errno diagnostics; the original OS exception remains
+an internal cause.

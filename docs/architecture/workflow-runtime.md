@@ -128,6 +128,16 @@ successful prerequisites and schedules the next wave; configuration,
 evaluation, policy, permanent, and exhausted recoverable failures leave
 dependents blocked.
 
+The durable JSON runtime store uses a cross-process single-writer fence rather
+than a process-local lock. Each checkpoint uses a collision-safe sibling
+temporary file, file and directory sync where supported, and an atomic replace.
+For durable stores, the TaskExecution lifecycle transition, owning workflow
+attachment, and required audit event share one checkpoint. A start checkpoint
+failure therefore cannot dispatch the handler; a terminal-return marker lets
+restart repair terminal evidence without replaying a completed side effect.
+Persistence failures retain only bounded phase/category/errno diagnostics in
+runtime evidence and never expose host paths, secrets, or exception bodies.
+
 The scheduler loads the authoritative WorkflowExecution from runtime storage,
 verifies immutable caller evidence against it, and validates all
 WorkflowExecution, TaskExecution, and ExecutionEvent records against their
