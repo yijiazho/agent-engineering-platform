@@ -136,7 +136,12 @@ attachment, and required audit event share one checkpoint. A start checkpoint
 failure therefore cannot dispatch the handler; a terminal-return marker lets
 restart repair terminal evidence without replaying a completed side effect.
 Persistence failures retain only bounded phase/category/errno diagnostics in
-runtime evidence and never expose host paths, secrets, or exception bodies.
+runtime evidence and never expose host paths, secrets, or exception bodies,
+including through chained exceptions in polling logs. Checkpoints persist
+explicit object creation order so refreshed workflow and task indexes remain
+deterministic even though JSON object keys are sorted on disk. Windows byte-lock
+conflicts are reported as busy contention while lock-file open failures retain
+their underlying permission category.
 The scheduler performs one bounded recovery checkpoint for a diagnosed start
 or terminal-marker interruption. A pre-replace start retry commits the original
 logical start and its diagnostic together; a post-replace sync interruption is

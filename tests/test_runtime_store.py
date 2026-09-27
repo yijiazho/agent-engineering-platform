@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import errno
 from pathlib import Path
+import traceback
 
 import pytest
 
@@ -311,7 +312,9 @@ def test_durable_json_store_persists_events_and_uses_collision_safe_checkpoint_n
     assert not (path.parent / "objects.json.tmp").exists()
 
 
-def test_durable_checkpoint_failure_has_safe_phase_diagnostic_and_cause(tmp_path, monkeypatch) -> None:
+def test_durable_checkpoint_failure_has_safe_diagnostic_without_raw_chain(
+    tmp_path, monkeypatch
+) -> None:
     path = tmp_path / "runtime/objects.json"
     store = DurableJsonRuntimeObjectStore(path)
     def fail_replace(source, target):
@@ -327,7 +330,8 @@ def test_durable_checkpoint_failure_has_safe_phase_diagnostic_and_cause(tmp_path
         "category": "permission_denied", "errno": errno.EACCES,
     }
     assert "sensitive" not in str(raised.value)
-    assert raised.value.__cause__ is not None
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
 
 
 def test_independent_durable_stores_refresh_under_writer_fence_without_lost_claims(tmp_path) -> None:
@@ -346,6 +350,22 @@ def test_independent_durable_stores_refresh_under_writer_fence_without_lost_clai
     assert first.get("taskexecution-two") is not None
 
 
+def test_durable_refresh_preserves_creation_order_in_indexes(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(runtime_object("taskexecution-z"), deterministic_key="task-z")
+    store.create(runtime_object("taskexecution-a"), deterministic_key="task-a")
+
+    assert [
+        value["id"] for value in store.list_by_workflow_execution(WORKFLOW_ID)
+    ] == ["taskexecution-z", "taskexecution-a"]
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    assert [
+        value["id"] for value in restarted.list_by_workflow_execution(WORKFLOW_ID)
+    ] == ["taskexecution-z", "taskexecution-a"]
+
+
 def test_writer_fence_file_does_not_grow_on_repeated_operations(tmp_path) -> None:
     path = tmp_path / "runtime/objects.json"
     store = DurableJsonRuntimeObjectStore(path)
@@ -359,7 +379,7 @@ def test_writer_fence_file_does_not_grow_on_repeated_operations(tmp_path) -> Non
     assert initial_size <= 1
 
 
-def test_restore_os_failure_retains_safe_category_errno_and_cause(
+def test_restore_os_failure_retains_safe_diagnostic_without_raw_chain(
     tmp_path, monkeypatch
 ) -> None:
     path = tmp_path / "runtime/objects.json"
@@ -382,7 +402,20 @@ def test_restore_os_failure_retains_safe_category_errno_and_cause(
         "category": "io_error", "errno": errno.EIO,
     }
     assert "sensitive" not in str(raised.value)
-    assert raised.value.__cause__ is not None
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_windows_writer_lock_conflict_is_classified_as_busy() -> None:
+    diagnostic = runtime_store_module._persistence_diagnostic(
+        "writer_fence", "acquire", OSError(errno.EACCES, "lock conflict"),
+        lock_contention=True,
+    )
+
+    assert diagnostic == {
+        "operation": "writer_fence", "phase": "acquire",
+        "category": "busy", "errno": errno.EACCES,
+    }
 
 
 def test_constructor_removes_only_stale_sibling_checkpoints_under_fence(tmp_path) -> None:

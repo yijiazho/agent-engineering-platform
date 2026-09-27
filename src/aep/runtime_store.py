@@ -449,7 +449,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             raise RuntimeStoreError(
                 "durable runtime checkpoint could not be read",
                 diagnostic=_persistence_diagnostic("restore", "read", error),
-            ) from error
+            ) from None
         try:
             payload = json.loads(encoded)
             objects = payload["objects"]
@@ -459,11 +459,20 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             raise RuntimeStoreError(
                 "durable runtime checkpoint is invalid",
                 diagnostic={"operation": "restore", "phase": "read", "category": "invalid_checkpoint"},
-            ) from error
+            ) from None
         if not all(isinstance(item, dict) for item in (objects, deterministic_keys, claims)):
             raise RuntimeStoreError("durable runtime checkpoint is invalid")
+        object_order = payload.get("objectOrder", list(objects))
+        if (
+            not isinstance(object_order, list)
+            or not all(isinstance(item, str) for item in object_order)
+            or len(object_order) != len(set(object_order))
+            or set(object_order) != set(objects)
+        ):
+            raise RuntimeStoreError("durable runtime checkpoint is invalid")
         self._objects = {
-            str(key): _copy_and_validate(value) for key, value in objects.items()
+            object_id: _copy_and_validate(objects[object_id])
+            for object_id in object_order
         }
         self._deterministic_keys = {
             str(key): str(value) for key, value in deterministic_keys.items()
@@ -479,6 +488,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
     def _checkpoint(self) -> None:
         payload = {
             "objects": self._objects,
+            "objectOrder": list(self._objects),
             "deterministicKeys": self._deterministic_keys,
             "claims": self._claims,
         }
@@ -510,7 +520,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             raise RuntimeStoreError(
                 "durable runtime checkpoint persistence failed",
                 diagnostic=_persistence_diagnostic("checkpoint", phase, error),
-            ) from error
+            ) from None
 
     def _mutate(self, operation: Callable[[], Any]) -> Any:
         with self._lock, self._writer_fence():
@@ -546,16 +556,18 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                     diagnostic=_persistence_diagnostic(
                         "checkpoint_cleanup", "remove", error
                     ),
-                ) from error
+                ) from None
 
     @contextmanager
     def _writer_fence(self):
         handle = None
         descriptor: int | None = None
+        phase = "open"
         try:
             descriptor = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
             handle = os.fdopen(descriptor, "r+b")
             descriptor = None
+            phase = "acquire"
             _lock_file(handle)
         except OSError as error:
             if handle is not None:
@@ -564,8 +576,11 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                 os.close(descriptor)
             raise RuntimeStoreError(
                 "durable runtime writer contention",
-                diagnostic=_persistence_diagnostic("writer_fence", "acquire", error),
-            ) from error
+                diagnostic=_persistence_diagnostic(
+                    "writer_fence", phase, error,
+                    lock_contention=phase == "acquire" and os.name == "nt",
+                ),
+            ) from None
         try:
             yield
         except BaseException:
@@ -578,7 +593,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                 diagnostic=_persistence_diagnostic(
                     "writer_fence", "release", release_error
                 ),
-            ) from release_error
+            ) from None
 
     def _sync_directory(self) -> None:
         if os.name == "nt":
@@ -590,7 +605,13 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             os.close(descriptor)
 
 
-def _persistence_diagnostic(operation: str, phase: str, error: OSError) -> dict[str, Any]:
+def _persistence_diagnostic(
+    operation: str,
+    phase: str,
+    error: OSError,
+    *,
+    lock_contention: bool = False,
+) -> dict[str, Any]:
     """Return bounded diagnostics without serializing host paths or exception text."""
     category_by_errno = {
         errno.EACCES: "permission_denied",
@@ -602,10 +623,15 @@ def _persistence_diagnostic(operation: str, phase: str, error: OSError) -> dict[
         errno.EIO: "io_error",
     }
     number = getattr(error, "errno", None)
+    category = (
+        "busy"
+        if lock_contention and number in {errno.EACCES, errno.EAGAIN}
+        else category_by_errno.get(number, "os_error")
+    )
     return {
         "operation": operation,
         "phase": phase,
-        "category": category_by_errno.get(number, "os_error"),
+        "category": category,
         "errno": number if isinstance(number, int) and number >= 0 else None,
     }
 
