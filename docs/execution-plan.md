@@ -24,8 +24,8 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 45 |
-| In Progress | 15 |
+| Completed | 44 |
+| In Progress | 16 |
 | Not Started | 11 |
 | Blocked | 0 |
 | Total | 71 |
@@ -196,7 +196,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 68 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
 | 69 | [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md) | Not Started |
 | 70 | [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md) | Not Started |
-| 71 | [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md) | Completed |
+| 71 | [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md) | In Progress |
 
 ---
 
@@ -274,7 +274,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | In Progress |
 | AEP-069 | AEP-003, AEP-004, AEP-015, AEP-016, AEP-017, AEP-018, AEP-039, AEP-045, AEP-046, AEP-062 | Not Started |
 | AEP-070 | AEP-016, AEP-017, AEP-029, AEP-045, AEP-053, AEP-054, AEP-069, AEP-046, AEP-062 | Not Started |
-| AEP-071 | AEP-002, AEP-004, AEP-008, AEP-010, AEP-011, AEP-018, AEP-036, AEP-040, AEP-056, AEP-058 | Completed |
+| AEP-071 | AEP-002, AEP-004, AEP-008, AEP-010, AEP-011, AEP-018, AEP-036, AEP-040, AEP-056, AEP-058 | In Progress |
 
 ---
 

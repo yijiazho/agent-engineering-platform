@@ -137,6 +137,12 @@ failure therefore cannot dispatch the handler; a terminal-return marker lets
 restart repair terminal evidence without replaying a completed side effect.
 Persistence failures retain only bounded phase/category/errno diagnostics in
 runtime evidence and never expose host paths, secrets, or exception bodies.
+The scheduler performs one bounded recovery checkpoint for a diagnosed start
+or terminal-marker interruption. A pre-replace start retry commits the original
+logical start and its diagnostic together; a post-replace sync interruption is
+verified against the deterministic start event before dispatch continues.
+Recovered diagnostics are retained on the TaskExecution in an eight-entry
+bounded history.
 
 The scheduler loads the authoritative WorkflowExecution from runtime storage,
 verifies immutable caller evidence against it, and validates all

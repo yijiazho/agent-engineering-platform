@@ -9,7 +9,7 @@ from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid5
 
 from aep.resource_loader import Resource, ResourceRef
-from aep.runtime_store import RuntimeObject, RuntimeObjectStore
+from aep.runtime_store import RuntimeObject, RuntimeObjectStore, RuntimeStoreError
 from aep.runtime_store import StatusConflictError
 from aep.runtime_validation import is_rfc3339_timestamp
 from aep.task_dag import TaskDagPlan, TaskPlanNode
@@ -26,13 +26,21 @@ _FAILURE_DETAIL_FIELDS = frozenset({
 
 
 def _validate_failure_details(details: Mapping[str, Any]) -> None:
+    if len(details) > 8:
+        raise ValueError("failure details must contain at most eight properties")
     unexpected = set(details) - _FAILURE_DETAIL_FIELDS
     if unexpected:
         raise ValueError("failure details contain unapproved fields")
-    for field in ("reason", "path", "predicateType", "inspectionStrategy", "operation", "phase", "category"):
+    for field in ("reason", "path", "predicateType", "inspectionStrategy"):
         value = details.get(field)
         if value is not None and (
             not isinstance(value, str) or not value or len(value) > 4096
+        ):
+            raise ValueError(f"failure details {field} must be bounded text or null")
+    for field in ("operation", "phase", "category"):
+        value = details.get(field)
+        if value is not None and (
+            not isinstance(value, str) or not value or len(value) > 128
         ):
             raise ValueError(f"failure details {field} must be bounded text or null")
     for field in ("declaredMaxBytesHint", "blobSize", "appliedTrustedCeiling"):
@@ -45,21 +53,42 @@ def _validate_failure_details(details: Mapping[str, Any]) -> None:
         details["evaluationComplete"], bool
     ):
         raise ValueError("failure details evaluationComplete must be boolean")
+    if "errno" in details and details["errno"] is not None and (
+        not isinstance(details["errno"], int)
+        or isinstance(details["errno"], bool)
+        or details["errno"] < 0
+    ):
+        raise ValueError("failure details errno must be a non-negative integer or null")
 
 
 def _safe_persistence_details(value: Mapping[str, Any] | None) -> dict[str, Any]:
     """Allow only bounded store diagnostics into runtime failure evidence."""
     if not isinstance(value, Mapping):
         return {"operation": "append_execution_event", "phase": "unknown", "category": "store_error"}
-    result = {
-        key: value[key]
-        for key in ("operation", "phase", "category", "errno")
-        if key in value and (key != "errno" or isinstance(value[key], int) or value[key] is None)
-    }
+    result = {}
+    for key in ("operation", "phase", "category"):
+        candidate = value.get(key)
+        if isinstance(candidate, str) and candidate:
+            result[key] = candidate[:128]
+    candidate_errno = value.get("errno")
+    if (
+        candidate_errno is None
+        or isinstance(candidate_errno, int) and not isinstance(candidate_errno, bool)
+        and candidate_errno >= 0
+    ):
+        result["errno"] = candidate_errno
     result.setdefault("operation", "append_execution_event")
     result.setdefault("phase", "unknown")
     result.setdefault("category", "store_error")
     return result
+
+
+def _append_persistence_diagnostic(
+    runtime_object: Mapping[str, Any], details: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    existing = runtime_object.get("persistenceDiagnostics", ())
+    prior = [dict(item) for item in existing if isinstance(item, Mapping)]
+    return [*prior, dict(details)][-8:]
 
 
 class InvalidSchedulerInputError(ValueError):
@@ -247,11 +276,18 @@ class WorkflowScheduler:
                 # Another reconciler acquired this PENDING attempt atomically.
                 continue
             except Exception as error:
-                # Without owner-token evidence, an ambiguous RUNNING record may
-                # belong to another live reconciler and must not be reclaimed.
-                if getattr(error, "diagnostic", None):
-                    raise
-                continue
+                if (
+                    getattr(self._store, "supports_atomic_task_transitions", False)
+                    and isinstance(error, RuntimeStoreError)
+                    and error.diagnostic
+                ):
+                    running = self._recover_durable_start(
+                        attempt, timestamp, error.diagnostic
+                    )
+                else:
+                    # Without owner-token evidence, an ambiguous RUNNING record
+                    # may belong to another live reconciler and is not reclaimed.
+                    continue
             if not getattr(self._store, "supports_atomic_task_transitions", False):
                 try:
                     self._emit(running, "TaskExecutionStarted", sequence=2, timestamp=timestamp)
@@ -293,15 +329,13 @@ class WorkflowScheduler:
                 terminal_changes = {"failure": failure}
                 event_type = "TaskExecutionFailed"
             if getattr(self._store, "supports_atomic_task_transitions", False):
-                self._store.update_status(
-                    str(running["id"]), "RUNNING", expected_status="RUNNING",
-                    updated_at=timestamp,
-                    changes={
-                        "terminalEvidence": {
-                            "status": "SUCCEEDED" if result.succeeded else "FAILED",
-                            **terminal_changes,
-                        }
+                running = self._persist_terminal_evidence(
+                    running,
+                    {
+                        "status": "SUCCEEDED" if result.succeeded else "FAILED",
+                        **terminal_changes,
                     },
+                    timestamp,
                 )
                 terminal = self._transition_and_emit(
                     running,
@@ -326,6 +360,87 @@ class WorkflowScheduler:
         return SchedulerReconciliation(
             task_executions=tuple(
                 attempt for attempt in persisted if attempt is not None
+            )
+        )
+
+    def _recover_durable_start(
+        self,
+        attempt: RuntimeObject,
+        timestamp: str,
+        diagnostic: Mapping[str, Any],
+    ) -> RuntimeObject:
+        """Recover one diagnosed start checkpoint before task dispatch."""
+        details = _safe_persistence_details(diagnostic)
+        persisted = self._store.get(str(attempt["id"]))
+        if persisted is None:
+            raise RuntimeStoreError(
+                "durable start recovery lost its TaskExecution",
+                diagnostic=details,
+            )
+        diagnostics = _append_persistence_diagnostic(persisted, details)
+        if persisted.get("status") == TaskStatus.PENDING.value:
+            return self._transition_and_emit(
+                persisted, TaskStatus.RUNNING,
+                event_type="TaskExecutionStarted", timestamp=timestamp,
+                changes={
+                    "startedAt": timestamp,
+                    "persistenceDiagnostics": diagnostics,
+                },
+            )
+        if (
+            persisted.get("status") == TaskStatus.RUNNING.value
+            and self._task_event_exists(persisted, "TaskExecutionStarted")
+        ):
+            return self._store.update_status(
+                str(persisted["id"]), TaskStatus.RUNNING.value,
+                expected_status=TaskStatus.RUNNING.value,
+                updated_at=timestamp,
+                changes={"persistenceDiagnostics": diagnostics},
+            )
+        raise RuntimeStoreError(
+            "durable start checkpoint outcome is ambiguous",
+            diagnostic=details,
+        )
+
+    def _persist_terminal_evidence(
+        self,
+        running: RuntimeObject,
+        evidence: Mapping[str, Any],
+        timestamp: str,
+    ) -> RuntimeObject:
+        """Persist post-handler evidence, recovering one transient checkpoint fault."""
+        try:
+            return self._store.update_status(
+                str(running["id"]), TaskStatus.RUNNING.value,
+                expected_status=TaskStatus.RUNNING.value,
+                updated_at=timestamp,
+                changes={"terminalEvidence": dict(evidence)},
+            )
+        except RuntimeStoreError as error:
+            if not error.diagnostic:
+                raise
+            details = _safe_persistence_details(error.diagnostic)
+            persisted = self._store.get(str(running["id"]))
+            if persisted is None or persisted.get("status") != TaskStatus.RUNNING.value:
+                raise
+            diagnostics = _append_persistence_diagnostic(persisted, details)
+            changes: dict[str, Any] = {"persistenceDiagnostics": diagnostics}
+            if persisted.get("terminalEvidence") != evidence:
+                changes["terminalEvidence"] = dict(evidence)
+            return self._store.update_status(
+                str(persisted["id"]), TaskStatus.RUNNING.value,
+                expected_status=TaskStatus.RUNNING.value,
+                updated_at=timestamp, changes=changes,
+            )
+
+    def _task_event_exists(
+        self, task_execution: RuntimeObject, event_type: str
+    ) -> bool:
+        return any(
+            record.get("kind") == "ExecutionEvent"
+            and record.get("eventType") == event_type
+            for record in self._store.list_by_task_execution(
+                str(task_execution["id"])
             )
         )
 

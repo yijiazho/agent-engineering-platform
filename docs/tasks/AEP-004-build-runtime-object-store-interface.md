@@ -49,3 +49,6 @@ named sibling checkpoint, flushes and syncs it, replaces the configured file,
 and syncs the directory where supported. Failures expose only bounded
 operation/phase/category/errno diagnostics; the original OS exception remains
 an internal cause.
+Schedulers may retain successfully recovered checkpoint diagnostics on a
+TaskExecution in the bounded `persistenceDiagnostics` field. This evidence is
+metadata only and excludes paths, exception text, request bodies, and secrets.

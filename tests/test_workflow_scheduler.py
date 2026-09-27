@@ -6,7 +6,11 @@ from threading import Event
 import pytest
 
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
-from aep.runtime_store import DurableJsonRuntimeObjectStore, InMemoryRuntimeObjectStore
+from aep.runtime_store import (
+    DurableJsonRuntimeObjectStore,
+    InMemoryRuntimeObjectStore,
+    RuntimeStoreError,
+)
 from aep.task_dag import resolve_task_dag
 from aep.task_dag import TaskDagPlan
 from aep.task_execution import FailureClass
@@ -194,6 +198,29 @@ def test_failure_rejects_unapproved_structured_details() -> None:
     assert "details" not in failure
 
 
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"operation": "x" * 129},
+        {"errno": -1},
+        {"errno": True},
+        {
+            "reason": "one", "path": "two", "declaredMaxBytesHint": 3,
+            "blobSize": 4, "appliedTrustedCeiling": 5,
+            "predicateType": "six", "inspectionStrategy": "seven",
+            "evaluationComplete": False, "operation": "nine",
+        },
+    ],
+)
+def test_failure_diagnostic_details_match_runtime_schema_bounds(details) -> None:
+    result = TaskExecutionResult.failure(
+        FailureClass.RECOVERABLE, "invalid diagnostic", details=details
+    )
+
+    with pytest.raises(ValueError):
+        result.validate()
+
+
 def test_reconciliation_is_idempotent_after_success() -> None:
     store, plan, execution = scheduler_inputs([node("analyze")])
     executor = FakeExecutor()
@@ -267,6 +294,57 @@ def test_durable_scheduler_commits_one_start_event_and_restart_does_not_dispatch
     assert [event["eventType"] for event in execution_events(restarted)].count(
         "TaskExecutionStarted"
     ) == 1
+
+
+@pytest.mark.parametrize("failure_mode", ["start_pre_replace", "start_directory_sync"])
+def test_durable_start_checkpoint_failure_recovers_once_with_diagnostics(
+    tmp_path, failure_mode: str
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: FaultInjectingDurableStore(path, failure_mode),
+    )
+    executor = FakeExecutor()
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    task = result.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert executor.calls == [("analyze", 1)]
+    assert task["persistenceDiagnostics"] == [{
+        "operation": "checkpoint",
+        "phase": "directory_sync" if failure_mode == "start_directory_sync" else "replace",
+        "category": "io_error",
+        "errno": 5,
+    }]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+    _runtime_validator("taskexecution.schema.json").validate(dict(task))
+
+
+def test_terminal_marker_checkpoint_failure_recovers_without_replaying_body(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: FaultInjectingDurableStore(path, "terminal_marker"),
+    )
+    executor = FakeExecutor()
+    first = scheduler(store, executor).reconcile(plan, execution)
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    repeated_executor = FakeExecutor()
+    repeated = scheduler(restarted, repeated_executor).reconcile(plan, execution)
+
+    assert first.task_executions[0]["status"] == "SUCCEEDED"
+    assert first.task_executions[0]["persistenceDiagnostics"][0]["phase"] == "replace"
+    assert executor.calls == [("analyze", 1)]
+    assert repeated.task_executions == ()
+    assert repeated_executor.calls == []
+    _runtime_validator("taskexecution.schema.json").validate(
+        dict(first.task_executions[0])
+    )
 
 
 def test_concurrent_reconcilers_execute_attempt_once_and_link_it_once() -> None:
@@ -619,6 +697,48 @@ class FallibleStore(InMemoryRuntimeObjectStore):
         return super().append_task_execution_id(
             workflow_execution_id, task_execution_id, **kwargs
         )
+
+
+class FaultInjectingDurableStore(DurableJsonRuntimeObjectStore):
+    def __init__(self, path: Path, failure_mode: str) -> None:
+        self.failure_mode = failure_mode
+        self.failed = False
+        super().__init__(path)
+
+    def _checkpoint(self) -> None:
+        tasks = [
+            value for value in self._objects.values()
+            if value.get("kind") == "TaskExecution"
+        ]
+        started = any(
+            value.get("kind") == "ExecutionEvent"
+            and value.get("eventType") == "TaskExecutionStarted"
+            for value in self._objects.values()
+        )
+        start_boundary = any(
+            task.get("status") == "RUNNING" and "terminalEvidence" not in task
+            for task in tasks
+        ) and started
+        terminal_marker = any("terminalEvidence" in task for task in tasks)
+        should_fail = (
+            self.failure_mode in {"start_pre_replace", "start_directory_sync"}
+            and start_boundary
+        ) or self.failure_mode == "terminal_marker" and terminal_marker
+        if not self.failed and should_fail:
+            self.failed = True
+            if self.failure_mode == "start_directory_sync":
+                super()._checkpoint()
+                phase = "directory_sync"
+            else:
+                phase = "replace"
+            raise RuntimeStoreError(
+                "injected durable checkpoint failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": phase,
+                    "category": "io_error", "errno": 5,
+                },
+            )
+        super()._checkpoint()
 
 
 class RaisingExecutor:

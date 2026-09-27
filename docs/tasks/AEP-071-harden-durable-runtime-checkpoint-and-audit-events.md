@@ -1,6 +1,6 @@
 # AEP-071: Harden Durable Runtime Checkpoint and Audit Events
 
-**Status:** Completed
+**Status:** In Progress
 
 ## Context
 

@@ -260,6 +260,21 @@
                 "status": { "enum": ["SUCCEEDED", "FAILED"] },
                 "failure": { "$ref": "#/$defs/failure" }
               }
+            },
+            "persistenceDiagnostics": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["operation", "phase", "category"],
+                "properties": {
+                  "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "phase": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "category": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "errno": {"type": ["integer", "null"], "minimum": 0}
+                }
+              }
             }
           },
           "additionalProperties": true

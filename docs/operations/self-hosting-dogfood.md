@@ -672,6 +672,8 @@ the persisted operation phase, sanitized OS category, and optional errno, but
 never through raw paths or exception text. A restart repairs missing lifecycle
 events before dispatch and does not replay a task whose terminal-return marker
 is already durable.
+After a transient fault, inspect `TaskExecution.persistenceDiagnostics` for the
+bounded operation, phase, category, and errno retained by the recovery write.
 The shared image keeps `/opt/aep/src` on `PYTHONPATH` so runtime validators load
 the schemas copied to `/opt/aep/schemas`; removing that image binding causes
 reconciliation to fail before the first WorkflowExecution checkpoint.
