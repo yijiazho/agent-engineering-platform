@@ -363,6 +363,52 @@ def test_durable_start_recovers_from_post_commit_fence_release_failure(
     ) == 1
 
 
+def test_durable_start_does_not_dispatch_after_writer_fence_contention(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    executor = FakeExecutor()
+    original_lock = runtime_store_module._lock_file
+    failed = False
+
+    def fail_start_acquire(handle):
+        nonlocal failed
+        has_pending_attempt = any(
+            value.get("kind") == "TaskExecution"
+            and value.get("status") == "PENDING"
+            for value in store._objects.values()
+        )
+        has_queued_event = any(
+            value.get("eventType") == "TaskExecutionQueued"
+            for value in store._objects.values()
+        )
+        if has_pending_attempt and has_queued_event and not failed:
+            failed = True
+            raise OSError(errno.EBUSY, "injected writer contention")
+        original_lock(handle)
+
+    monkeypatch.setattr(runtime_store_module, "_lock_file", fail_start_acquire)
+    first = scheduler(store, executor).reconcile(plan, execution)
+
+    assert first.task_executions[0]["status"] == "PENDING"
+    assert executor.calls == []
+    assert not any(
+        event["eventType"] == "TaskExecutionStarted"
+        for event in execution_events(store)
+    )
+
+    second = scheduler(store, executor).reconcile(plan, execution)
+
+    assert second.task_executions[0]["status"] == "SUCCEEDED"
+    assert executor.calls == [("analyze", 1)]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
 def test_terminal_marker_checkpoint_failure_recovers_without_replaying_body(tmp_path) -> None:
     path = tmp_path / "runtime/objects.json"
     store, plan, execution = scheduler_inputs(

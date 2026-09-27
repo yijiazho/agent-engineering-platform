@@ -91,6 +91,18 @@ def _append_persistence_diagnostic(
     return [*prior, dict(details)][-8:]
 
 
+def _can_recover_start(diagnostic: Mapping[str, Any]) -> bool:
+    operation = diagnostic.get("operation")
+    phase = diagnostic.get("phase")
+    return (
+        operation == "checkpoint"
+        and phase in {
+            "temporary_create", "temporary_write", "file_sync", "replace",
+            "directory_sync",
+        }
+    ) or operation == "writer_fence" and phase == "release"
+
+
 class InvalidSchedulerInputError(ValueError):
     """Raised when scheduler inputs do not identify one valid execution plan."""
 
@@ -280,6 +292,7 @@ class WorkflowScheduler:
                     getattr(self._store, "supports_atomic_task_transitions", False)
                     and isinstance(error, RuntimeStoreError)
                     and error.diagnostic
+                    and _can_recover_start(error.diagnostic)
                 ):
                     running = self._recover_durable_start(
                         attempt, timestamp, error.diagnostic
@@ -391,12 +404,9 @@ class WorkflowScheduler:
             persisted.get("status") == TaskStatus.RUNNING.value
             and self._task_event_exists(persisted, "TaskExecutionStarted")
         ):
-            return self._store.update_status(
-                str(persisted["id"]), TaskStatus.RUNNING.value,
-                expected_status=TaskStatus.RUNNING.value,
-                updated_at=timestamp,
-                changes={"persistenceDiagnostics": diagnostics},
-            )
+            recovered = dict(persisted)
+            recovered["persistenceDiagnostics"] = diagnostics
+            return recovered
         raise RuntimeStoreError(
             "durable start checkpoint outcome is ambiguous",
             diagnostic=details,
@@ -410,11 +420,17 @@ class WorkflowScheduler:
     ) -> RuntimeObject:
         """Persist post-handler evidence, recovering one transient checkpoint fault."""
         try:
+            changes: dict[str, Any] = {"terminalEvidence": dict(evidence)}
+            diagnostics = running.get("persistenceDiagnostics")
+            if isinstance(diagnostics, list):
+                changes["persistenceDiagnostics"] = [
+                    dict(item) for item in diagnostics if isinstance(item, Mapping)
+                ][-8:]
             return self._store.update_status(
                 str(running["id"]), TaskStatus.RUNNING.value,
                 expected_status=TaskStatus.RUNNING.value,
                 updated_at=timestamp,
-                changes={"terminalEvidence": dict(evidence)},
+                changes=changes,
             )
         except RuntimeStoreError as error:
             if not error.diagnostic:

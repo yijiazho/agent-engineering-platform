@@ -141,6 +141,10 @@ The scheduler performs one bounded recovery checkpoint for a diagnosed start
 or terminal-marker interruption. A pre-replace start retry commits the original
 logical start and its diagnostic together; a post-replace sync interruption is
 verified against the deterministic start event before dispatch continues.
+Writer-fence acquisition failures never grant dispatch authority because a
+contending reconciler may own the observed start. Fence-release failures may be
+recovered after verifying the committed start, and their diagnostics are
+carried into the terminal-evidence checkpoint without an extra start checkpoint.
 Recovered diagnostics are retained on the TaskExecution in an eight-entry
 bounded history.
 Initial restore and stale temporary-checkpoint cleanup run under the same
