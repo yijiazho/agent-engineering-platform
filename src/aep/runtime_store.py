@@ -357,8 +357,10 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
         self._path = Path(path).resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock_path = self._path.with_name(f".{self._path.name}.lock")
-        if self._path.exists():
-            self._restore()
+        with self._lock, self._writer_fence():
+            self._cleanup_stale_checkpoints()
+            if self._path.exists():
+                self._restore()
 
     def create(
         self, runtime_object: RuntimeObject, *, deterministic_key: str
@@ -442,11 +444,18 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
 
     def _restore(self) -> None:
         try:
-            payload = json.loads(self._path.read_text(encoding="utf-8"))
+            encoded = self._path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise RuntimeStoreError(
+                "durable runtime checkpoint could not be read",
+                diagnostic=_persistence_diagnostic("restore", "read", error),
+            ) from error
+        try:
+            payload = json.loads(encoded)
             objects = payload["objects"]
             deterministic_keys = payload["deterministicKeys"]
             claims = payload["claims"]
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise RuntimeStoreError(
                 "durable runtime checkpoint is invalid",
                 diagnostic={"operation": "restore", "phase": "read", "category": "invalid_checkpoint"},
@@ -526,24 +535,50 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                 self._restore()
             return operation()
 
+    def _cleanup_stale_checkpoints(self) -> None:
+        pattern = f".{self._path.name}.*.tmp"
+        for candidate in self._path.parent.glob(pattern):
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError as error:
+                raise RuntimeStoreError(
+                    "stale runtime checkpoint could not be removed",
+                    diagnostic=_persistence_diagnostic(
+                        "checkpoint_cleanup", "remove", error
+                    ),
+                ) from error
+
     @contextmanager
     def _writer_fence(self):
         handle = None
+        descriptor: int | None = None
         try:
-            handle = self._lock_path.open("a+b")
+            descriptor = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            handle = os.fdopen(descriptor, "r+b")
+            descriptor = None
             _lock_file(handle)
         except OSError as error:
             if handle is not None:
                 handle.close()
+            elif descriptor is not None:
+                os.close(descriptor)
             raise RuntimeStoreError(
                 "durable runtime writer contention",
                 diagnostic=_persistence_diagnostic("writer_fence", "acquire", error),
             ) from error
         try:
             yield
-        finally:
-            _unlock_file(handle)
-            handle.close()
+        except BaseException:
+            _release_file_lock(handle, suppress_errors=True)
+            raise
+        release_error = _release_file_lock(handle, suppress_errors=False)
+        if release_error is not None:
+            raise RuntimeStoreError(
+                "durable runtime writer fence could not be released",
+                diagnostic=_persistence_diagnostic(
+                    "writer_fence", "release", release_error
+                ),
+            ) from release_error
 
     def _sync_directory(self) -> None:
         if os.name == "nt":
@@ -578,9 +613,10 @@ def _persistence_diagnostic(operation: str, phase: str, error: OSError) -> dict[
 def _lock_file(handle: Any) -> None:
     if os.name == "nt":
         import msvcrt
-        handle.seek(0)
-        handle.write(b"0")
-        handle.flush()
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
         handle.seek(0)
         msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
         return
@@ -596,6 +632,20 @@ def _unlock_file(handle: Any) -> None:
         return
     import fcntl
     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _release_file_lock(handle: Any, *, suppress_errors: bool) -> OSError | None:
+    error: OSError | None = None
+    try:
+        _unlock_file(handle)
+    except OSError as candidate:
+        error = candidate
+    try:
+        handle.close()
+    except OSError as candidate:
+        if error is None:
+            error = candidate
+    return None if suppress_errors else error
 
 
 def _copy_and_validate(runtime_object: RuntimeObject) -> dict[str, Any]:

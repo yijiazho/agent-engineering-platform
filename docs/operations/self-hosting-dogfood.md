@@ -674,6 +674,9 @@ events before dispatch and does not replay a task whose terminal-return marker
 is already durable.
 After a transient fault, inspect `TaskExecution.persistenceDiagnostics` for the
 bounded operation, phase, category, and errno retained by the recovery write.
+Startup removes only stale checkpoint siblings matching the runtime store's
+private temporary-file pattern while holding the writer fence. The fence file
+is constant-size and must remain on the same durable volume as the checkpoint.
 The shared image keeps `/opt/aep/src` on `PYTHONPATH` so runtime validators load
 the schemas copied to `/opt/aep/schemas`; removing that image binding causes
 reconciliation to fail before the first WorkflowExecution checkpoint.

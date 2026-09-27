@@ -143,6 +143,10 @@ logical start and its diagnostic together; a post-replace sync interruption is
 verified against the deterministic start event before dispatch continues.
 Recovered diagnostics are retained on the TaskExecution in an eight-entry
 bounded history.
+Initial restore and stale temporary-checkpoint cleanup run under the same
+cross-process fence. The lock file has constant size, and a release failure is
+treated as a diagnosable post-commit outcome that must be verified from the
+checkpoint before dispatch.
 
 The scheduler loads the authoritative WorkflowExecution from runtime storage,
 verifies immutable caller evidence against it, and validates all

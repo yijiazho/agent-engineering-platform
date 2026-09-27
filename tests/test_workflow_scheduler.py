@@ -1,10 +1,12 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+import errno
 from pathlib import Path
 from threading import Event
 
 import pytest
 
+import aep.runtime_store as runtime_store_module
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
 from aep.runtime_store import (
     DurableJsonRuntimeObjectStore,
@@ -322,6 +324,43 @@ def test_durable_start_checkpoint_failure_recovers_once_with_diagnostics(
         "TaskExecutionStarted"
     ) == 1
     _runtime_validator("taskexecution.schema.json").validate(dict(task))
+
+
+def test_durable_start_recovers_from_post_commit_fence_release_failure(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    executor = FakeExecutor()
+    original_unlock = runtime_store_module._unlock_file
+    failed = False
+
+    def fail_start_release(handle):
+        nonlocal failed
+        original_unlock(handle)
+        has_start_event = any(
+            value.get("eventType") == "TaskExecutionStarted"
+            for value in store._objects.values()
+        )
+        if has_start_event and not failed:
+            failed = True
+            raise OSError(errno.EIO, "sensitive lock path")
+
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", fail_start_release)
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    task = result.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert task["persistenceDiagnostics"] == [{
+        "operation": "writer_fence", "phase": "release",
+        "category": "io_error", "errno": errno.EIO,
+    }]
+    assert executor.calls == [("analyze", 1)]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
 
 
 def test_terminal_marker_checkpoint_failure_recovers_without_replaying_body(tmp_path) -> None:

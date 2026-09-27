@@ -1,7 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor
 import errno
+from pathlib import Path
 
 import pytest
+
+import aep.runtime_store as runtime_store_module
 
 from aep.runtime_store import (
     DurableJsonRuntimeObjectStore,
@@ -341,3 +344,85 @@ def test_independent_durable_stores_refresh_under_writer_fence_without_lost_clai
     assert prior == same == {"id": "first"}
     assert first.get("taskexecution-one") is not None
     assert first.get("taskexecution-two") is not None
+
+
+def test_writer_fence_file_does_not_grow_on_repeated_operations(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    lock_path = path.parent / ".objects.json.lock"
+    initial_size = lock_path.stat().st_size
+
+    for _ in range(50):
+        store.get("missing")
+
+    assert lock_path.stat().st_size == initial_size
+    assert initial_size <= 1
+
+
+def test_restore_os_failure_retains_safe_category_errno_and_cause(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    DurableJsonRuntimeObjectStore(path).create(
+        runtime_object("taskexecution-readable"), deterministic_key="task"
+    )
+    original_read_text = Path.read_text
+
+    def fail_checkpoint_read(candidate, *args, **kwargs):
+        if candidate.resolve() == path.resolve():
+            raise OSError(errno.EIO, "sensitive mount path")
+        return original_read_text(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_checkpoint_read)
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "restore", "phase": "read",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    assert "sensitive" not in str(raised.value)
+    assert raised.value.__cause__ is not None
+
+
+def test_constructor_removes_only_stale_sibling_checkpoints_under_fence(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(runtime_object("taskexecution-cleanup"), deterministic_key="task")
+    orphan = path.parent / ".objects.json.interrupted.tmp"
+    unrelated = path.parent / "keep.tmp"
+    orphan.write_text("orphan", encoding="utf-8")
+    unrelated.write_text("keep", encoding="utf-8")
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+
+    assert restarted.get("taskexecution-cleanup") is not None
+    assert not orphan.exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+
+
+def test_writer_fence_release_failure_is_safe_and_preserves_committed_state(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    original_unlock = runtime_store_module._unlock_file
+
+    def fail_after_unlock(handle):
+        original_unlock(handle)
+        raise OSError(errno.EIO, "sensitive lock path")
+
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", fail_after_unlock)
+    with pytest.raises(RuntimeStoreError) as raised:
+        store.claim("committed-claim", {"id": "claim-value"})
+
+    assert raised.value.diagnostic == {
+        "operation": "writer_fence", "phase": "release",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    assert "sensitive" not in str(raised.value)
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", original_unlock)
+    restarted = DurableJsonRuntimeObjectStore(path)
+    accepted, prior = restarted.claim("committed-claim", {"id": "replacement"})
+    assert accepted is False
+    assert prior == {"id": "claim-value"}

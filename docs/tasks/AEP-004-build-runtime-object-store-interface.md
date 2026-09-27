@@ -52,3 +52,8 @@ an internal cause.
 Schedulers may retain successfully recovered checkpoint diagnostics on a
 TaskExecution in the bounded `persistenceDiagnostics` field. This evidence is
 metadata only and excludes paths, exception text, request bodies, and secrets.
+Construction acquires the same writer fence used by mutations before restoring
+state or removing stale uniquely named checkpoint siblings. Fence release
+failures are classified as post-commit diagnostics so callers can verify the
+persisted deterministic boundary. Restore-time OS errors retain their safe
+category and errno rather than being mislabeled as malformed JSON.
