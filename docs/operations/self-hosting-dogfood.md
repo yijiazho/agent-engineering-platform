@@ -862,9 +862,12 @@ evidence retention copy, and then remove the dedicated Resource checkout and
 state directory under the organization's retention policy. Do not use
 `down --volumes`; the deployment uses explicit host directories so deletion
 must be an intentional, separately reviewed operation.
-* `analyze-issue:1.12.0` derives bounded exact or prefix document predicates and
+* `analyze-issue:1.13.0` derives bounded exact or prefix document predicates and
   separate typed evaluatorRequirements from the request; evaluator ownership
-  and stable criterion IDs are persisted without granting mutation authority;
+  and stable criterion IDs are persisted without granting mutation authority.
+  An evaluator-only analysis has a valid empty document-predicate partition;
+  redundant evaluator-owned predicates are removed before the normalized
+  GeneratedArtifact is schema-evaluated and published;
   `build-implementation-plan:1.16.0` uses those declarations
   to create trusted `planning-evidence` records
 

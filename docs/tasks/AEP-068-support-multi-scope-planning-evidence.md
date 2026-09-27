@@ -177,6 +177,54 @@ Preserve WorkflowExecution `workflowexecution-faa14630-f79a-5bf3-a863-41bdabbbff
 and its linked evidence as immutable historical diagnostic evidence. Do not
 replay or rewrite it.
 
+## Evaluator-Owned Predicate Duplication Discovery
+
+The later controlled execution
+`workflowexecution-6c8d901f-617c-5bbc-9fd7-4e8600c52e28`, at repository
+revision `72bb2d30adc23e74f7e444d19989b03c76f7eb11`, failed in AnalyzeIssue
+`1.12.0` before planning evidence or a plan artifact existed. Its failed
+TaskExecution, `taskexecution-8a4190a1-2b3d-5350-9f13-6778ea901d16`, reported:
+
+```text
+EVALUATION: structured output does not match outputSchema:
+planning predicates must bind one non-evaluator acceptance criterion exactly
+```
+
+This is not a recurrence of the former selection-reason equality bug. The
+candidate used valid stable IDs and correctly represented the `git diff
+--check` criterion as `AC-README-DEPLOY-05` with the approved
+`PATCH_EVALUATION` / `DIFF_CHECK_PASSES` evaluator requirement. It then also
+emitted an `UNSUPPORTED_SEMANTIC` planning predicate with the same criterion
+ID. The semantic validator correctly treats the typed evaluator requirement as
+the ownership declaration and rejects a planning predicate that also cites its
+evaluator-owned criterion.
+
+The current prompt explicitly tells the model not to encode formatting or
+patch outcomes as document predicates, yet the model emitted the duplicate
+predicate as a purported reinforcement before Diff Check. The contract still
+requires the model to make an exact mutually-exclusive representation choice,
+so a redundant, non-authorizing declaration blocks an otherwise valid
+documentation request. The candidate also used `UNSUPPORTED_SEMANTIC`
+planning predicates for separate preservation and documentation-only
+criteria; these must retain their own evaluator-owned or explicitly
+unsupported disposition, not be mixed into editable evidence.
+
+The corrected contract must derive the authoritative ownership partition from
+stable criterion IDs and typed evaluator requirements. A document predicate
+for a criterion with an approved evaluator requirement is non-authorizing
+redundant candidate data: AnalyzeIssue must remove it from the authoritative
+planning-predicate set, preserve a bounded diagnostic record explaining the
+normalization, and continue to evaluate the criterion only through its named
+evaluator. This is safe because the discarded declaration can never grant
+mutation authority. Invalid, unknown, or untyped evaluator ownership must
+remain fail-closed and cannot be normalized into success. Semantic preservation
+or scope criteria must likewise be represented by a typed owner when one
+exists, or explicitly unsupported, rather than silently discarded.
+
+Preserve WorkflowExecution `workflowexecution-6c8d901f-617c-5bbc-9fd7-4e8600c52e28`
+and its linked candidate and evaluation evidence as immutable historical
+diagnostic evidence. Do not replay or rewrite it.
+
 ## Reproduction
 
 Create deterministic, credential-free declarations for a revision-bound `README.md` target with a `Repository Layout` section and a separate section outside it.
@@ -215,6 +263,18 @@ Create deterministic, credential-free declarations for a revision-bound `README.
     supported insertion while preserving an independent evaluator-owned or
     unsupported disposition for the semantic criteria.
 
+12. Declare a valid `PATCH_EVALUATION` / `DIFF_CHECK_PASSES` evaluator
+    requirement for a stable `git diff --check` criterion, then deliberately
+    include a redundant `UNSUPPORTED_SEMANTIC` planning predicate with the same
+    criterion ID. Demonstrate that authoritative planning evidence excludes
+    the predicate, persists bounded normalization evidence, and retains the
+    typed evaluator requirement as the sole owner.
+
+13. Cover the adjacent fail-closed cases: a redundant predicate with an
+    unknown criterion ID, an invalid evaluator owner or requirement ID, a
+    criterion with conflicting evaluator requirements, and unsupported
+    semantic preservation/scope criteria lacking a typed owner.
+
 Fixtures must be deterministic and credential-free. Do not store provider requests, source or artifact bodies, credentials, or unrestricted logs.
 
 ## Deliverable
@@ -245,6 +305,12 @@ Implement a planning-evidence and plan-authority model that:
   than using it as a machine-readable criterion identity or requiring it to
   duplicate acceptance-criterion prose;
 
+* derives the authoritative document-predicate and evaluator-owned partitions
+  from stable criterion IDs and approved typed evaluator requirements; it
+  removes a redundant predicate targeting an otherwise valid evaluator-owned
+  criterion from mutation authorization while retaining bounded, attributable
+  normalization evidence;
+
 * reconciles planning-evidence support by criterion, predicate, trusted scope,
   and insertion binding rather than treating an unsupported result for any
   declaration on a path as unsupported evidence for every criterion on that
@@ -271,6 +337,8 @@ write authority, encoding evaluator outcomes as arbitrary document predicates,
 using a human-readable selection reason as an authorization or ownership key,
 poisoning supported insertion authority with an unrelated criterion's
 unsupported semantic result,
+allowing a redundant evaluator-owned predicate to authorize a document edit,
+silently discarding invalid, unknown, conflicting, or untyped ownership,
 dropping semantic criteria silently, weakening trusted-region or anchor-span
 checks, making the model select authoritative scopes, or replaying either
 failed workflow.
@@ -341,6 +409,17 @@ failed workflow.
   fail during AnalyzeIssue semantic validation with decisive evaluation
   evidence; they do not depend on or compare arbitrary natural-language prose.
 
+* A candidate that correctly binds a `git diff --check` criterion to
+  `PATCH_EVALUATION` / `DIFF_CHECK_PASSES` but redundantly emits a document
+  planning predicate for that same stable criterion reaches BuildImplementationPlan.
+  Its persisted authoritative analysis has no mutation-authorizing predicate
+  for the evaluator-owned criterion and records bounded normalization evidence.
+
+* A redundant predicate never widens authorized paths, regions, postconditions,
+  or required insertions. Unknown criterion IDs, invalid or conflicting typed
+  requirements, and a semantic criterion without an available owner remain
+  decisive fail-closed AnalyzeIssue outcomes.
+
 * For one path and trusted editable scope, a matched required-insertion
   criterion remains implementable when another criterion's semantic predicate
   is unsupported. Reconciliation evaluates the insertion criterion's bound
@@ -366,6 +445,9 @@ failed workflow.
   remains immutable historical evidence and is not replayed or rewritten.
 
 * WorkflowExecution `workflowexecution-faa14630-f79a-5bf3-a863-41bdabbbff19`
+  remains immutable historical evidence and is not replayed or rewritten.
+
+* WorkflowExecution `workflowexecution-6c8d901f-617c-5bbc-9fd7-4e8600c52e28`
   remains immutable historical evidence and is not replayed or rewritten.
 
 * AEP-055 through AEP-067, architecture/operator docs, schemas, Resources, fixtures, this task, and `docs/execution-plan.md` describe the same contract.
