@@ -418,6 +418,43 @@ def test_windows_writer_lock_conflict_is_classified_as_busy() -> None:
     }
 
 
+def test_writer_fence_acquisition_cleanup_failure_is_sanitized(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+
+    class CloseFailingHandle:
+        def __init__(self, descriptor: int) -> None:
+            self.descriptor = descriptor
+
+        def close(self) -> None:
+            runtime_store_module.os.close(self.descriptor)
+            raise OSError(errno.EIO, "sensitive cleanup mount path")
+
+    monkeypatch.setattr(
+        runtime_store_module.os, "fdopen",
+        lambda descriptor, mode: CloseFailingHandle(descriptor),
+    )
+    monkeypatch.setattr(
+        runtime_store_module, "_lock_file",
+        lambda handle: (_ for _ in ()).throw(
+            OSError(errno.EBUSY, "sensitive acquisition path")
+        ),
+    )
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        store.get("missing")
+
+    assert raised.value.diagnostic == {
+        "operation": "writer_fence", "phase": "cleanup",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    formatted = "".join(traceback.format_exception(raised.value))
+    assert "sensitive" not in str(raised.value)
+    assert "sensitive" not in formatted
+
+
 def test_constructor_removes_only_stale_sibling_checkpoints_under_fence(tmp_path) -> None:
     path = tmp_path / "runtime/objects.json"
     store = DurableJsonRuntimeObjectStore(path)

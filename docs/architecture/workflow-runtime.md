@@ -134,14 +134,16 @@ temporary file, file and directory sync where supported, and an atomic replace.
 For durable stores, the TaskExecution lifecycle transition, owning workflow
 attachment, and required audit event share one checkpoint. A start checkpoint
 failure therefore cannot dispatch the handler; a terminal-return marker lets
-restart repair terminal evidence without replaying a completed side effect.
+restart repair terminal evidence without replaying a completed side effect or
+replacing the marker's original terminal timestamp with the restart time.
 Persistence failures retain only bounded phase/category/errno diagnostics in
 runtime evidence and never expose host paths, secrets, or exception bodies,
 including through chained exceptions in polling logs. Checkpoints persist
 explicit object creation order so refreshed workflow and task indexes remain
 deterministic even though JSON object keys are sorted on disk. Windows byte-lock
 conflicts are reported as busy contention while lock-file open failures retain
-their underlying permission category.
+their underlying permission category. Fence-acquisition cleanup failures are
+also reduced to bounded diagnostics rather than escaping as raw exceptions.
 The scheduler performs one bounded recovery checkpoint for a diagnosed start
 or terminal-marker interruption. A pre-replace start retry proceeds only while
 the attempt remains `PENDING`, then commits the original logical start and its

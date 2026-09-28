@@ -38,11 +38,10 @@ def _validate_failure_details(details: Mapping[str, Any]) -> None:
         ):
             raise ValueError(f"failure details {field} must be bounded text or null")
     for field in ("operation", "phase", "category"):
-        value = details.get(field)
-        if value is not None and (
-            not isinstance(value, str) or not value or len(value) > 128
-        ):
-            raise ValueError(f"failure details {field} must be bounded text or null")
+        if field in details:
+            value = details[field]
+            if not isinstance(value, str) or not value or len(value) > 128:
+                raise ValueError(f"failure details {field} must be bounded text")
     for field in ("declaredMaxBytesHint", "blobSize", "appliedTrustedCeiling"):
         value = details.get(field)
         if value is not None and (
@@ -667,11 +666,16 @@ class WorkflowScheduler:
             if attempt.get("status") == TaskStatus.RUNNING.value and isinstance(evidence, Mapping):
                 terminal_status = evidence.get("status")
                 if terminal_status in {TaskStatus.SUCCEEDED.value, TaskStatus.FAILED.value}:
+                    marker_timestamp = attempt.get("updatedAt")
+                    if not isinstance(marker_timestamp, str) or not is_rfc3339_timestamp(
+                        marker_timestamp
+                    ):
+                        marker_timestamp = timestamp
                     changes = {key: value for key, value in evidence.items() if key != "status"}
                     repaired = self._store.update_status(
                         str(attempt["id"]), terminal_status,
                         expected_status=TaskStatus.RUNNING.value,
-                        updated_at=timestamp, changes=changes,
+                        updated_at=marker_timestamp, changes=changes,
                     )
                     attempt = repaired
             status = attempt.get("status")
@@ -680,7 +684,15 @@ class WorkflowScheduler:
                 TaskStatus.FAILED.value: "TaskExecutionFailed",
             }.get(status)
             if event_type is not None:
-                self._emit(attempt, event_type, sequence=3, timestamp=timestamp)
+                terminal_timestamp = attempt.get("completedAt")
+                if not isinstance(terminal_timestamp, str) or not is_rfc3339_timestamp(
+                    terminal_timestamp
+                ):
+                    terminal_timestamp = timestamp
+                self._emit(
+                    attempt, event_type, sequence=3,
+                    timestamp=terminal_timestamp,
+                )
 
     def _complete_success(
         self, running: RuntimeObject, timestamp: str

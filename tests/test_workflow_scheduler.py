@@ -204,6 +204,9 @@ def test_failure_rejects_unapproved_structured_details() -> None:
     "details",
     [
         {"operation": "x" * 129},
+        {"operation": None},
+        {"phase": None},
+        {"category": None},
         {"errno": -1},
         {"errno": True},
         {
@@ -470,6 +473,47 @@ def test_terminal_marker_checkpoint_failure_recovers_without_replaying_body(tmp_
     _runtime_validator("taskexecution.schema.json").validate(
         dict(first.task_executions[0])
     )
+
+
+def test_terminal_marker_repair_preserves_original_terminal_timestamp(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: FaultInjectingDurableStore(
+            path, "terminal_transition"
+        ),
+    )
+    clock = MutableClock(TIMESTAMP)
+    executor = FakeExecutor()
+    runtime = WorkflowScheduler(store, executor, clock=clock)
+
+    with pytest.raises(RuntimeStoreError):
+        runtime.reconcile(plan, execution)
+
+    marker = task_executions(store)[0]
+    assert marker["status"] == "RUNNING"
+    assert marker["updatedAt"] == TIMESTAMP
+    assert marker["terminalEvidence"] == {"status": "SUCCEEDED"}
+
+    clock.value = "2036-08-04T20:00:00Z"
+    restarted = DurableJsonRuntimeObjectStore(path)
+    repeated_executor = FakeExecutor()
+    repeated = WorkflowScheduler(
+        restarted, repeated_executor, clock=clock
+    ).reconcile(plan, execution)
+
+    repaired = restarted.get(str(marker["id"]))
+    terminal_event = next(
+        event for event in execution_events(restarted)
+        if event["eventType"] == "TaskExecutionSucceeded"
+    )
+    assert repeated.task_executions == ()
+    assert repaired["status"] == "SUCCEEDED"
+    assert repaired["updatedAt"] == TIMESTAMP
+    assert repaired["completedAt"] == TIMESTAMP
+    assert terminal_event["emittedAt"] == TIMESTAMP
+    assert executor.calls == [("analyze", 1)]
+    assert repeated_executor.calls == []
 
 
 def test_concurrent_reconcilers_execute_attempt_once_and_link_it_once() -> None:
@@ -845,10 +889,19 @@ class FaultInjectingDurableStore(DurableJsonRuntimeObjectStore):
             for task in tasks
         ) and started
         terminal_marker = any("terminalEvidence" in task for task in tasks)
+        terminal_transition = any(
+            "terminalEvidence" in task
+            and task.get("status") in {"SUCCEEDED", "FAILED"}
+            for task in tasks
+        )
         should_fail = (
             self.failure_mode in {"start_pre_replace", "start_directory_sync"}
             and start_boundary
-        ) or self.failure_mode == "terminal_marker" and terminal_marker
+        ) or (
+            self.failure_mode == "terminal_marker" and terminal_marker
+        ) or (
+            self.failure_mode == "terminal_transition" and terminal_transition
+        )
         if not self.failed and should_fail:
             self.failed = True
             if self.failure_mode == "start_directory_sync":

@@ -570,15 +570,21 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             phase = "acquire"
             _lock_file(handle)
         except OSError as error:
-            if handle is not None:
-                handle.close()
-            elif descriptor is not None:
-                os.close(descriptor)
+            diagnostic_error = error
+            diagnostic_phase = phase
+            try:
+                if handle is not None:
+                    handle.close()
+                elif descriptor is not None:
+                    os.close(descriptor)
+            except OSError as cleanup_error:
+                diagnostic_error = cleanup_error
+                diagnostic_phase = "cleanup"
             raise RuntimeStoreError(
-                "durable runtime writer contention",
+                "durable runtime writer fence could not be acquired",
                 diagnostic=_persistence_diagnostic(
-                    "writer_fence", phase, error,
-                    lock_contention=phase == "acquire" and os.name == "nt",
+                    "writer_fence", diagnostic_phase, diagnostic_error,
+                    lock_contention=diagnostic_phase == "acquire" and os.name == "nt",
                 ),
             ) from None
         try:
