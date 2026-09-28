@@ -366,6 +366,46 @@ def test_durable_start_recovers_from_post_commit_fence_release_failure(
     ) == 1
 
 
+def test_recovered_start_diagnostic_is_durable_before_executor_dispatch(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    original_unlock = runtime_store_module._unlock_file
+    failed = False
+
+    def fail_start_release(handle):
+        nonlocal failed
+        original_unlock(handle)
+        has_start_event = any(
+            value.get("eventType") == "TaskExecutionStarted"
+            for value in store._objects.values()
+        )
+        if has_start_event and not failed:
+            failed = True
+            raise OSError(errno.EIO, "sensitive lock path")
+
+    class ProcessExitExecutor:
+        def execute(self, task, task_execution):
+            raise SystemExit("simulated process exit")
+
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", fail_start_release)
+    with pytest.raises(SystemExit, match="simulated process exit"):
+        scheduler(store, ProcessExitExecutor()).reconcile(plan, execution)
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    persisted = task_executions(restarted)[0]
+    assert persisted["status"] == "RUNNING"
+    assert "terminalEvidence" not in persisted
+    assert persisted["persistenceDiagnostics"] == [{
+        "operation": "writer_fence", "phase": "release",
+        "category": "io_error", "errno": errno.EIO,
+    }]
+    _runtime_validator("taskexecution.schema.json").validate(dict(persisted))
+
+
 def test_durable_start_does_not_dispatch_after_writer_fence_contention(
     tmp_path, monkeypatch
 ) -> None:
@@ -639,6 +679,29 @@ def test_missing_terminal_event_is_repaired_before_dependent_runs() -> None:
     assert [event["eventType"] for event in execution_events(store)].count(
         "TaskExecutionSucceeded"
     ) == 2
+
+
+def test_start_event_repair_reuses_persisted_start_timestamp() -> None:
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: FallibleStore("started_event")
+    )
+    clock = MutableClock(TIMESTAMP)
+    runtime = WorkflowScheduler(store, FakeExecutor(), clock=clock)
+
+    with pytest.raises(OSError, match="injected event failure"):
+        runtime.reconcile(plan, execution)
+
+    failed = task_executions(store)[0]
+    assert failed["startedAt"] == TIMESTAMP
+    clock.value = "2036-08-04T20:00:00Z"
+    runtime.reconcile(plan, execution)
+
+    started = next(
+        event for event in execution_events(store)
+        if event["eventType"] == "TaskExecutionStarted"
+    )
+    assert started["createdAt"] == TIMESTAMP
+    assert started["emittedAt"] == TIMESTAMP
 
 
 def test_live_running_executor_is_not_reclaimed_after_large_clock_advance() -> None:

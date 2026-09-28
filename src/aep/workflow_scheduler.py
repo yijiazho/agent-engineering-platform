@@ -414,13 +414,42 @@ class WorkflowScheduler:
             and persisted.get("status") == TaskStatus.RUNNING.value
             and self._task_event_exists(persisted, "TaskExecutionStarted")
         ):
-            recovered = dict(persisted)
-            recovered["persistenceDiagnostics"] = diagnostics
-            return recovered
+            return self._persist_recovered_start_diagnostics(
+                persisted, diagnostics, timestamp
+            )
         raise RuntimeStoreError(
             "durable start checkpoint outcome is ambiguous",
             diagnostic=details,
         )
+
+    def _persist_recovered_start_diagnostics(
+        self,
+        running: RuntimeObject,
+        diagnostics: list[dict[str, Any]],
+        timestamp: str,
+    ) -> RuntimeObject:
+        """Durably retain a proven post-commit start fault before dispatch."""
+        try:
+            return self._store.update_status(
+                str(running["id"]), TaskStatus.RUNNING.value,
+                expected_status=TaskStatus.RUNNING.value,
+                updated_at=timestamp,
+                changes={"persistenceDiagnostics": diagnostics},
+            )
+        except RuntimeStoreError:
+            persisted = self._store.get(str(running["id"]))
+            if persisted is None or persisted.get("status") != TaskStatus.RUNNING.value:
+                raise
+            if persisted.get("persistenceDiagnostics") == diagnostics:
+                return persisted
+            if not self._task_event_exists(persisted, "TaskExecutionStarted"):
+                raise
+            return self._store.update_status(
+                str(persisted["id"]), TaskStatus.RUNNING.value,
+                expected_status=TaskStatus.RUNNING.value,
+                updated_at=timestamp,
+                changes={"persistenceDiagnostics": diagnostics},
+            )
 
     def _persist_terminal_evidence(
         self,
@@ -656,11 +685,16 @@ class WorkflowScheduler:
                 attempt, "TaskExecutionQueued", sequence=1, timestamp=timestamp
             )
             if attempt.get("startedAt") is not None:
+                started_timestamp = attempt.get("startedAt")
+                if not isinstance(started_timestamp, str) or not is_rfc3339_timestamp(
+                    started_timestamp
+                ):
+                    started_timestamp = timestamp
                 self._emit(
                     attempt,
                     "TaskExecutionStarted",
                     sequence=2,
-                    timestamp=timestamp,
+                    timestamp=started_timestamp,
                 )
             evidence = attempt.get("terminalEvidence")
             if attempt.get("status") == TaskStatus.RUNNING.value and isinstance(evidence, Mapping):

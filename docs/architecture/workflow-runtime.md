@@ -149,6 +149,10 @@ or terminal-marker interruption. A pre-replace start retry proceeds only while
 the attempt remains `PENDING`, then commits the original logical start and its
 diagnostic together. Only a post-replace directory-sync or fence-release
 interruption may adopt a verified `RUNNING` record before dispatch continues.
+Its bounded diagnostic is durably checkpointed and reread before the executor
+is invoked, so a process exit during task execution does not erase the recovered
+storage evidence. Repaired start and terminal events retain the persisted
+`startedAt` and `completedAt` lifecycle timestamps rather than restart time.
 Writer-fence acquisition failures never grant dispatch authority because a
 contending reconciler may own the observed start. Fence-release failures may be
 recovered after verifying the committed start, and their diagnostics are
