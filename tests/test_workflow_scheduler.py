@@ -409,6 +409,46 @@ def test_durable_start_does_not_dispatch_after_writer_fence_contention(
     ) == 1
 
 
+def test_precommit_start_recovery_does_not_adopt_another_running_attempt(
+    tmp_path
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    blocking = BlockingExecutor()
+    owner = scheduler(store, blocking)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(owner.reconcile, plan, execution)
+        assert blocking.started.wait(timeout=5)
+        running = task_executions(store)[0]
+        contender = scheduler(store, FakeExecutor())
+
+        try:
+            with pytest.raises(
+                RuntimeStoreError,
+                match="durable start checkpoint outcome is ambiguous",
+            ):
+                contender._recover_durable_start(
+                    running,
+                    TIMESTAMP,
+                    {
+                        "operation": "checkpoint", "phase": "replace",
+                        "category": "io_error", "errno": errno.EIO,
+                    },
+                )
+        finally:
+            blocking.release.set()
+        completed = future.result(timeout=5)
+
+    assert completed.task_executions[0]["status"] == "SUCCEEDED"
+    assert blocking.calls == 1
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
 def test_terminal_marker_checkpoint_failure_recovers_without_replaying_body(tmp_path) -> None:
     path = tmp_path / "runtime/objects.json"
     store, plan, execution = scheduler_inputs(

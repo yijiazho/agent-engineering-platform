@@ -103,6 +103,16 @@ def _can_recover_start(diagnostic: Mapping[str, Any]) -> bool:
     ) or operation == "writer_fence" and phase == "release"
 
 
+def _can_adopt_committed_start(diagnostic: Mapping[str, Any]) -> bool:
+    return (
+        diagnostic.get("operation") == "checkpoint"
+        and diagnostic.get("phase") == "directory_sync"
+    ) or (
+        diagnostic.get("operation") == "writer_fence"
+        and diagnostic.get("phase") == "release"
+    )
+
+
 class InvalidSchedulerInputError(ValueError):
     """Raised when scheduler inputs do not identify one valid execution plan."""
 
@@ -401,7 +411,8 @@ class WorkflowScheduler:
                 },
             )
         if (
-            persisted.get("status") == TaskStatus.RUNNING.value
+            _can_adopt_committed_start(diagnostic)
+            and persisted.get("status") == TaskStatus.RUNNING.value
             and self._task_event_exists(persisted, "TaskExecutionStarted")
         ):
             recovered = dict(persisted)

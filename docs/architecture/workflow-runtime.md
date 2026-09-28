@@ -143,9 +143,10 @@ deterministic even though JSON object keys are sorted on disk. Windows byte-lock
 conflicts are reported as busy contention while lock-file open failures retain
 their underlying permission category.
 The scheduler performs one bounded recovery checkpoint for a diagnosed start
-or terminal-marker interruption. A pre-replace start retry commits the original
-logical start and its diagnostic together; a post-replace sync interruption is
-verified against the deterministic start event before dispatch continues.
+or terminal-marker interruption. A pre-replace start retry proceeds only while
+the attempt remains `PENDING`, then commits the original logical start and its
+diagnostic together. Only a post-replace directory-sync or fence-release
+interruption may adopt a verified `RUNNING` record before dispatch continues.
 Writer-fence acquisition failures never grant dispatch authority because a
 contending reconciler may own the observed start. Fence-release failures may be
 recovered after verifying the committed start, and their diagnostics are
