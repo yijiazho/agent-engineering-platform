@@ -550,7 +550,8 @@ Before enabling a real webhook, verify the deployment in this order:
 The deterministic harness, authenticated webhook ingress, execution checkout,
 GitHub App integration, live Model adapter, and pinned dogfood deployment
 profile and reconciliation consumer are implemented. Runtime objects are
-atomically checkpointed under `AEP_STATE_ROOT/runtime`, artifact bodies use a
+atomically checkpointed under `AEP_STATE_ROOT/runtime` with a cross-process
+single-writer fence and collision-safe fsync/replace protocol, artifact bodies use a
 filesystem content-addressed store, and accepted outbox rows are retired only
 after terminal workflow evidence. AEP-043 remains in progress until an
 authorized operator completes and records the credentialed live pilot.
@@ -584,7 +585,9 @@ aep artifacts show generatedartifact-...
 aep policy-decisions show policydecision-...
 ```
 
-By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; use
+By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; its
+sibling writer fence is managed automatically and should not be shared with a
+second active runtime writer. Use
 `--state-file <path>` for an offline backup. `aep executions list` discovers
 execution IDs in creation order and optionally filters by runtime status.
 `aep executions show` traces the Workflow, revision, task DAG, elapsed time,
@@ -617,7 +620,7 @@ body by default; use the persisted Event ID only as the correlation key.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 44 of the 70 implementation tasks are complete.
+contracts are established, and 44 of the 71 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -638,6 +641,11 @@ consistent multiline-insertion checks, retained non-publishable rejected
 artifacts, and explicit pass, review-required, or reject dispositions. Accidental
 unrelated deletion remains fail-closed; an explicitly authorized risky rewrite
 may proceed only through artifact-bound human approval.
+
+AEP-071 tracks durable runtime checkpoint and audit-event recovery for the
+self-hosted workflow worker. It preserves fail-closed dispatch while making
+checkpoint failures safely diagnosable and idempotently recoverable across
+restart.
 
 Structural insertions use the same canonical logical-line comparison during
 application, reconciliation, and patch evaluation. Newline transport variants

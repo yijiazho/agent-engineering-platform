@@ -105,7 +105,11 @@
             "appliedTrustedCeiling": {"type": ["integer", "null"], "minimum": 0},
             "predicateType": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096},
             "inspectionStrategy": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096},
-            "evaluationComplete": {"type": "boolean"}
+            "evaluationComplete": {"type": "boolean"},
+            "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+            "phase": {"type": "string", "minLength": 1, "maxLength": 128},
+            "category": {"type": "string", "minLength": 1, "maxLength": 128},
+            "errno": {"type": ["integer", "null"], "minimum": 0}
           }
         }
       }
@@ -247,8 +251,54 @@
             "policyDecisionIds": { "type": "array", "items": { "$ref": "#/$defs/runtimeId" }, "uniqueItems": true },
             "startedAt": { "$ref": "#/$defs/timestamp" },
             "completedAt": { "$ref": "#/$defs/timestamp" },
-            "failure": { "$ref": "#/$defs/failure" }
+            "failure": { "$ref": "#/$defs/failure" },
+            "dispatchState": { "enum": ["PENDING", "CLAIMED"] },
+            "dispatchOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "terminalEvidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status"],
+              "properties": {
+                "status": { "enum": ["SUCCEEDED", "FAILED"] },
+                "failure": { "$ref": "#/$defs/failure" }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "status": { "const": "FAILED" } }, "required": ["status"] },
+                  "then": { "required": ["failure"] }
+                },
+                {
+                  "if": { "properties": { "status": { "const": "SUCCEEDED" } }, "required": ["status"] },
+                  "then": { "not": { "required": ["failure"] } }
+                }
+              ]
+            },
+            "persistenceDiagnostics": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["operation", "phase", "category"],
+                "properties": {
+                  "operation": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "phase": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "category": {"type": "string", "minLength": 1, "maxLength": 128},
+                  "errno": {"type": ["integer", "null"], "minimum": 0}
+                }
+              }
+            }
           },
+          "allOf": [
+            {
+              "if": { "properties": { "dispatchState": { "const": "CLAIMED" } }, "required": ["dispatchState"] },
+              "then": { "required": ["dispatchOwnerId"] }
+            },
+            {
+              "if": { "properties": { "dispatchState": { "const": "PENDING" } }, "required": ["dispatchState"] },
+              "then": { "not": { "required": ["dispatchOwnerId"] } }
+            }
+          ],
           "additionalProperties": true
         }
       ]

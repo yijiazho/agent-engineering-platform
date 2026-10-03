@@ -1,12 +1,20 @@
 from concurrent.futures import ThreadPoolExecutor
+import errno
+import json
+from pathlib import Path
+from threading import Event, get_ident
+import traceback
 
 import pytest
+
+import aep.runtime_store as runtime_store_module
 
 from aep.runtime_store import (
     DurableJsonRuntimeObjectStore,
     ImmutableRuntimeObjectError,
     InMemoryRuntimeObjectStore,
     RuntimeObjectAlreadyExistsError,
+    RuntimeStoreError,
     StatusConflictError,
 )
 
@@ -54,6 +62,28 @@ def test_claim_is_atomic_and_returns_the_first_value() -> None:
 
     assert first == (True, {"id": "event-first"})
     assert duplicate == (False, {"id": "event-first"})
+
+
+def test_task_dispatch_claim_has_one_winner() -> None:
+    store = InMemoryRuntimeObjectStore()
+    object_id = "taskexecution-dispatch"
+    value = runtime_object(object_id, status="RUNNING")
+    value["dispatchState"] = "PENDING"
+    store.create(value, deterministic_key="task")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(
+            lambda owner: store.claim_task_dispatch(
+                object_id, owner, updated_at="2026-07-10T00:00:01Z"
+            ),
+            (f"owner-{index}" for index in range(16)),
+        ))
+
+    winners = [record for claimed, record in results if claimed]
+    assert len(winners) == 1
+    persisted = store.get(object_id)
+    assert persisted["dispatchState"] == "CLAIMED"
+    assert persisted["dispatchOwnerId"] == winners[0]["dispatchOwnerId"]
 
 
 def test_duplicate_id_with_another_key_is_rejected() -> None:
@@ -251,6 +281,35 @@ def test_late_bound_task_identity_can_only_be_attached_once() -> None:
         )
 
 
+def test_terminal_evidence_is_write_once_while_diagnostics_remain_mutable() -> None:
+    store = InMemoryRuntimeObjectStore()
+    object_id = "taskexecution-terminal-marker"
+    store.create(
+        runtime_object(object_id, status="RUNNING"), deterministic_key="task"
+    )
+    marker = {"status": "SUCCEEDED"}
+
+    store.update_status(
+        object_id, "RUNNING", expected_status="RUNNING",
+        changes={"terminalEvidence": marker},
+    )
+    updated = store.update_status(
+        object_id, "RUNNING", expected_status="RUNNING",
+        changes={"persistenceDiagnostics": [{
+            "operation": "checkpoint", "phase": "replace",
+            "category": "io_error", "errno": errno.EIO,
+        }]},
+    )
+
+    assert updated["terminalEvidence"] == marker
+    with pytest.raises(ValueError, match="terminalEvidence"):
+        store.update_status(
+            object_id, "RUNNING", expected_status="RUNNING",
+            changes={"terminalEvidence": {"status": "FAILED"}},
+        )
+    assert store.get(object_id)["terminalEvidence"] == marker
+
+
 def test_concurrent_terminal_status_updates_have_one_winner() -> None:
     store = InMemoryRuntimeObjectStore()
     object_id = "taskexecution-123456789abc"
@@ -290,3 +349,354 @@ def test_durable_json_store_restores_objects_claims_and_indexes(tmp_path) -> Non
     )
     assert accepted is False
     assert prior["id"] == "event-durable"
+
+
+def test_durable_json_store_persists_events_and_uses_collision_safe_checkpoint_names(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(runtime_object("taskexecution-event"), deterministic_key="task")
+    store.append_event({
+        "kind": "ExecutionEvent", "id": "executionevent-event",
+        "provenance": {"workflowExecutionId": WORKFLOW_ID}, "sequence": 1,
+    })
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    assert restarted.get("executionevent-event") is not None
+    assert not (path.parent / "objects.json.tmp").exists()
+
+
+def test_durable_checkpoint_failure_has_safe_diagnostic_without_raw_chain(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    def fail_replace(source, target):
+        error = OSError(errno.EACCES, "sensitive host path should not leak")
+        raise error
+
+    monkeypatch.setattr("aep.runtime_store.os.replace", fail_replace)
+    with pytest.raises(RuntimeStoreError) as raised:
+        store.create(runtime_object("taskexecution-failure"), deterministic_key="task")
+
+    assert raised.value.diagnostic == {
+        "operation": "checkpoint", "phase": "replace",
+        "category": "permission_denied", "errno": errno.EACCES,
+    }
+    assert "sensitive" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert isinstance(raised.value._internal_error, OSError)
+    assert "sensitive host path" in str(raised.value._internal_error)
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_independent_durable_stores_refresh_under_writer_fence_without_lost_claims(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    checkpoint_entered = Event()
+    checkpoint_release = Event()
+    second_lock_attempted = Event()
+    second_thread_id: list[int] = []
+
+    class BlockingCheckpointStore(DurableJsonRuntimeObjectStore):
+        blocked = False
+
+        def _checkpoint(self) -> None:
+            if not self.blocked:
+                self.blocked = True
+                checkpoint_entered.set()
+                assert checkpoint_release.wait(timeout=5)
+            super()._checkpoint()
+
+    first = BlockingCheckpointStore(path)
+    second = DurableJsonRuntimeObjectStore(path)
+    original_lock = runtime_store_module._lock_file
+
+    def observe_second_lock(handle):
+        if second_thread_id and get_ident() == second_thread_id[0]:
+            second_lock_attempted.set()
+        original_lock(handle)
+
+    monkeypatch.setattr(runtime_store_module, "_lock_file", observe_second_lock)
+    try:
+        def second_create():
+            second_thread_id.append(get_ident())
+            return second.create(
+                runtime_object("taskexecution-two"), deterministic_key="task-two"
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first_future = executor.submit(
+                first.create,
+                runtime_object("taskexecution-one"),
+                deterministic_key="task-one",
+            )
+            assert checkpoint_entered.wait(timeout=5)
+            second_future = executor.submit(second_create)
+            assert second_lock_attempted.wait(timeout=5)
+            checkpoint_release.set()
+            first_future.result(timeout=5)
+            try:
+                second_future.result(timeout=5)
+            except RuntimeStoreError as error:
+                assert error.diagnostic["operation"] == "writer_fence"
+                assert error.diagnostic["phase"] == "acquire"
+                second.create(
+                    runtime_object("taskexecution-two"),
+                    deterministic_key="task-two",
+                )
+    finally:
+        checkpoint_release.set()
+
+    accepted, prior = first.claim("delivery", {"id": "first"})
+    duplicate, same = second.claim("delivery", {"id": "second"})
+
+    assert accepted is True
+    assert duplicate is False
+    assert prior == same == {"id": "first"}
+    assert first.get("taskexecution-one") is not None
+    assert first.get("taskexecution-two") is not None
+
+
+def test_invalid_utf8_checkpoint_is_sanitized_as_invalid_data(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xffsensitive-corrupt-checkpoint")
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "restore", "phase": "read",
+        "category": "invalid_checkpoint",
+    }
+    assert isinstance(raised.value._internal_error, UnicodeDecodeError)
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_invalid_object_order_checkpoint_has_safe_diagnostic(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(
+        runtime_object("taskexecution-ordered"), deterministic_key="task"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["objectOrder"] = ["missing-object"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "restore", "phase": "read",
+        "category": "invalid_checkpoint",
+    }
+
+
+def test_stale_checkpoint_enumeration_failure_is_sanitized(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    original_glob = Path.glob
+
+    def fail_runtime_glob(candidate, pattern):
+        if candidate.resolve() == path.parent.resolve():
+            def broken_enumeration():
+                raise OSError(errno.EIO, "sensitive state volume path")
+                yield  # pragma: no cover - makes this an iterator
+
+            return broken_enumeration()
+        return original_glob(candidate, pattern)
+
+    monkeypatch.setattr(Path, "glob", fail_runtime_glob)
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "checkpoint_cleanup", "phase": "enumerate",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    assert isinstance(raised.value._internal_error, OSError)
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_durable_refresh_preserves_creation_order_in_indexes(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(runtime_object("taskexecution-z"), deterministic_key="task-z")
+    store.create(runtime_object("taskexecution-a"), deterministic_key="task-a")
+
+    assert [
+        value["id"] for value in store.list_by_workflow_execution(WORKFLOW_ID)
+    ] == ["taskexecution-z", "taskexecution-a"]
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    assert [
+        value["id"] for value in restarted.list_by_workflow_execution(WORKFLOW_ID)
+    ] == ["taskexecution-z", "taskexecution-a"]
+
+
+def test_writer_fence_file_does_not_grow_on_repeated_operations(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    lock_path = path.parent / ".objects.json.lock"
+    initial_size = lock_path.stat().st_size
+
+    for _ in range(50):
+        store.get("missing")
+
+    assert lock_path.stat().st_size == initial_size
+    assert initial_size <= 1
+
+
+@pytest.mark.parametrize(
+    "number",
+    sorted({
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", errno.EINVAL),
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }),
+)
+def test_directory_sync_ignores_only_unsupported_operation_errors(
+    monkeypatch, number: int
+) -> None:
+    def fail_sync(descriptor):
+        raise OSError(number, "unsupported directory sync")
+
+    monkeypatch.setattr(runtime_store_module.os, "fsync", fail_sync)
+
+    runtime_store_module._sync_directory_descriptor(123)
+
+
+def test_directory_sync_propagates_genuine_io_failure(monkeypatch) -> None:
+    def fail_sync(descriptor):
+        raise OSError(errno.EIO, "directory sync failed")
+
+    monkeypatch.setattr(runtime_store_module.os, "fsync", fail_sync)
+
+    with pytest.raises(OSError) as raised:
+        runtime_store_module._sync_directory_descriptor(123)
+
+    assert raised.value.errno == errno.EIO
+
+
+def test_restore_os_failure_retains_safe_diagnostic_without_raw_chain(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    DurableJsonRuntimeObjectStore(path).create(
+        runtime_object("taskexecution-readable"), deterministic_key="task"
+    )
+    original_read_text = Path.read_text
+
+    def fail_checkpoint_read(candidate, *args, **kwargs):
+        if candidate.resolve() == path.resolve():
+            raise OSError(errno.EIO, "sensitive mount path")
+        return original_read_text(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_checkpoint_read)
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "restore", "phase": "read",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    assert "sensitive" not in str(raised.value)
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_windows_writer_lock_conflict_is_classified_as_busy() -> None:
+    diagnostic = runtime_store_module._persistence_diagnostic(
+        "writer_fence", "acquire", OSError(errno.EACCES, "lock conflict"),
+        lock_contention=True,
+    )
+
+    assert diagnostic == {
+        "operation": "writer_fence", "phase": "acquire",
+        "category": "busy", "errno": errno.EACCES,
+    }
+
+
+def test_writer_fence_acquisition_cleanup_failure_is_sanitized(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+
+    class CloseFailingHandle:
+        def __init__(self, descriptor: int) -> None:
+            self.descriptor = descriptor
+
+        def close(self) -> None:
+            runtime_store_module.os.close(self.descriptor)
+            raise OSError(errno.EIO, "sensitive cleanup mount path")
+
+    monkeypatch.setattr(
+        runtime_store_module.os, "fdopen",
+        lambda descriptor, mode: CloseFailingHandle(descriptor),
+    )
+    monkeypatch.setattr(
+        runtime_store_module, "_lock_file",
+        lambda handle: (_ for _ in ()).throw(
+            OSError(errno.EBUSY, "sensitive acquisition path")
+        ),
+    )
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        store.get("missing")
+
+    assert raised.value.diagnostic == {
+        "operation": "writer_fence", "phase": "cleanup",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    formatted = "".join(traceback.format_exception(raised.value))
+    assert "sensitive" not in str(raised.value)
+    assert "sensitive" not in formatted
+
+
+def test_constructor_removes_only_stale_sibling_checkpoints_under_fence(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(runtime_object("taskexecution-cleanup"), deterministic_key="task")
+    orphan = path.parent / ".objects.json.interrupted.tmp"
+    unrelated = path.parent / "keep.tmp"
+    orphan.write_text("orphan", encoding="utf-8")
+    unrelated.write_text("keep", encoding="utf-8")
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+
+    assert restarted.get("taskexecution-cleanup") is not None
+    assert not orphan.exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep"
+
+
+def test_writer_fence_release_failure_is_safe_and_preserves_committed_state(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    original_unlock = runtime_store_module._unlock_file
+
+    def fail_after_unlock(handle):
+        original_unlock(handle)
+        raise OSError(errno.EIO, "sensitive lock path")
+
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", fail_after_unlock)
+    with pytest.raises(RuntimeStoreError) as raised:
+        store.claim("committed-claim", {"id": "claim-value"})
+
+    assert raised.value.diagnostic == {
+        "operation": "writer_fence", "phase": "release",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    assert "sensitive" not in str(raised.value)
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", original_unlock)
+    restarted = DurableJsonRuntimeObjectStore(path)
+    accepted, prior = restarted.claim("committed-claim", {"id": "replacement"})
+    assert accepted is False
+    assert prior == {"id": "claim-value"}

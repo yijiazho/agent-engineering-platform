@@ -1,12 +1,18 @@
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+import errno
 from pathlib import Path
 from threading import Event
 
 import pytest
 
+import aep.runtime_store as runtime_store_module
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import (
+    DurableJsonRuntimeObjectStore,
+    InMemoryRuntimeObjectStore,
+    RuntimeStoreError,
+)
 from aep.task_dag import resolve_task_dag
 from aep.task_dag import TaskDagPlan
 from aep.task_execution import FailureClass
@@ -194,6 +200,32 @@ def test_failure_rejects_unapproved_structured_details() -> None:
     assert "details" not in failure
 
 
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"operation": "x" * 129},
+        {"operation": None},
+        {"phase": None},
+        {"category": None},
+        {"errno": -1},
+        {"errno": True},
+        {
+            "reason": "one", "path": "two", "declaredMaxBytesHint": 3,
+            "blobSize": 4, "appliedTrustedCeiling": 5,
+            "predicateType": "six", "inspectionStrategy": "seven",
+            "evaluationComplete": False, "operation": "nine",
+        },
+    ],
+)
+def test_failure_diagnostic_details_match_runtime_schema_bounds(details) -> None:
+    result = TaskExecutionResult.failure(
+        FailureClass.RECOVERABLE, "invalid diagnostic", details=details
+    )
+
+    with pytest.raises(ValueError):
+        result.validate()
+
+
 def test_reconciliation_is_idempotent_after_success() -> None:
     store, plan, execution = scheduler_inputs([node("analyze")])
     executor = FakeExecutor()
@@ -246,6 +278,364 @@ def test_events_cover_queued_started_succeeded_and_failed_states() -> None:
         task_validator.validate(dict(task))
     for event in events:
         event_validator.validate(dict(event))
+
+
+def test_durable_scheduler_commits_one_start_event_and_restart_does_not_dispatch_again(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    executor = FakeExecutor()
+    first = scheduler(store, executor).reconcile(plan, execution)
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    second_executor = FakeExecutor()
+    repeated = scheduler(restarted, second_executor).reconcile(plan, execution)
+
+    assert first.task_executions[0]["status"] == "SUCCEEDED"
+    assert repeated.task_executions == ()
+    assert executor.calls == [("analyze", 1)]
+    assert second_executor.calls == []
+    assert [event["eventType"] for event in execution_events(restarted)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+@pytest.mark.parametrize("failure_mode", ["start_pre_replace", "start_directory_sync"])
+def test_durable_start_checkpoint_failure_recovers_once_with_diagnostics(
+    tmp_path, failure_mode: str
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: FaultInjectingDurableStore(path, failure_mode),
+    )
+    executor = FakeExecutor()
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    task = result.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert executor.calls == [("analyze", 1)]
+    assert task["persistenceDiagnostics"] == [{
+        "operation": "checkpoint",
+        "phase": "directory_sync" if failure_mode == "start_directory_sync" else "replace",
+        "category": "io_error",
+        "errno": 5,
+    }]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+    _runtime_validator("taskexecution.schema.json").validate(dict(task))
+
+
+def test_start_retry_adopts_its_own_post_commit_checkpoint(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: RetryPostCommitStartStore(path),
+    )
+    executor = FakeExecutor()
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    task = result.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert executor.calls == [("analyze", 1)]
+    assert [item["phase"] for item in task["persistenceDiagnostics"]] == [
+        "replace", "directory_sync",
+    ]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+def test_failed_start_diagnostic_checkpoint_is_recovered_on_restart(
+    tmp_path,
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: DiagnosticCheckpointFailureStore(path),
+    )
+    first_executor = FakeExecutor()
+
+    with pytest.raises(RuntimeStoreError):
+        scheduler(store, first_executor).reconcile(plan, execution)
+
+    pending_dispatch = task_executions(store)[0]
+    assert pending_dispatch["status"] == "RUNNING"
+    assert pending_dispatch["dispatchState"] == "PENDING"
+    assert first_executor.calls == []
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    second_executor = FakeExecutor()
+    recovered = scheduler(restarted, second_executor).reconcile(plan, execution)
+
+    task = recovered.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert task["dispatchState"] == "CLAIMED"
+    assert second_executor.calls == [("analyze", 1)]
+    assert task["persistenceDiagnostics"] == [{
+        "operation": "dispatch_recovery",
+        "phase": "resume",
+        "category": "interrupted",
+    }]
+    assert [event["eventType"] for event in execution_events(restarted)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+@pytest.mark.parametrize(
+    "terminal_evidence",
+    [
+        {"status": "FAILED"},
+        {
+            "status": "SUCCEEDED",
+            "failure": {
+                "class": "RECOVERABLE",
+                "message": "must not accompany success",
+                "retryable": True,
+            },
+        },
+    ],
+)
+def test_task_execution_schema_rejects_inconsistent_terminal_evidence(
+    terminal_evidence,
+) -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    result = scheduler(store, FakeExecutor()).reconcile(plan, execution)
+    task = dict(result.task_executions[0])
+    task["terminalEvidence"] = terminal_evidence
+
+    assert not _runtime_validator("taskexecution.schema.json").is_valid(task)
+
+
+def test_durable_start_recovers_from_post_commit_fence_release_failure(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    executor = FakeExecutor()
+    original_unlock = runtime_store_module._unlock_file
+    failed = False
+
+    def fail_start_release(handle):
+        nonlocal failed
+        original_unlock(handle)
+        has_start_event = any(
+            value.get("eventType") == "TaskExecutionStarted"
+            for value in store._objects.values()
+        )
+        if has_start_event and not failed:
+            failed = True
+            raise OSError(errno.EIO, "sensitive lock path")
+
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", fail_start_release)
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    task = result.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert task["persistenceDiagnostics"] == [{
+        "operation": "writer_fence", "phase": "release",
+        "category": "io_error", "errno": errno.EIO,
+    }]
+    assert executor.calls == [("analyze", 1)]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+def test_recovered_start_diagnostic_is_durable_before_executor_dispatch(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    original_unlock = runtime_store_module._unlock_file
+    failed = False
+
+    def fail_start_release(handle):
+        nonlocal failed
+        original_unlock(handle)
+        has_start_event = any(
+            value.get("eventType") == "TaskExecutionStarted"
+            for value in store._objects.values()
+        )
+        if has_start_event and not failed:
+            failed = True
+            raise OSError(errno.EIO, "sensitive lock path")
+
+    class ProcessExitExecutor:
+        def execute(self, task, task_execution):
+            raise SystemExit("simulated process exit")
+
+    monkeypatch.setattr(runtime_store_module, "_unlock_file", fail_start_release)
+    with pytest.raises(SystemExit, match="simulated process exit"):
+        scheduler(store, ProcessExitExecutor()).reconcile(plan, execution)
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    persisted = task_executions(restarted)[0]
+    assert persisted["status"] == "RUNNING"
+    assert "terminalEvidence" not in persisted
+    assert persisted["persistenceDiagnostics"] == [{
+        "operation": "writer_fence", "phase": "release",
+        "category": "io_error", "errno": errno.EIO,
+    }]
+    _runtime_validator("taskexecution.schema.json").validate(dict(persisted))
+
+
+def test_durable_start_does_not_dispatch_after_writer_fence_contention(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    executor = FakeExecutor()
+    original_lock = runtime_store_module._lock_file
+    failed = False
+
+    def fail_start_acquire(handle):
+        nonlocal failed
+        has_pending_attempt = any(
+            value.get("kind") == "TaskExecution"
+            and value.get("status") == "PENDING"
+            for value in store._objects.values()
+        )
+        has_queued_event = any(
+            value.get("eventType") == "TaskExecutionQueued"
+            for value in store._objects.values()
+        )
+        if has_pending_attempt and has_queued_event and not failed:
+            failed = True
+            raise OSError(errno.EBUSY, "injected writer contention")
+        original_lock(handle)
+
+    monkeypatch.setattr(runtime_store_module, "_lock_file", fail_start_acquire)
+    first = scheduler(store, executor).reconcile(plan, execution)
+
+    assert first.task_executions[0]["status"] == "PENDING"
+    assert executor.calls == []
+    assert not any(
+        event["eventType"] == "TaskExecutionStarted"
+        for event in execution_events(store)
+    )
+
+    second = scheduler(store, executor).reconcile(plan, execution)
+
+    assert second.task_executions[0]["status"] == "SUCCEEDED"
+    assert executor.calls == [("analyze", 1)]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+def test_precommit_start_recovery_does_not_adopt_another_running_attempt(
+    tmp_path
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: DurableJsonRuntimeObjectStore(path)
+    )
+    blocking = BlockingExecutor()
+    owner = scheduler(store, blocking)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(owner.reconcile, plan, execution)
+        assert blocking.started.wait(timeout=5)
+        running = task_executions(store)[0]
+        contender = scheduler(store, FakeExecutor())
+
+        try:
+            with pytest.raises(
+                RuntimeStoreError,
+                match="durable start checkpoint outcome is ambiguous",
+            ):
+                contender._recover_durable_start(
+                    running,
+                    TIMESTAMP,
+                    {
+                        "operation": "checkpoint", "phase": "replace",
+                        "category": "io_error", "errno": errno.EIO,
+                    },
+                )
+        finally:
+            blocking.release.set()
+        completed = future.result(timeout=5)
+
+    assert completed.task_executions[0]["status"] == "SUCCEEDED"
+    assert blocking.calls == 1
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+def test_terminal_marker_checkpoint_failure_recovers_without_replaying_body(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: FaultInjectingDurableStore(path, "terminal_marker"),
+    )
+    executor = FakeExecutor()
+    first = scheduler(store, executor).reconcile(plan, execution)
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    repeated_executor = FakeExecutor()
+    repeated = scheduler(restarted, repeated_executor).reconcile(plan, execution)
+
+    assert first.task_executions[0]["status"] == "SUCCEEDED"
+    assert first.task_executions[0]["persistenceDiagnostics"][0]["phase"] == "replace"
+    assert executor.calls == [("analyze", 1)]
+    assert repeated.task_executions == ()
+    assert repeated_executor.calls == []
+    _runtime_validator("taskexecution.schema.json").validate(
+        dict(first.task_executions[0])
+    )
+
+
+def test_terminal_marker_repair_preserves_original_terminal_timestamp(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: FaultInjectingDurableStore(
+            path, "terminal_transition"
+        ),
+    )
+    clock = MutableClock(TIMESTAMP)
+    executor = FakeExecutor()
+    runtime = WorkflowScheduler(store, executor, clock=clock)
+
+    with pytest.raises(RuntimeStoreError):
+        runtime.reconcile(plan, execution)
+
+    marker = task_executions(store)[0]
+    assert marker["status"] == "RUNNING"
+    assert marker["updatedAt"] == TIMESTAMP
+    assert marker["terminalEvidence"] == {"status": "SUCCEEDED"}
+
+    clock.value = "2036-08-04T20:00:00Z"
+    restarted = DurableJsonRuntimeObjectStore(path)
+    repeated_executor = FakeExecutor()
+    repeated = WorkflowScheduler(
+        restarted, repeated_executor, clock=clock
+    ).reconcile(plan, execution)
+
+    repaired = restarted.get(str(marker["id"]))
+    terminal_event = next(
+        event for event in execution_events(restarted)
+        if event["eventType"] == "TaskExecutionSucceeded"
+    )
+    assert repeated.task_executions == ()
+    assert repaired["status"] == "SUCCEEDED"
+    assert repaired["updatedAt"] == TIMESTAMP
+    assert repaired["completedAt"] == TIMESTAMP
+    assert terminal_event["emittedAt"] == TIMESTAMP
+    assert executor.calls == [("analyze", 1)]
+    assert repeated_executor.calls == []
 
 
 def test_concurrent_reconcilers_execute_attempt_once_and_link_it_once() -> None:
@@ -371,6 +761,29 @@ def test_missing_terminal_event_is_repaired_before_dependent_runs() -> None:
     assert [event["eventType"] for event in execution_events(store)].count(
         "TaskExecutionSucceeded"
     ) == 2
+
+
+def test_start_event_repair_reuses_persisted_start_timestamp() -> None:
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")], store_factory=lambda: FallibleStore("started_event")
+    )
+    clock = MutableClock(TIMESTAMP)
+    runtime = WorkflowScheduler(store, FakeExecutor(), clock=clock)
+
+    with pytest.raises(OSError, match="injected event failure"):
+        runtime.reconcile(plan, execution)
+
+    failed = task_executions(store)[0]
+    assert failed["startedAt"] == TIMESTAMP
+    clock.value = "2036-08-04T20:00:00Z"
+    runtime.reconcile(plan, execution)
+
+    started = next(
+        event for event in execution_events(store)
+        if event["eventType"] == "TaskExecutionStarted"
+    )
+    assert started["createdAt"] == TIMESTAMP
+    assert started["emittedAt"] == TIMESTAMP
 
 
 def test_live_running_executor_is_not_reclaimed_after_large_clock_advance() -> None:
@@ -598,6 +1011,143 @@ class FallibleStore(InMemoryRuntimeObjectStore):
         return super().append_task_execution_id(
             workflow_execution_id, task_execution_id, **kwargs
         )
+
+
+class FaultInjectingDurableStore(DurableJsonRuntimeObjectStore):
+    def __init__(self, path: Path, failure_mode: str) -> None:
+        self.failure_mode = failure_mode
+        self.failed = False
+        super().__init__(path)
+
+    def _checkpoint(self) -> None:
+        tasks = [
+            value for value in self._objects.values()
+            if value.get("kind") == "TaskExecution"
+        ]
+        started = any(
+            value.get("kind") == "ExecutionEvent"
+            and value.get("eventType") == "TaskExecutionStarted"
+            for value in self._objects.values()
+        )
+        start_boundary = any(
+            task.get("status") == "RUNNING" and "terminalEvidence" not in task
+            for task in tasks
+        ) and started
+        terminal_marker = any("terminalEvidence" in task for task in tasks)
+        terminal_transition = any(
+            "terminalEvidence" in task
+            and task.get("status") in {"SUCCEEDED", "FAILED"}
+            for task in tasks
+        )
+        should_fail = (
+            self.failure_mode in {"start_pre_replace", "start_directory_sync"}
+            and start_boundary
+        ) or (
+            self.failure_mode == "terminal_marker" and terminal_marker
+        ) or (
+            self.failure_mode == "terminal_transition" and terminal_transition
+        )
+        if not self.failed and should_fail:
+            self.failed = True
+            if self.failure_mode == "start_directory_sync":
+                super()._checkpoint()
+                phase = "directory_sync"
+            else:
+                phase = "replace"
+            raise RuntimeStoreError(
+                "injected durable checkpoint failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": phase,
+                    "category": "io_error", "errno": 5,
+                },
+            )
+        super()._checkpoint()
+
+
+class RetryPostCommitStartStore(DurableJsonRuntimeObjectStore):
+    def __init__(self, path: Path) -> None:
+        self.start_failures = 0
+        super().__init__(path)
+
+    def _checkpoint(self) -> None:
+        tasks = [
+            value for value in self._objects.values()
+            if value.get("kind") == "TaskExecution"
+        ]
+        started = any(
+            value.get("kind") == "ExecutionEvent"
+            and value.get("eventType") == "TaskExecutionStarted"
+            for value in self._objects.values()
+        )
+        start_boundary = any(
+            task.get("status") == "RUNNING" and "terminalEvidence" not in task
+            for task in tasks
+        ) and started
+        if start_boundary and self.start_failures == 0:
+            self.start_failures += 1
+            raise RuntimeStoreError(
+                "injected pre-commit start failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "replace",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        if start_boundary and self.start_failures == 1:
+            self.start_failures += 1
+            super()._checkpoint()
+            raise RuntimeStoreError(
+                "injected post-commit retry failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "directory_sync",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        super()._checkpoint()
+
+
+class DiagnosticCheckpointFailureStore(DurableJsonRuntimeObjectStore):
+    """Commit start, then fail the first diagnostic-only checkpoint."""
+
+    def __init__(self, path: Path) -> None:
+        self.failure_stage = 0
+        super().__init__(path)
+
+    def _checkpoint(self) -> None:
+        running = next((
+            value for value in self._objects.values()
+            if value.get("kind") == "TaskExecution"
+            and value.get("status") == "RUNNING"
+            and value.get("dispatchState") == "PENDING"
+        ), None)
+        started = any(
+            value.get("kind") == "ExecutionEvent"
+            and value.get("eventType") == "TaskExecutionStarted"
+            for value in self._objects.values()
+        )
+        if running is not None and started and self.failure_stage == 0:
+            self.failure_stage = 1
+            super()._checkpoint()
+            raise RuntimeStoreError(
+                "injected post-commit start failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "directory_sync",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        if (
+            running is not None
+            and running.get("persistenceDiagnostics")
+            and self.failure_stage == 1
+        ):
+            self.failure_stage = 2
+            raise RuntimeStoreError(
+                "injected diagnostic checkpoint failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "replace",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        super()._checkpoint()
 
 
 class RaisingExecutor:

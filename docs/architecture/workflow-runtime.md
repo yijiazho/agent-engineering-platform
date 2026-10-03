@@ -128,6 +128,58 @@ successful prerequisites and schedules the next wave; configuration,
 evaluation, policy, permanent, and exhausted recoverable failures leave
 dependents blocked.
 
+The durable JSON runtime store uses a cross-process single-writer fence rather
+than a process-local lock. Each checkpoint uses a collision-safe sibling
+temporary file, file and directory sync where supported, and an atomic replace.
+Directory sync suppresses only `EINVAL`, `ENOTSUP`, or `EOPNOTSUPP` when the
+mounted filesystem explicitly does not implement it; all genuine sync failures
+remain diagnosable checkpoint errors.
+For durable stores, the TaskExecution lifecycle transition, owning workflow
+attachment, and required audit event share one checkpoint. A start checkpoint
+failure therefore cannot dispatch the handler; a terminal-return marker lets
+restart repair terminal evidence without replaying a completed side effect or
+replacing the marker's original terminal timestamp with the restart time.
+The marker is write-once while the TaskExecution remains `RUNNING`; later
+diagnostic updates cannot replace its terminal outcome.
+Persistence failures retain only bounded phase/category/errno diagnostics in
+runtime evidence and never expose host paths, secrets, or exception bodies,
+including through chained exceptions in polling logs. Checkpoints persist
+explicit object creation order so refreshed workflow and task indexes remain
+deterministic even though JSON object keys are sorted on disk. Windows byte-lock
+conflicts are reported as busy contention while lock-file open failures retain
+their underlying permission category. Fence-acquisition cleanup failures are
+also reduced to bounded diagnostics rather than escaping as raw exceptions.
+The original exception remains available only in a private, non-serialized
+in-process field and is never attached to the public exception chain.
+Invalid UTF-8 checkpoint content is classified as invalid checkpoint data, and
+stale-checkpoint directory enumeration failures use the same bounded cleanup
+diagnostic contract as removal failures.
+The scheduler performs one bounded recovery checkpoint for a diagnosed start
+or terminal-marker interruption. A pre-replace start retry proceeds only while
+the attempt remains `PENDING`, then commits the original logical start and its
+diagnostic together. Only a post-replace directory-sync or fence-release
+interruption may adopt a verified `RUNNING` record before dispatch continues.
+The same verification applies if the bounded pre-commit retry itself reports a
+post-commit interruption.
+Its bounded diagnostic is durably checkpointed and reread before the executor
+is invoked, so a process exit during task execution does not erase the recovered
+storage evidence. Repaired start and terminal events retain the persisted
+`startedAt` and `completedAt` lifecycle timestamps rather than restart time.
+Writer-fence acquisition failures never grant dispatch authority because a
+contending reconciler may own the observed start. Fence-release failures may be
+recovered after verifying the committed start, and their diagnostics are
+persisted in a separate verified `RUNNING` checkpoint before dispatch. A
+durable start also records `dispatchState: PENDING`; the executor is invoked
+only after one reconciler atomically changes it to `CLAIMED`. If the diagnostic
+checkpoint fails, a later reconciliation can record recovery evidence and claim
+the still-pending dispatch without duplicating execution.
+Recovered diagnostics are retained on the TaskExecution in an eight-entry
+bounded history.
+Initial restore and stale temporary-checkpoint cleanup run under the same
+cross-process fence. The lock file has constant size, and a release failure is
+treated as a diagnosable post-commit outcome that must be verified from the
+checkpoint before dispatch.
+
 The scheduler loads the authoritative WorkflowExecution from runtime storage,
 verifies immutable caller evidence against it, and validates all
 WorkflowExecution, TaskExecution, and ExecutionEvent records against their
