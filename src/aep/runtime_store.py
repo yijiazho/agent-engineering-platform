@@ -29,7 +29,9 @@ KIND_IDENTITY_FIELDS: Final = {
     )
 }
 KIND_WRITE_ONCE_FIELDS: Final = {
-    "TaskExecution": frozenset({"contextPackageId", "resolvedAgentId"}),
+    "TaskExecution": frozenset({
+        "contextPackageId", "resolvedAgentId", "terminalEvidence",
+    }),
     "WorkflowExecution": frozenset({"resolvedTaskPlan"}),
 }
 STATUS_MANAGED_FIELDS: Final = frozenset({"status", "updatedAt", "completedAt"})
@@ -606,9 +608,23 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             return
         descriptor = os.open(self._path.parent, os.O_RDONLY)
         try:
-            os.fsync(descriptor)
+            _sync_directory_descriptor(descriptor)
         finally:
             os.close(descriptor)
+
+
+def _sync_directory_descriptor(descriptor: int) -> None:
+    """Sync a directory unless its filesystem documents no such operation."""
+    try:
+        os.fsync(descriptor)
+    except OSError as error:
+        unsupported = {
+            errno.EINVAL,
+            getattr(errno, "ENOTSUP", errno.EINVAL),
+            getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+        }
+        if error.errno not in unsupported:
+            raise
 
 
 def _persistence_diagnostic(

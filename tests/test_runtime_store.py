@@ -257,6 +257,35 @@ def test_late_bound_task_identity_can_only_be_attached_once() -> None:
         )
 
 
+def test_terminal_evidence_is_write_once_while_diagnostics_remain_mutable() -> None:
+    store = InMemoryRuntimeObjectStore()
+    object_id = "taskexecution-terminal-marker"
+    store.create(
+        runtime_object(object_id, status="RUNNING"), deterministic_key="task"
+    )
+    marker = {"status": "SUCCEEDED"}
+
+    store.update_status(
+        object_id, "RUNNING", expected_status="RUNNING",
+        changes={"terminalEvidence": marker},
+    )
+    updated = store.update_status(
+        object_id, "RUNNING", expected_status="RUNNING",
+        changes={"persistenceDiagnostics": [{
+            "operation": "checkpoint", "phase": "replace",
+            "category": "io_error", "errno": errno.EIO,
+        }]},
+    )
+
+    assert updated["terminalEvidence"] == marker
+    with pytest.raises(ValueError, match="terminalEvidence"):
+        store.update_status(
+            object_id, "RUNNING", expected_status="RUNNING",
+            changes={"terminalEvidence": {"status": "FAILED"}},
+        )
+    assert store.get(object_id)["terminalEvidence"] == marker
+
+
 def test_concurrent_terminal_status_updates_have_one_winner() -> None:
     store = InMemoryRuntimeObjectStore()
     object_id = "taskexecution-123456789abc"
@@ -377,6 +406,37 @@ def test_writer_fence_file_does_not_grow_on_repeated_operations(tmp_path) -> Non
 
     assert lock_path.stat().st_size == initial_size
     assert initial_size <= 1
+
+
+@pytest.mark.parametrize(
+    "number",
+    sorted({
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", errno.EINVAL),
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }),
+)
+def test_directory_sync_ignores_only_unsupported_operation_errors(
+    monkeypatch, number: int
+) -> None:
+    def fail_sync(descriptor):
+        raise OSError(number, "unsupported directory sync")
+
+    monkeypatch.setattr(runtime_store_module.os, "fsync", fail_sync)
+
+    runtime_store_module._sync_directory_descriptor(123)
+
+
+def test_directory_sync_propagates_genuine_io_failure(monkeypatch) -> None:
+    def fail_sync(descriptor):
+        raise OSError(errno.EIO, "directory sync failed")
+
+    monkeypatch.setattr(runtime_store_module.os, "fsync", fail_sync)
+
+    with pytest.raises(OSError) as raised:
+        runtime_store_module._sync_directory_descriptor(123)
+
+    assert raised.value.errno == errno.EIO
 
 
 def test_restore_os_failure_retains_safe_diagnostic_without_raw_chain(

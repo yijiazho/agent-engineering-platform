@@ -183,20 +183,20 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | In Progress |
 | 56 | [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md) | In Progress |
 | 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | In Progress |
-| 58 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
-| 59 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
-| 60 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |
-| 61 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
-| 62 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Not Started |
-| 63 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Not Started |
-| 64 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Not Started |
-| 65 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |
-| 66 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
-| 67 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
-| 68 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
-| 69 | [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md) | Not Started |
-| 70 | [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md) | Not Started |
-| 71 | [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md) | In Progress |
+| 58 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
+| 59 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |
+| 60 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
+| 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Not Started |
+| 62 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Not Started |
+| 63 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Not Started |
+| 64 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |
+| 65 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
+| 66 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
+| 67 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
+| 68 | [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md) | Not Started |
+| 69 | [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md) | Not Started |
+| 70 | [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md) | In Progress |
+| 71 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 
 ---
 

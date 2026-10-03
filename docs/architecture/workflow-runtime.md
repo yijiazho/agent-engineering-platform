@@ -131,11 +131,16 @@ dependents blocked.
 The durable JSON runtime store uses a cross-process single-writer fence rather
 than a process-local lock. Each checkpoint uses a collision-safe sibling
 temporary file, file and directory sync where supported, and an atomic replace.
+Directory sync suppresses only `EINVAL`, `ENOTSUP`, or `EOPNOTSUPP` when the
+mounted filesystem explicitly does not implement it; all genuine sync failures
+remain diagnosable checkpoint errors.
 For durable stores, the TaskExecution lifecycle transition, owning workflow
 attachment, and required audit event share one checkpoint. A start checkpoint
 failure therefore cannot dispatch the handler; a terminal-return marker lets
 restart repair terminal evidence without replaying a completed side effect or
 replacing the marker's original terminal timestamp with the restart time.
+The marker is write-once while the TaskExecution remains `RUNNING`; later
+diagnostic updates cannot replace its terminal outcome.
 Persistence failures retain only bounded phase/category/errno diagnostics in
 runtime evidence and never expose host paths, secrets, or exception bodies,
 including through chained exceptions in polling logs. Checkpoints persist
