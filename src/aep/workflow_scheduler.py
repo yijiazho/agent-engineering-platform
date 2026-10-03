@@ -401,14 +401,24 @@ class WorkflowScheduler:
             )
         diagnostics = _append_persistence_diagnostic(persisted, details)
         if persisted.get("status") == TaskStatus.PENDING.value:
-            return self._transition_and_emit(
-                persisted, TaskStatus.RUNNING,
-                event_type="TaskExecutionStarted", timestamp=timestamp,
-                changes={
-                    "startedAt": timestamp,
-                    "persistenceDiagnostics": diagnostics,
-                },
-            )
+            try:
+                return self._transition_and_emit(
+                    persisted, TaskStatus.RUNNING,
+                    event_type="TaskExecutionStarted", timestamp=timestamp,
+                    changes={
+                        "startedAt": timestamp,
+                        "persistenceDiagnostics": diagnostics,
+                    },
+                )
+            except RuntimeStoreError as retry_error:
+                if (
+                    retry_error.diagnostic
+                    and _can_adopt_committed_start(retry_error.diagnostic)
+                ):
+                    return self._recover_durable_start(
+                        persisted, timestamp, retry_error.diagnostic
+                    )
+                raise
         if (
             _can_adopt_committed_start(diagnostic)
             and persisted.get("status") == TaskStatus.RUNNING.value

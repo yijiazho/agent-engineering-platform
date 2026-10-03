@@ -329,6 +329,27 @@ def test_durable_start_checkpoint_failure_recovers_once_with_diagnostics(
     _runtime_validator("taskexecution.schema.json").validate(dict(task))
 
 
+def test_start_retry_adopts_its_own_post_commit_checkpoint(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: RetryPostCommitStartStore(path),
+    )
+    executor = FakeExecutor()
+
+    result = scheduler(store, executor).reconcile(plan, execution)
+
+    task = result.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert executor.calls == [("analyze", 1)]
+    assert [item["phase"] for item in task["persistenceDiagnostics"]] == [
+        "replace", "directory_sync",
+    ]
+    assert [event["eventType"] for event in execution_events(store)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
 def test_durable_start_recovers_from_post_commit_fence_release_failure(
     tmp_path, monkeypatch
 ) -> None:
@@ -977,6 +998,47 @@ class FaultInjectingDurableStore(DurableJsonRuntimeObjectStore):
                 diagnostic={
                     "operation": "checkpoint", "phase": phase,
                     "category": "io_error", "errno": 5,
+                },
+            )
+        super()._checkpoint()
+
+
+class RetryPostCommitStartStore(DurableJsonRuntimeObjectStore):
+    def __init__(self, path: Path) -> None:
+        self.start_failures = 0
+        super().__init__(path)
+
+    def _checkpoint(self) -> None:
+        tasks = [
+            value for value in self._objects.values()
+            if value.get("kind") == "TaskExecution"
+        ]
+        started = any(
+            value.get("kind") == "ExecutionEvent"
+            and value.get("eventType") == "TaskExecutionStarted"
+            for value in self._objects.values()
+        )
+        start_boundary = any(
+            task.get("status") == "RUNNING" and "terminalEvidence" not in task
+            for task in tasks
+        ) and started
+        if start_boundary and self.start_failures == 0:
+            self.start_failures += 1
+            raise RuntimeStoreError(
+                "injected pre-commit start failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "replace",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        if start_boundary and self.start_failures == 1:
+            self.start_failures += 1
+            super()._checkpoint()
+            raise RuntimeStoreError(
+                "injected post-commit retry failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "directory_sync",
+                    "category": "io_error", "errno": errno.EIO,
                 },
             )
         super()._checkpoint()

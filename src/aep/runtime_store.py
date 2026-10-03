@@ -40,9 +40,16 @@ STATUS_MANAGED_FIELDS: Final = frozenset({"status", "updatedAt", "completedAt"})
 class RuntimeStoreError(Exception):
     """Base class for runtime store errors."""
 
-    def __init__(self, message: str, *, diagnostic: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: Mapping[str, Any] | None = None,
+        internal_error: BaseException | None = None,
+    ) -> None:
         super().__init__(message)
         self.diagnostic = MappingProxyType(dict(diagnostic or {}))
+        self._internal_error = internal_error
 
 
 class RuntimeObjectNotFoundError(RuntimeStoreError):
@@ -447,10 +454,20 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
     def _restore(self) -> None:
         try:
             encoded = self._path.read_text(encoding="utf-8")
+        except UnicodeError as error:
+            raise RuntimeStoreError(
+                "durable runtime checkpoint is invalid",
+                diagnostic={
+                    "operation": "restore", "phase": "read",
+                    "category": "invalid_checkpoint",
+                },
+                internal_error=error,
+            ) from None
         except OSError as error:
             raise RuntimeStoreError(
                 "durable runtime checkpoint could not be read",
                 diagnostic=_persistence_diagnostic("restore", "read", error),
+                internal_error=error,
             ) from None
         try:
             payload = json.loads(encoded)
@@ -461,6 +478,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             raise RuntimeStoreError(
                 "durable runtime checkpoint is invalid",
                 diagnostic={"operation": "restore", "phase": "read", "category": "invalid_checkpoint"},
+                internal_error=error,
             ) from None
         if not all(isinstance(item, dict) for item in (objects, deterministic_keys, claims)):
             raise RuntimeStoreError("durable runtime checkpoint is invalid")
@@ -522,6 +540,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             raise RuntimeStoreError(
                 "durable runtime checkpoint persistence failed",
                 diagnostic=_persistence_diagnostic("checkpoint", phase, error),
+                internal_error=error,
             ) from None
 
     def _mutate(self, operation: Callable[[], Any]) -> Any:
@@ -549,16 +568,26 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
 
     def _cleanup_stale_checkpoints(self) -> None:
         pattern = f".{self._path.name}.*.tmp"
-        for candidate in self._path.parent.glob(pattern):
-            try:
-                candidate.unlink(missing_ok=True)
-            except OSError as error:
-                raise RuntimeStoreError(
-                    "stale runtime checkpoint could not be removed",
-                    diagnostic=_persistence_diagnostic(
-                        "checkpoint_cleanup", "remove", error
-                    ),
-                ) from None
+        try:
+            for candidate in self._path.parent.glob(pattern):
+                try:
+                    candidate.unlink(missing_ok=True)
+                except OSError as error:
+                    raise RuntimeStoreError(
+                        "stale runtime checkpoint could not be removed",
+                        diagnostic=_persistence_diagnostic(
+                            "checkpoint_cleanup", "remove", error
+                        ),
+                        internal_error=error,
+                    ) from None
+        except OSError as error:
+            raise RuntimeStoreError(
+                "stale runtime checkpoints could not be enumerated",
+                diagnostic=_persistence_diagnostic(
+                    "checkpoint_cleanup", "enumerate", error
+                ),
+                internal_error=error,
+            ) from None
 
     @contextmanager
     def _writer_fence(self):
@@ -588,6 +617,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                     "writer_fence", diagnostic_phase, diagnostic_error,
                     lock_contention=diagnostic_phase == "acquire" and os.name == "nt",
                 ),
+                internal_error=diagnostic_error,
             ) from None
         try:
             yield
@@ -601,6 +631,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                 diagnostic=_persistence_diagnostic(
                     "writer_fence", "release", release_error
                 ),
+                internal_error=release_error,
             ) from None
 
     def _sync_directory(self) -> None:

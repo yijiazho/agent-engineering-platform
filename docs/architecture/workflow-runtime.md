@@ -149,11 +149,18 @@ deterministic even though JSON object keys are sorted on disk. Windows byte-lock
 conflicts are reported as busy contention while lock-file open failures retain
 their underlying permission category. Fence-acquisition cleanup failures are
 also reduced to bounded diagnostics rather than escaping as raw exceptions.
+The original exception remains available only in a private, non-serialized
+in-process field and is never attached to the public exception chain.
+Invalid UTF-8 checkpoint content is classified as invalid checkpoint data, and
+stale-checkpoint directory enumeration failures use the same bounded cleanup
+diagnostic contract as removal failures.
 The scheduler performs one bounded recovery checkpoint for a diagnosed start
 or terminal-marker interruption. A pre-replace start retry proceeds only while
 the attempt remains `PENDING`, then commits the original logical start and its
 diagnostic together. Only a post-replace directory-sync or fence-release
 interruption may adopt a verified `RUNNING` record before dispatch continues.
+The same verification applies if the bounded pre-commit retry itself reports a
+post-commit interruption.
 Its bounded diagnostic is durably checkpointed and reread before the executor
 is invoked, so a process exit during task execution does not erase the recovered
 storage evidence. Repaired start and terminal events retain the persisted

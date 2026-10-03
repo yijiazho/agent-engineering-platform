@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import errno
 from pathlib import Path
+from threading import Event, get_ident
 import traceback
 
 import pytest
@@ -360,15 +361,70 @@ def test_durable_checkpoint_failure_has_safe_diagnostic_without_raw_chain(
     }
     assert "sensitive" not in str(raised.value)
     assert raised.value.__cause__ is None
+    assert isinstance(raised.value._internal_error, OSError)
+    assert "sensitive host path" in str(raised.value._internal_error)
     assert "sensitive" not in "".join(traceback.format_exception(raised.value))
 
 
-def test_independent_durable_stores_refresh_under_writer_fence_without_lost_claims(tmp_path) -> None:
+def test_independent_durable_stores_refresh_under_writer_fence_without_lost_claims(
+    tmp_path, monkeypatch
+) -> None:
     path = tmp_path / "runtime/objects.json"
-    first = DurableJsonRuntimeObjectStore(path)
+    checkpoint_entered = Event()
+    checkpoint_release = Event()
+    second_lock_attempted = Event()
+    second_thread_id: list[int] = []
+
+    class BlockingCheckpointStore(DurableJsonRuntimeObjectStore):
+        blocked = False
+
+        def _checkpoint(self) -> None:
+            if not self.blocked:
+                self.blocked = True
+                checkpoint_entered.set()
+                assert checkpoint_release.wait(timeout=5)
+            super()._checkpoint()
+
+    first = BlockingCheckpointStore(path)
     second = DurableJsonRuntimeObjectStore(path)
-    first.create(runtime_object("taskexecution-one"), deterministic_key="task-one")
-    second.create(runtime_object("taskexecution-two"), deterministic_key="task-two")
+    original_lock = runtime_store_module._lock_file
+
+    def observe_second_lock(handle):
+        if second_thread_id and get_ident() == second_thread_id[0]:
+            second_lock_attempted.set()
+        original_lock(handle)
+
+    monkeypatch.setattr(runtime_store_module, "_lock_file", observe_second_lock)
+    try:
+        def second_create():
+            second_thread_id.append(get_ident())
+            return second.create(
+                runtime_object("taskexecution-two"), deterministic_key="task-two"
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first_future = executor.submit(
+                first.create,
+                runtime_object("taskexecution-one"),
+                deterministic_key="task-one",
+            )
+            assert checkpoint_entered.wait(timeout=5)
+            second_future = executor.submit(second_create)
+            assert second_lock_attempted.wait(timeout=5)
+            checkpoint_release.set()
+            first_future.result(timeout=5)
+            try:
+                second_future.result(timeout=5)
+            except RuntimeStoreError as error:
+                assert error.diagnostic["operation"] == "writer_fence"
+                assert error.diagnostic["phase"] == "acquire"
+                second.create(
+                    runtime_object("taskexecution-two"),
+                    deterministic_key="task-two",
+                )
+    finally:
+        checkpoint_release.set()
+
     accepted, prior = first.claim("delivery", {"id": "first"})
     duplicate, same = second.claim("delivery", {"id": "second"})
 
@@ -377,6 +433,52 @@ def test_independent_durable_stores_refresh_under_writer_fence_without_lost_clai
     assert prior == same == {"id": "first"}
     assert first.get("taskexecution-one") is not None
     assert first.get("taskexecution-two") is not None
+
+
+def test_invalid_utf8_checkpoint_is_sanitized_as_invalid_data(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xffsensitive-corrupt-checkpoint")
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "restore", "phase": "read",
+        "category": "invalid_checkpoint",
+    }
+    assert isinstance(raised.value._internal_error, UnicodeDecodeError)
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_stale_checkpoint_enumeration_failure_is_sanitized(
+    tmp_path, monkeypatch
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    original_glob = Path.glob
+
+    def fail_runtime_glob(candidate, pattern):
+        if candidate.resolve() == path.parent.resolve():
+            def broken_enumeration():
+                raise OSError(errno.EIO, "sensitive state volume path")
+                yield  # pragma: no cover - makes this an iterator
+
+            return broken_enumeration()
+        return original_glob(candidate, pattern)
+
+    monkeypatch.setattr(Path, "glob", fail_runtime_glob)
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "checkpoint_cleanup", "phase": "enumerate",
+        "category": "io_error", "errno": errno.EIO,
+    }
+    assert isinstance(raised.value._internal_error, OSError)
+    assert raised.value.__cause__ is None
+    assert "sensitive" not in "".join(traceback.format_exception(raised.value))
 
 
 def test_durable_refresh_preserves_creation_order_in_indexes(tmp_path) -> None:
