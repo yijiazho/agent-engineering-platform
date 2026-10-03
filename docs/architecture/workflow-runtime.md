@@ -168,7 +168,11 @@ storage evidence. Repaired start and terminal events retain the persisted
 Writer-fence acquisition failures never grant dispatch authority because a
 contending reconciler may own the observed start. Fence-release failures may be
 recovered after verifying the committed start, and their diagnostics are
-carried into the terminal-evidence checkpoint without an extra start checkpoint.
+persisted in a separate verified `RUNNING` checkpoint before dispatch. A
+durable start also records `dispatchState: PENDING`; the executor is invoked
+only after one reconciler atomically changes it to `CLAIMED`. If the diagnostic
+checkpoint fails, a later reconciliation can record recovery evidence and claim
+the still-pending dispatch without duplicating execution.
 Recovered diagnostics are retained on the TaskExecution in an eight-entry
 bounded history.
 Initial restore and stale temporary-checkpoint cleanup run under the same

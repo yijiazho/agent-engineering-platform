@@ -350,6 +350,67 @@ def test_start_retry_adopts_its_own_post_commit_checkpoint(tmp_path) -> None:
     ) == 1
 
 
+def test_failed_start_diagnostic_checkpoint_is_recovered_on_restart(
+    tmp_path,
+) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store, plan, execution = scheduler_inputs(
+        [node("analyze")],
+        store_factory=lambda: DiagnosticCheckpointFailureStore(path),
+    )
+    first_executor = FakeExecutor()
+
+    with pytest.raises(RuntimeStoreError):
+        scheduler(store, first_executor).reconcile(plan, execution)
+
+    pending_dispatch = task_executions(store)[0]
+    assert pending_dispatch["status"] == "RUNNING"
+    assert pending_dispatch["dispatchState"] == "PENDING"
+    assert first_executor.calls == []
+
+    restarted = DurableJsonRuntimeObjectStore(path)
+    second_executor = FakeExecutor()
+    recovered = scheduler(restarted, second_executor).reconcile(plan, execution)
+
+    task = recovered.task_executions[0]
+    assert task["status"] == "SUCCEEDED"
+    assert task["dispatchState"] == "CLAIMED"
+    assert second_executor.calls == [("analyze", 1)]
+    assert task["persistenceDiagnostics"] == [{
+        "operation": "dispatch_recovery",
+        "phase": "resume",
+        "category": "interrupted",
+    }]
+    assert [event["eventType"] for event in execution_events(restarted)].count(
+        "TaskExecutionStarted"
+    ) == 1
+
+
+@pytest.mark.parametrize(
+    "terminal_evidence",
+    [
+        {"status": "FAILED"},
+        {
+            "status": "SUCCEEDED",
+            "failure": {
+                "class": "RECOVERABLE",
+                "message": "must not accompany success",
+                "retryable": True,
+            },
+        },
+    ],
+)
+def test_task_execution_schema_rejects_inconsistent_terminal_evidence(
+    terminal_evidence,
+) -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    result = scheduler(store, FakeExecutor()).reconcile(plan, execution)
+    task = dict(result.task_executions[0])
+    task["terminalEvidence"] = terminal_evidence
+
+    assert not _runtime_validator("taskexecution.schema.json").is_valid(task)
+
+
 def test_durable_start_recovers_from_post_commit_fence_release_failure(
     tmp_path, monkeypatch
 ) -> None:
@@ -1038,6 +1099,51 @@ class RetryPostCommitStartStore(DurableJsonRuntimeObjectStore):
                 "injected post-commit retry failure",
                 diagnostic={
                     "operation": "checkpoint", "phase": "directory_sync",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        super()._checkpoint()
+
+
+class DiagnosticCheckpointFailureStore(DurableJsonRuntimeObjectStore):
+    """Commit start, then fail the first diagnostic-only checkpoint."""
+
+    def __init__(self, path: Path) -> None:
+        self.failure_stage = 0
+        super().__init__(path)
+
+    def _checkpoint(self) -> None:
+        running = next((
+            value for value in self._objects.values()
+            if value.get("kind") == "TaskExecution"
+            and value.get("status") == "RUNNING"
+            and value.get("dispatchState") == "PENDING"
+        ), None)
+        started = any(
+            value.get("kind") == "ExecutionEvent"
+            and value.get("eventType") == "TaskExecutionStarted"
+            for value in self._objects.values()
+        )
+        if running is not None and started and self.failure_stage == 0:
+            self.failure_stage = 1
+            super()._checkpoint()
+            raise RuntimeStoreError(
+                "injected post-commit start failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "directory_sync",
+                    "category": "io_error", "errno": errno.EIO,
+                },
+            )
+        if (
+            running is not None
+            and running.get("persistenceDiagnostics")
+            and self.failure_stage == 1
+        ):
+            self.failure_stage = 2
+            raise RuntimeStoreError(
+                "injected diagnostic checkpoint failure",
+                diagnostic={
+                    "operation": "checkpoint", "phase": "replace",
                     "category": "io_error", "errno": errno.EIO,
                 },
             )

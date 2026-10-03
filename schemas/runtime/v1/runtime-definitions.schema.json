@@ -252,6 +252,8 @@
             "startedAt": { "$ref": "#/$defs/timestamp" },
             "completedAt": { "$ref": "#/$defs/timestamp" },
             "failure": { "$ref": "#/$defs/failure" },
+            "dispatchState": { "enum": ["PENDING", "CLAIMED"] },
+            "dispatchOwnerId": { "type": "string", "minLength": 1, "maxLength": 128 },
             "terminalEvidence": {
               "type": "object",
               "additionalProperties": false,
@@ -259,7 +261,17 @@
               "properties": {
                 "status": { "enum": ["SUCCEEDED", "FAILED"] },
                 "failure": { "$ref": "#/$defs/failure" }
-              }
+              },
+              "allOf": [
+                {
+                  "if": { "properties": { "status": { "const": "FAILED" } }, "required": ["status"] },
+                  "then": { "required": ["failure"] }
+                },
+                {
+                  "if": { "properties": { "status": { "const": "SUCCEEDED" } }, "required": ["status"] },
+                  "then": { "not": { "required": ["failure"] } }
+                }
+              ]
             },
             "persistenceDiagnostics": {
               "type": "array",
@@ -277,6 +289,16 @@
               }
             }
           },
+          "allOf": [
+            {
+              "if": { "properties": { "dispatchState": { "const": "CLAIMED" } }, "required": ["dispatchState"] },
+              "then": { "required": ["dispatchOwnerId"] }
+            },
+            {
+              "if": { "properties": { "dispatchState": { "const": "PENDING" } }, "required": ["dispatchState"] },
+              "then": { "not": { "required": ["dispatchOwnerId"] } }
+            }
+          ],
           "additionalProperties": true
         }
       ]

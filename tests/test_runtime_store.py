@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 import errno
+import json
 from pathlib import Path
 from threading import Event, get_ident
 import traceback
@@ -61,6 +62,28 @@ def test_claim_is_atomic_and_returns_the_first_value() -> None:
 
     assert first == (True, {"id": "event-first"})
     assert duplicate == (False, {"id": "event-first"})
+
+
+def test_task_dispatch_claim_has_one_winner() -> None:
+    store = InMemoryRuntimeObjectStore()
+    object_id = "taskexecution-dispatch"
+    value = runtime_object(object_id, status="RUNNING")
+    value["dispatchState"] = "PENDING"
+    store.create(value, deterministic_key="task")
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(
+            lambda owner: store.claim_task_dispatch(
+                object_id, owner, updated_at="2026-07-10T00:00:01Z"
+            ),
+            (f"owner-{index}" for index in range(16)),
+        ))
+
+    winners = [record for claimed, record in results if claimed]
+    assert len(winners) == 1
+    persisted = store.get(object_id)
+    assert persisted["dispatchState"] == "CLAIMED"
+    assert persisted["dispatchOwnerId"] == winners[0]["dispatchOwnerId"]
 
 
 def test_duplicate_id_with_another_key_is_rejected() -> None:
@@ -450,6 +473,25 @@ def test_invalid_utf8_checkpoint_is_sanitized_as_invalid_data(tmp_path) -> None:
     assert isinstance(raised.value._internal_error, UnicodeDecodeError)
     assert raised.value.__cause__ is None
     assert "sensitive" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_invalid_object_order_checkpoint_has_safe_diagnostic(tmp_path) -> None:
+    path = tmp_path / "runtime/objects.json"
+    store = DurableJsonRuntimeObjectStore(path)
+    store.create(
+        runtime_object("taskexecution-ordered"), deterministic_key="task"
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["objectOrder"] = ["missing-object"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeStoreError) as raised:
+        DurableJsonRuntimeObjectStore(path)
+
+    assert raised.value.diagnostic == {
+        "operation": "restore", "phase": "read",
+        "category": "invalid_checkpoint",
+    }
 
 
 def test_stale_checkpoint_enumeration_failure_is_sanitized(

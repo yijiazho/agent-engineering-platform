@@ -31,6 +31,7 @@ KIND_IDENTITY_FIELDS: Final = {
 KIND_WRITE_ONCE_FIELDS: Final = {
     "TaskExecution": frozenset({
         "contextPackageId", "resolvedAgentId", "terminalEvidence",
+        "dispatchState", "dispatchOwnerId",
     }),
     "WorkflowExecution": frozenset({"resolvedTaskPlan"}),
 }
@@ -133,6 +134,16 @@ class RuntimeObjectStore(ABC):
         """Atomically persist a task transition, workflow attachment, and event."""
         raise NotImplementedError("store does not support atomic task transitions")
 
+    def claim_task_dispatch(
+        self,
+        task_execution_id: str,
+        owner_id: str,
+        *,
+        updated_at: str,
+    ) -> tuple[bool, RuntimeObject]:
+        """Atomically claim one durable TaskExecution for executor dispatch."""
+        raise NotImplementedError("store does not support atomic task dispatch claims")
+
 
 class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     """Thread-safe in-memory store intended for tests and local execution."""
@@ -178,6 +189,35 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             claimed = deepcopy(dict(value))
             self._claims[deterministic_key] = claimed
             return True, _snapshot(claimed)
+
+    def claim_task_dispatch(
+        self,
+        task_execution_id: str,
+        owner_id: str,
+        *,
+        updated_at: str,
+    ) -> tuple[bool, RuntimeObject]:
+        if not isinstance(owner_id, str) or not owner_id:
+            raise ValueError("owner_id must be a non-empty string")
+        with self._lock:
+            value = self._require(task_execution_id)
+            if value.get("kind") != "TaskExecution":
+                raise ValueError("dispatch claims require a TaskExecution")
+            if value.get("status") != "RUNNING":
+                raise StatusConflictError(
+                    f"TaskExecution {task_execution_id!r} is not RUNNING"
+                )
+            dispatch_state = value.get("dispatchState")
+            if dispatch_state == "CLAIMED":
+                return False, _snapshot(value)
+            if dispatch_state != "PENDING":
+                raise ValueError(
+                    f"TaskExecution {task_execution_id!r} has no pending dispatch"
+                )
+            value["dispatchState"] = "CLAIMED"
+            value["dispatchOwnerId"] = owner_id
+            value["updatedAt"] = updated_at
+            return True, _snapshot(value)
 
     def update_status(
         self,
@@ -383,6 +423,17 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
     ) -> tuple[bool, RuntimeObject]:
         return self._mutate(lambda: InMemoryRuntimeObjectStore.claim(self, deterministic_key, value))
 
+    def claim_task_dispatch(
+        self,
+        task_execution_id: str,
+        owner_id: str,
+        *,
+        updated_at: str,
+    ) -> tuple[bool, RuntimeObject]:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.claim_task_dispatch(
+            self, task_execution_id, owner_id, updated_at=updated_at
+        ))
+
     def update_status(
         self,
         object_id: str,
@@ -480,8 +531,15 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
                 diagnostic={"operation": "restore", "phase": "read", "category": "invalid_checkpoint"},
                 internal_error=error,
             ) from None
+        invalid_checkpoint = {
+            "operation": "restore", "phase": "read",
+            "category": "invalid_checkpoint",
+        }
         if not all(isinstance(item, dict) for item in (objects, deterministic_keys, claims)):
-            raise RuntimeStoreError("durable runtime checkpoint is invalid")
+            raise RuntimeStoreError(
+                "durable runtime checkpoint is invalid",
+                diagnostic=invalid_checkpoint,
+            )
         object_order = payload.get("objectOrder", list(objects))
         if (
             not isinstance(object_order, list)
@@ -489,7 +547,10 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             or len(object_order) != len(set(object_order))
             or set(object_order) != set(objects)
         ):
-            raise RuntimeStoreError("durable runtime checkpoint is invalid")
+            raise RuntimeStoreError(
+                "durable runtime checkpoint is invalid",
+                diagnostic=invalid_checkpoint,
+            )
         self._objects = {
             object_id: _copy_and_validate(objects[object_id])
             for object_id in object_order

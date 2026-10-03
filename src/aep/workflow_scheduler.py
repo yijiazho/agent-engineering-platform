@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from aep.resource_loader import Resource, ResourceRef
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore, RuntimeStoreError
@@ -251,6 +251,11 @@ class WorkflowScheduler:
                 ready.append((node, None, dependency_ids))
             elif latest.get("status") == TaskStatus.PENDING.value:
                 ready.append((node, latest, dependency_ids))
+            elif (
+                latest.get("status") == TaskStatus.RUNNING.value
+                and latest.get("dispatchState") == "PENDING"
+            ):
+                ready.append((node, latest, dependency_ids))
             elif _retry_is_ready(latest, self._max_attempts, timestamp):
                 ready.append((node, latest, dependency_ids))
 
@@ -267,7 +272,9 @@ class WorkflowScheduler:
                     dependency_ids=dependency_ids,
                     timestamp=timestamp,
                 )
-            elif latest.get("status") == TaskStatus.PENDING.value:
+            elif latest.get("status") in {
+                TaskStatus.PENDING.value, TaskStatus.RUNNING.value,
+            }:
                 attempt = latest
             else:
                 next_attempt = int(latest["attempt"]) + 1
@@ -287,30 +294,68 @@ class WorkflowScheduler:
             scheduled.append(attempt)
 
         for attempt in scheduled:
-            try:
-                running = self._transition_and_emit(
-                    attempt, TaskStatus.RUNNING,
-                    event_type="TaskExecutionStarted", timestamp=timestamp,
-                    changes={"startedAt": timestamp},
-                )
-            except (InvalidTaskTransitionError, StatusConflictError):
-                # Another reconciler acquired this PENDING attempt atomically.
-                continue
-            except Exception as error:
-                if (
-                    getattr(self._store, "supports_atomic_task_transitions", False)
-                    and isinstance(error, RuntimeStoreError)
-                    and error.diagnostic
-                    and _can_recover_start(error.diagnostic)
-                ):
-                    running = self._recover_durable_start(
-                        attempt, timestamp, error.diagnostic
+            durable = getattr(
+                self._store, "supports_atomic_task_transitions", False
+            )
+            if (
+                durable
+                and attempt.get("status") == TaskStatus.RUNNING.value
+                and attempt.get("dispatchState") == "PENDING"
+            ):
+                running = attempt
+                if not running.get("persistenceDiagnostics"):
+                    recovery_diagnostic = {
+                        "operation": "dispatch_recovery",
+                        "phase": "resume",
+                        "category": "interrupted",
+                    }
+                    try:
+                        running = self._persist_recovered_start_diagnostics(
+                            running,
+                            _append_persistence_diagnostic(
+                                running, recovery_diagnostic
+                            ),
+                            timestamp,
+                        )
+                    except RuntimeStoreError:
+                        continue
+            else:
+                start_changes: dict[str, Any] = {"startedAt": timestamp}
+                if durable:
+                    start_changes["dispatchState"] = "PENDING"
+                try:
+                    running = self._transition_and_emit(
+                        attempt, TaskStatus.RUNNING,
+                        event_type="TaskExecutionStarted", timestamp=timestamp,
+                        changes=start_changes,
                     )
-                else:
-                    # Without owner-token evidence, an ambiguous RUNNING record
-                    # may belong to another live reconciler and is not reclaimed.
+                except (InvalidTaskTransitionError, StatusConflictError):
+                    # Another reconciler acquired this PENDING attempt atomically.
                     continue
-            if not getattr(self._store, "supports_atomic_task_transitions", False):
+                except Exception as error:
+                    if (
+                        durable
+                        and isinstance(error, RuntimeStoreError)
+                        and error.diagnostic
+                        and _can_recover_start(error.diagnostic)
+                    ):
+                        running = self._recover_durable_start(
+                            attempt, timestamp, error.diagnostic
+                        )
+                    else:
+                        # Without owner-token evidence, an ambiguous RUNNING record
+                        # may belong to another live reconciler and is not reclaimed.
+                        continue
+            if durable:
+                try:
+                    claimed, running = self._claim_durable_dispatch(
+                        running, timestamp
+                    )
+                except RuntimeStoreError:
+                    continue
+                if not claimed:
+                    continue
+            else:
                 try:
                     self._emit(running, "TaskExecutionStarted", sequence=2, timestamp=timestamp)
                 except Exception as error:
@@ -407,6 +452,7 @@ class WorkflowScheduler:
                     event_type="TaskExecutionStarted", timestamp=timestamp,
                     changes={
                         "startedAt": timestamp,
+                        "dispatchState": "PENDING",
                         "persistenceDiagnostics": diagnostics,
                     },
                 )
@@ -454,12 +500,28 @@ class WorkflowScheduler:
                 return persisted
             if not self._task_event_exists(persisted, "TaskExecutionStarted"):
                 raise
-            return self._store.update_status(
-                str(persisted["id"]), TaskStatus.RUNNING.value,
-                expected_status=TaskStatus.RUNNING.value,
-                updated_at=timestamp,
-                changes={"persistenceDiagnostics": diagnostics},
+            raise
+
+    def _claim_durable_dispatch(
+        self,
+        running: RuntimeObject,
+        timestamp: str,
+    ) -> tuple[bool, RuntimeObject]:
+        """Claim dispatch, adopting only a checkpoint proven to be ours."""
+        owner_id = str(uuid4())
+        try:
+            return self._store.claim_task_dispatch(
+                str(running["id"]), owner_id, updated_at=timestamp
             )
+        except RuntimeStoreError:
+            persisted = self._store.get(str(running["id"]))
+            if (
+                persisted is not None
+                and persisted.get("dispatchState") == "CLAIMED"
+                and persisted.get("dispatchOwnerId") == owner_id
+            ):
+                return True, persisted
+            raise
 
     def _persist_terminal_evidence(
         self,
