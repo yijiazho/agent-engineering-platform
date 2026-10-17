@@ -179,6 +179,50 @@ Preserve WorkflowExecution `workflowexecution-c7355345-8391-55bc-ad19-d5f5528d01
 and all linked artifacts and EvaluationResults as immutable historical
 diagnostic evidence. Do not replay or rewrite it.
 
+## Region-Scoped Anchor Discovery
+
+The controlled execution
+`workflowexecution-889e2502-4e66-5c8f-8738-bd49c44c4769`, at repository
+revision `367e861f813423a45977f6f6c61d3a391e1d9cc5`, exposed an over-broad
+anchor-resolution boundary. AnalyzeIssue and BuildImplementationPlan
+succeeded, and GeneratePatch `1.18.0` received this valid-looking operation
+from AgentInvocation `agentinvocation-e3a6dc8f26d173c68575596e`:
+
+```json
+{
+  "operation": "insert",
+  "path": "README.md",
+  "anchor": "schemas/",
+  "expectedMatchCount": 1,
+  "placement": "before",
+  "regionId": "repo-layout"
+}
+```
+
+The Git read evidence showed that `schemas/` occurred three times in the
+complete README preimage: once inside the authorized `Repository Layout`
+section and twice in unrelated documentation. GeneratePatch rejected the
+candidate as `ANCHOR_AMBIGUOUS: anchor matched 3 times; expected 1`.
+
+This rejection was safe but unnecessarily strict. The implementation counted
+anchor occurrences across the complete file before applying the immutable
+trusted-region boundary. Occurrences outside the authorized region cannot be
+selected by the operation and must not make an otherwise unique in-region
+anchor ambiguous. The corrected contract must resolve the trusted region
+first, count only occurrences whose complete anchor span lies within that
+region, and still fail closed when zero or multiple occurrences remain inside
+the region.
+
+The model does not need to predict the file-wide occurrence count. The control
+plane owns match counting and must not select the first match, widen the
+region, or weaken ambiguity checks. `expectedMatchCount` may remain as a
+bounded diagnostic compatibility field, but authoritative uniqueness is the
+server-derived count within the trusted region.
+
+Preserve WorkflowExecution `workflowexecution-889e2502-4e66-5c8f-8738-bd49c44c4769`
+and all linked runtime evidence as immutable historical diagnostic evidence.
+Do not replay or rewrite it.
+
 ## Reproduction
 
 Create credential-free regressions derived from issue #88:
@@ -232,6 +276,9 @@ deterministic patch disposition model that:
 * binds each operation to normalized repository path, immutable revision,
   preimage digest, supported region or anchor identity, expected match count,
   and the applicable plan/postcondition identities;
+* resolves the immutable trusted region before anchor matching and counts only
+  complete anchor spans contained by that region; occurrences outside the
+  authorized region are non-authoritative and do not create ambiguity;
 * treats those immutable plan identities as authorization and verification
   boundaries, rather than as a prescribed number, ordering, or textual
   partitioning of model operations;
@@ -290,7 +337,9 @@ Do not implement this task by increasing the destructive-rewrite threshold,
 silently ignoring unsupported criteria, assuming a schema-valid model response
 preserved unrelated content, reintroducing a one-operation-per-required-value
 or exact-operation-content rule, weakening line-boundary checks to accept a
-substring, or pushing a rejected patch solely so a human can inspect it.
+substring, counting anchors outside the trusted region as ambiguity, selecting
+the first match from an ambiguous region, or pushing a rejected patch solely
+so a human can inspect it.
 
 ## Dependencies
 
@@ -333,6 +382,18 @@ substring, or pushing a rejected patch solely so a human can inspect it.
   unchanged.
 * Missing, duplicate, ambiguous, stale, overlapping, unsafe, and out-of-order
   anchors fail with distinct stable diagnostics before filesystem mutation.
+* Anchor uniqueness is evaluated within each server-derived trusted region:
+  an anchor occurring once inside the authorized region and elsewhere outside
+  it is accepted, while an anchor occurring zero or multiple times inside the
+  region fails closed with `ANCHOR_MISSING` or `ANCHOR_AMBIGUOUS`.
+* The `schemas/` regression from
+  `workflowexecution-889e2502-4e66-5c8f-8738-bd49c44c4769` accepts the single
+  in-region occurrence despite three file-wide occurrences, and records the
+  server-derived region span and match count without exposing unrelated source
+  bodies in ordinary inspection.
+* The model cannot authorize a match by setting `expectedMatchCount`; the
+  control plane derives the authoritative region-local count and never chooses
+  the first of multiple in-region matches.
 * A proposed postimage that adds the requested block but omits the historical
   121-line range is rejected as unrelated content loss and cannot reach any
   remote mutation boundary.

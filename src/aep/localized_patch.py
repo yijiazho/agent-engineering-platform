@@ -38,10 +38,12 @@ def apply_localized_operations(
 ) -> LocalizedPatch:
     """Apply ordered operations to *preimage* without mutating a workspace.
 
-    Anchors are evaluated in the original preimage.  Every non-rewrite edit
-    names an exact anchor and expected match count (normally one).  Spans must
-    be strictly ordered and non-overlapping, which makes the output independent
-    of implementation details such as incremental string offsets.
+    Anchors are evaluated in the original preimage and, for localized edits,
+    counted only inside the server-derived trusted region.  Every non-rewrite
+    edit names an exact anchor and a compatibility match-count field, but the
+    server-derived region-local count is authoritative.  Spans must be strictly
+    ordered and non-overlapping, which makes the output independent of
+    implementation details such as incremental string offsets.
     """
     _safe_path(path)
     if not isinstance(preimage, str) or "\x00" in preimage or not _utf8(preimage):
@@ -125,10 +127,20 @@ def apply_localized_operations(
             raise LocalizedPatchError("MISSING_ANCHOR", "localized operation requires a non-empty anchor")
         if not isinstance(expected, int) or isinstance(expected, bool) or expected < 1:
             raise LocalizedPatchError("INVALID_MATCH_COUNT", "expectedMatchCount must be a positive integer")
-        positions = _positions(preimage, anchor)
-        if expected != 1 or len(positions) != 1:
-            code = "ANCHOR_MISSING" if not positions else "ANCHOR_AMBIGUOUS"
-            raise LocalizedPatchError(code, f"anchor matched {len(positions)} times; expected {expected}")
+        # Resolve trusted bounds before matching.  A model cannot widen an
+        # authorized region or turn ambiguity into authority by declaring a
+        # count: only complete anchor spans inside the immutable region count.
+        positions = [
+            position for position in _positions(preimage, anchor)
+            if region_start <= position and position + len(anchor) <= region_end
+        ]
+        local_match_count = len(positions)
+        if local_match_count != 1:
+            code = "ANCHOR_MISSING" if local_match_count == 0 else "ANCHOR_AMBIGUOUS"
+            raise LocalizedPatchError(
+                code,
+                f"anchor matched {local_match_count} times inside trusted region",
+            )
         start = positions[0]
         end = start + len(anchor)
         anchor_start, anchor_end = start, end
@@ -178,6 +190,7 @@ def apply_localized_operations(
             )
         record = {"ordinal": ordinal, "operation": operation, "span": [start, end],
                   "anchorSha256": sha256(anchor.encode()).hexdigest(),
+                  "trustedRegionAnchorMatchCount": local_match_count,
                   "modelDeclaredRegionId": declared_region}
         if trusted_region is not None:
             record["trustedRegion"] = trusted_region

@@ -483,11 +483,14 @@ the patch is published only after applicability and path-boundary checks pass.
 For this Resource generation, the Code Generator supplies preimage-bound
 `insert` operations rather than a reconstructed file. Every
 operation names its normalized path, immutable revision, preimage digest,
-exact anchor, and expected match count. A model-provided region label is
-diagnostic only: the control plane derives the selector, planning-selection
-identity, and resolved span from immutable planning evidence, then proves the
+exact anchor, and compatibility expected-match-count field. A model-provided
+region label and match count are diagnostic only: the control plane derives the
+selector, planning-selection identity, and resolved span from immutable
+planning evidence before matching. It counts only complete anchor spans inside
+that span, requires exactly one server-derived local match, and then proves the
 anchor/edit span lies within it before materializing a postimage or issuing a
-write. A trusted `region: null` planning record is whole-file evaluator-owned
+write. Occurrences outside the trusted span cannot create ambiguity or grant
+authority. A trusted `region: null` planning record is whole-file evaluator-owned
 evidence, not a runtime selector or localized write grant. One path may retain
 several separate server-derived editable-region selections alongside that
 evaluator evidence; each operation must resolve in exactly one selected span. The
