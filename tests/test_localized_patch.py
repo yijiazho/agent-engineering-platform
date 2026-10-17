@@ -60,6 +60,76 @@ def test_anchor_and_evidence_failures_are_stable(mutator, code) -> None:
     assert error.value.code == code
 
 
+def test_anchor_matching_is_scoped_to_the_server_derived_region() -> None:
+    preimage = (
+        "# Elsewhere\nschemas/\n"
+        "## Repository Layout\n"
+        "docs/\nschemas/\nskills/\n"
+        "## More documentation\nschemas/\n"
+    )
+    item = operation(
+        preimage,
+        anchor="schemas/\n",
+        placement="before",
+        content="fixtures/\n",
+        expectedMatchCount=3,
+    )
+
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert result.content == (
+        "# Elsewhere\nschemas/\n"
+        "## Repository Layout\n"
+        "docs/\nfixtures/\nschemas/\nskills/\n"
+        "## More documentation\nschemas/\n"
+    )
+    evidence = result.operations[0]
+    assert evidence["trustedRegion"]["span"] == [
+        preimage.index("## Repository Layout\n"),
+        preimage.index("## More documentation\n"),
+    ]
+    assert evidence["trustedRegionAnchorMatchCount"] == 1
+
+
+@pytest.mark.parametrize(
+    ("preimage", "expected_count", "code"),
+    [
+        (
+            "## Repository Layout\ninside\n## Elsewhere\nanchor\n",
+            9,
+            "ANCHOR_MISSING",
+        ),
+        (
+            "## Repository Layout\nanchor\nanchor\n## Elsewhere\nanchor\n",
+            2,
+            "ANCHOR_AMBIGUOUS",
+        ),
+    ],
+)
+def test_server_derived_local_match_count_cannot_be_authorized_by_model(
+    preimage: str, expected_count: int, code: str,
+) -> None:
+    item = operation(
+        preimage,
+        anchor="anchor\n",
+        content="inserted\n",
+        expectedMatchCount=expected_count,
+    )
+
+    with pytest.raises(LocalizedPatchError) as error:
+        apply(
+            preimage,
+            [item],
+            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+        )
+
+    assert error.value.code == code
+
+
 def test_overlapping_and_out_of_order_operations_fail_before_output() -> None:
     preimage = "## Repository Layout\nanchor\n"
     first = operation(preimage, operation="replace", anchor="Repository Layout", content="Layout")
@@ -90,7 +160,7 @@ def test_delete_requires_whole_file_and_region_boundary_is_enforced() -> None:
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
     outside = operation(preimage, operation="replace", anchor="outside", content="changed", expectedMatchCount=1)
-    with pytest.raises(LocalizedPatchError, match="OUT_OF_REGION"):
+    with pytest.raises(LocalizedPatchError, match="ANCHOR_MISSING"):
         apply_localized_operations(
             path="README.md", preimage=preimage, preimage_sha256=digest,
             repository_revision=REVISION, operations=[outside],
@@ -133,7 +203,7 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
         repository_revision=REVISION, regions_by_path=regions,
     )
     assert "first boundary\n# Second" in adjacent_boundary[0]["content"]
-    with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
+    with pytest.raises(RejectedPatchCandidateError, match="ANCHOR_MISSING"):
         _validated_changes(
             {"changes": [operation(preimage, anchor="three", content="updated")]},
             ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
@@ -250,7 +320,7 @@ def test_matching_model_label_cannot_bypass_trusted_region() -> None:
             repository_revision=REVISION, operations=[item],
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
-    assert error.value.code == "OUT_OF_REGION"
+    assert error.value.code == "ANCHOR_MISSING"
 
 
 def test_outside_anchor_cannot_collapse_to_trusted_boundary() -> None:
@@ -263,7 +333,7 @@ def test_outside_anchor_cannot_collapse_to_trusted_boundary() -> None:
             repository_revision=REVISION, operations=[item],
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
-    assert error.value.code == "OUT_OF_REGION"
+    assert error.value.code == "ANCHOR_MISSING"
 
 
 def test_insert_before_first_fence_body_line_stays_inside_trusted_region() -> None:
@@ -358,7 +428,7 @@ def test_nonrewrite_requires_explicit_trusted_region() -> None:
 
 def test_region_candidate_failure_is_not_an_immutable_resource_configuration_error() -> None:
     preimage = "## Repository Layout\ninside\n## Elsewhere\noutside\n"
-    with pytest.raises(RejectedPatchCandidateError, match="OUT_OF_REGION"):
+    with pytest.raises(RejectedPatchCandidateError, match="ANCHOR_MISSING"):
         _validated_changes(
             {"changes": [operation(preimage, anchor="outside", regionId="Repository Layout")]},
             ("README.md",),

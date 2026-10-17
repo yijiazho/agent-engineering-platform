@@ -892,16 +892,18 @@ updating the Workflow, never by rewriting historical analysis evidence.
   and selection ID; an unsupported semantic criterion on the same path does
   not invalidate a separately supported insertion criterion;
   full file bodies are intentionally absent.
-* `generate-patch:1.18.0` uses `code-generator:1.16.0` and requires one exact
+* `generate-patch:1.19.0` uses `code-generator:1.17.0` and requires one exact
   revision-bound `editable-target` per evaluated plan path. Inspect the
   persisted package for content addresses and preimage digests, and inspect the
   reconciliation and patch EvaluationResults for original/effective sets.
   Localized-operation evidence records the server-derived plan selection,
-  selector, resolved span, and digests separately from any diagnostic
+  selector, resolved span, region-local anchor match count, and digests separately from any diagnostic
   model-declared region label; a label never authorizes an edit. A nullable
   `regionId` is required only for strict provider-schema compatibility, and
   `null` means no diagnostic label. Non-null values are bounded identifier
-  strings, not unrestricted text. Whole-file planning authority is persisted
+  strings, not unrestricted text. `expectedMatchCount` is compatibility
+  metadata only: the control plane counts complete anchor spans within the
+  server-derived selector and requires exactly one. Whole-file planning authority is persisted
   as an explicit `WHOLE_FILE` runtime selector. Inspect terminal dispositions
   and change statistics before authorizing publication.
   Missing or failing reconciliation evidence must prevent both push and PR

@@ -636,7 +636,8 @@ by AEP-056 through AEP-065 and AEP-069 through AEP-070 and are organized in
 [ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
 
 AEP-066 tracks the issue #88 GeneratePatch remediation: localized
-preimage-bound edit operations, deterministic preservation evidence,
+preimage-bound edit operations, server-derived region-local anchor matching,
+deterministic preservation evidence,
 consistent multiline-insertion checks, retained non-publishable rejected
 artifacts, and explicit pass, review-required, or reject dispositions. Accidental
 unrelated deletion remains fail-closed; an explicitly authorized risky rewrite
