@@ -650,9 +650,11 @@ restart.
 
 Structural insertions use the same canonical logical-line comparison during
 application, reconciliation, and patch evaluation. Newline transport variants
-are accepted, while indentation and line boundaries remain exact; a multiline
-insert that would concatenate onto an anchor line is rejected before a patch is
-created.
+are accepted, while indentation and line boundaries remain exact. A localized
+anchor is one complete logical line without its LF or CRLF terminator; the
+control plane resolves `before` and `after` offsets, supplies the required line
+boundary, preserves the target line-ending convention and final-newline state,
+and rejects substring or inline anchors before a patch is created.
 
 AEP-067 extends that contract: localized-edit authority is derived server-side
 from immutable planning evidence. Model region labels are not authorization;

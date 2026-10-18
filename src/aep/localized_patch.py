@@ -325,7 +325,13 @@ def _line_boundary_content(*, preimage: str, offset: int, content: str, placemen
     following_text = offset < len(preimage)
     if placement == "after" and not at_start and offset == len(preimage):
         # An anchor without a terminator at EOF needs a separator before the
-        # inserted line, while retaining the original no-final-newline form.
+        # inserted line.  A single trailing separator in model content is a
+        # transport detail here, so remove it to retain the target's original
+        # no-final-newline form.
+        if normalized.endswith(ending):
+            normalized = normalized[:-len(ending)]
+        if not normalized:
+            return ""
         normalized = ending + normalized
     if not normalized.endswith(("\r", "\n")) and (following_text or not at_end or preimage.endswith(("\r", "\n"))):
         normalized += ending

@@ -567,6 +567,28 @@ def test_single_line_insert_is_materialized_as_a_new_logical_line() -> None:
     assert result.content == "## Repository Layout\n  review-aep-pr/\ndeploy/\n"
 
 
+@pytest.mark.parametrize(
+    ("preimage", "content", "expected"),
+    [
+        ("anchor", "added\n", "anchor\nadded"),
+        ("anchor", "added", "anchor\nadded"),
+        ("anchor", "added\r\n", "anchor\nadded"),
+        ("head\r\nanchor", "added\n", "head\r\nanchor\r\nadded"),
+        ("head\r\nanchor", "added\r\n", "head\r\nanchor\r\nadded"),
+    ],
+)
+def test_after_final_line_preserves_no_final_newline(
+    preimage: str, content: str, expected: str,
+) -> None:
+    item = operation(
+        preimage, anchor="anchor", placement="after", content=content,
+    )
+
+    result = apply(preimage, [item])
+
+    assert result.content == expected
+
+
 def test_aggregate_application_uses_effective_crlf_replacement_content() -> None:
     preimage = "## Repository Layout\r\nanchor\r\nnext\r\n"
     digest = sha256(preimage.encode()).hexdigest()
