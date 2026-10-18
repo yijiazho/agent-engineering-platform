@@ -132,8 +132,8 @@ def test_server_derived_local_match_count_cannot_be_authorized_by_model(
 
 def test_overlapping_and_out_of_order_operations_fail_before_output() -> None:
     preimage = "## Repository Layout\nanchor\n"
-    first = operation(preimage, operation="replace", anchor="Repository Layout", content="Layout")
-    second = operation(preimage, operation="replace", anchor="Layout", content="Other")
+    first = operation(preimage, operation="replace", anchor="## Repository Layout", content="Layout")
+    second = operation(preimage, operation="replace", anchor="## Repository Layout", content="Other")
     with pytest.raises(LocalizedPatchError, match="OVERLAPPING_EDITS"):
         apply(preimage, [first, second])
 
@@ -256,7 +256,7 @@ def test_model_region_label_is_bounded_body_free_diagnostic(label) -> None:
 
 
 def test_overlapping_anchor_occurrences_are_ambiguous() -> None:
-    preimage = "aaa"
+    preimage = "aa\naa\n"
     item = operation(preimage, anchor="aa", content="x")
     with pytest.raises(LocalizedPatchError, match="ANCHOR_AMBIGUOUS"):
         apply(preimage, [item])
@@ -500,7 +500,7 @@ def test_generate_patch_accepts_one_subtree_insert_for_many_required_values() ->
     assert all(value in changes[0]["content"] for value in subtree.splitlines())
 
 
-def test_line_oriented_insert_rejects_same_line_splice_before_materialization() -> None:
+def test_logical_line_anchor_resolves_after_boundary_before_materialization() -> None:
     preimage = "## Repository Layout\n  review-aep-pr/\n"
     subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
     item = operation(
@@ -510,27 +510,13 @@ def test_line_oriented_insert_rejects_same_line_splice_before_materialization() 
         content=subtree,
     )
 
-    with pytest.raises(LocalizedPatchError) as error:
-        apply(
-            preimage,
-            [item],
-            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
-        )
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
 
-    assert error.value.code == "INVALID_LINE_SPLICE"
-    with pytest.raises(RejectedPatchCandidateError, match="INVALID_LINE_SPLICE"):
-        _validated_changes(
-            {"changes": [item]},
-            ("README.md",),
-            ({
-                "path": "README.md", "content": preimage,
-                "preimageSha256": sha256(preimage.encode()).hexdigest(),
-            },),
-            repository_revision=REVISION,
-            regions_by_path={"README.md": {
-                "kind": "MARKDOWN_SECTION", "name": "Repository Layout",
-            }},
-        )
+    assert result.content == preimage.replace("  review-aep-pr/\n", "  review-aep-pr/\n" + subtree)
 
 
 def test_line_oriented_insert_preserves_explicit_tree_boundaries() -> None:
@@ -567,7 +553,7 @@ def test_line_oriented_insert_cannot_split_a_crlf_separator() -> None:
     assert error.value.code == "INVALID_LINE_SPLICE"
 
 
-def test_single_line_insert_cannot_concatenate_onto_an_anchor_line() -> None:
+def test_single_line_insert_is_materialized_as_a_new_logical_line() -> None:
     preimage = "## Repository Layout\n  review-aep-pr/\n"
     item = operation(
         preimage,
@@ -576,7 +562,6 @@ def test_single_line_insert_cannot_concatenate_onto_an_anchor_line() -> None:
         content="deploy/",
     )
 
-    with pytest.raises(LocalizedPatchError) as error:
-        apply(preimage, [item])
+    result = apply(preimage, [item])
 
-    assert error.value.code == "INVALID_LINE_SPLICE"
+    assert result.content == "## Repository Layout\n  review-aep-pr/\ndeploy/\n"
