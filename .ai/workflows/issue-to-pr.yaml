@@ -3,7 +3,7 @@
     "kind":  "Workflow",
     "metadata":  {
                      "name":  "issue-to-pr",
-                     "version":  "1.38.0",
+                     "version":  "1.39.0",
                      "description":  "Turn a repository issue into a validated, unmerged pull request."
                  },
     "spec":  {

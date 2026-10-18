@@ -27,6 +27,7 @@ class LocalizedPatchError(ValueError):
 class LocalizedPatch:
     content: str
     operations: tuple[dict[str, Any], ...]
+    replacements: tuple[str, ...]
     preservation: dict[str, Any]
 
 
@@ -130,24 +131,27 @@ def apply_localized_operations(
         # Resolve trusted bounds before matching.  A model cannot widen an
         # authorized region or turn ambiguity into authority by declaring a
         # count: only complete anchor spans inside the immutable region count.
-        # New localized evidence identifies the content of one logical line,
-        # excluding its LF/CRLF terminator.  Resolve the line span and the
-        # insertion boundary here so the model cannot decide whether a splice
-        # joins two lines by including or omitting a newline in `anchor`.
-        # Keep the newline-inclusive substring form readable for historical
-        # evidence; newly produced operations use the logical-line form.
-        logical_line_anchor = not anchor.endswith(("\r", "\n"))
-        if logical_line_anchor:
+        # Exact whole-file delete evidence is distinct from a logical-line
+        # anchor and may contain any number of lines with or without a final
+        # terminator.  All live insert/replace anchors use the new contract:
+        # one complete logical line excluding its LF/CRLF terminator.
+        whole_file_delete = (
+            operation == "delete" and anchor == preimage and len(operations) == 1
+        )
+        logical_line_anchor = not whole_file_delete
+        if whole_file_delete:
+            matches = ()
+            positions = [0]
+        else:
+            if anchor.endswith(("\r", "\n")) or "\r" in anchor or "\n" in anchor:
+                raise LocalizedPatchError(
+                    "INVALID_ANCHOR",
+                    "localized anchor must be one complete logical line without a line terminator",
+                )
             matches = _logical_line_matches(
                 preimage, anchor, region_start=region_start, region_end=region_end,
             )
             positions = [match[0] for match in matches]
-        else:
-            matches = ()
-            positions = [
-                position for position in _positions(preimage, anchor)
-                if region_start <= position and position + len(anchor) <= region_end
-            ]
         local_match_count = len(positions)
         if local_match_count != 1:
             code = "ANCHOR_MISSING" if local_match_count == 0 else "ANCHOR_AMBIGUOUS"
@@ -176,7 +180,7 @@ def apply_localized_operations(
         elif operation == "delete":
             if content:
                 raise LocalizedPatchError("INVALID_OPERATION", "delete must not include content")
-            if anchor != preimage or len(operations) != 1:
+            if not whole_file_delete:
                 raise LocalizedPatchError(
                     "DELETE_NOT_AUTHORIZED",
                     "localized deletion requires plan-operation evidence; only an exact whole-file delete is available",
@@ -205,15 +209,9 @@ def apply_localized_operations(
             )
         ):
             raise LocalizedPatchError("OUT_OF_REGION", "operation anchor is outside the trusted region")
-        if operation == "insert" and not logical_line_anchor:
-            _validate_line_splice(
-                preimage=preimage,
-                offset=start,
-                content=content,
-            )
         record = {"ordinal": ordinal, "operation": operation, "span": [start, end],
                   "anchorSha256": sha256(anchor.encode()).hexdigest(),
-                  "anchorKind": "LOGICAL_LINE" if logical_line_anchor else "LEGACY_SUBSTRING",
+                  "anchorKind": "LOGICAL_LINE" if logical_line_anchor else "WHOLE_FILE",
                   "resolvedAnchorSpan": [anchor_start, anchor_end],
                   "trustedRegionAnchorMatchCount": local_match_count,
                   "modelDeclaredRegionId": declared_region}
@@ -276,6 +274,7 @@ def apply_localized_operations(
     return LocalizedPatch(
         content=postimage,
         operations=tuple(records),
+        replacements=tuple(replacement for _start, _end, replacement, _record in edits),
         preservation={
             "preimageSha256": preimage_sha256,
             "postimageSha256": postimage_sha256,
@@ -285,17 +284,6 @@ def apply_localized_operations(
             "authorizedSpans": [record["span"] for record in records],
         },
     )
-
-
-def _positions(content: str, needle: str) -> list[int]:
-    positions: list[int] = []
-    offset = 0
-    while True:
-        index = content.find(needle, offset)
-        if index < 0:
-            return positions
-        positions.append(index)
-        offset = index + 1
 
 
 def _logical_line_matches(
@@ -349,37 +337,6 @@ def _line_ending(content: str) -> str:
     if index >= 0 and index > 0 and content[index - 1] == "\r":
         return "\r\n"
     return "\n"
-
-
-def _validate_line_splice(*, preimage: str, offset: int, content: str) -> None:
-    """Reject a multiline insertion that silently joins an existing line.
-
-    Line-oriented content is structural: its first and last logical lines must
-    remain distinct from adjacent target text unless a future plan explicitly
-    authorizes an inline insertion.  The operation contract has no such
-    authorization today, so fail closed before constructing a postimage.
-    """
-    if 0 < offset < len(preimage) and preimage[offset - 1:offset + 1] == "\r\n":
-        raise LocalizedPatchError(
-            "INVALID_LINE_SPLICE",
-            "insertion offset splits a CRLF line separator",
-        )
-    if not content:
-        return
-    left_is_boundary = offset == 0 or preimage[offset - 1] in "\r\n"
-    right_is_boundary = offset == len(preimage) or preimage[offset] in "\r\n"
-    content_opens_boundary = content.startswith(("\r", "\n"))
-    content_closes_boundary = content.endswith(("\r", "\n"))
-    if not left_is_boundary and not content_opens_boundary:
-        raise LocalizedPatchError(
-            "INVALID_LINE_SPLICE",
-            "line-oriented insertion is concatenated onto the preceding anchor line",
-        )
-    if not right_is_boundary and not content_closes_boundary:
-        raise LocalizedPatchError(
-            "INVALID_LINE_SPLICE",
-            "line-oriented insertion is concatenated onto following target text",
-        )
 
 
 def _safe_path(value: str) -> None:

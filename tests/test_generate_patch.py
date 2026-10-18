@@ -804,7 +804,7 @@ def test_localized_artifact_persists_server_derived_operation_authority(
         {
             "changes": [{
                 "operation": "insert", "path": "src/app.py",
-                "regionId": "diagnostic-label", "anchor": "value = 1\n",
+                "regionId": "diagnostic-label", "anchor": "value = 1",
                 "expectedMatchCount": 1, "placement": "after",
                 "content": "# authorized marker\n",
             }],

@@ -27,7 +27,7 @@
                        "pr-writer"
                    ],
     "resourceVersions":  {
-                             "workflow":  "1.38.0",
+                             "workflow":  "1.39.0",
                              "buildImplementationPlanTask":  "1.16.0",
                              "plannerAgent":  "1.15.0",
                              "implementationPlanningPrompt":  "1.14.0",
