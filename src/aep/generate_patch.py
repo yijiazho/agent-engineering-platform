@@ -1419,19 +1419,19 @@ def _validated_changes(
             # Every operation was checked against exactly one immutable span.
             # Reassemble them from the common preimage so anchors retain their
             # original-preimage semantics across separately authorized scopes.
-            spans = [(patch.operations[0]["span"], operation, patch.operations[0])
-                     for operation, patch in resolved]
-            if [span for span, _operation, _record in spans] != sorted(span for span, _operation, _record in spans):
+            spans = [(patch.operations[0]["span"], patch.replacements[0], patch.operations[0])
+                     for _operation, patch in resolved]
+            if [span for span, _replacement, _record in spans] != sorted(span for span, _replacement, _record in spans):
                 raise RejectedPatchCandidateError("OUT_OF_ORDER_EDITS: operation spans are not source ordered")
             cursor = 0
             output: list[str] = []
             unchanged: list[str] = []
             operation_records = []
-            for (start, end), operation, record in spans:
+            for (start, end), replacement, record in spans:
                 if start < cursor:
                     raise RejectedPatchCandidateError("OVERLAPPING_EDITS: operation spans overlap")
                 unchanged.append(content[cursor:start])
-                output.extend((content[cursor:start], str(operation.get("content", ""))))
+                output.extend((content[cursor:start], replacement))
                 cursor = end
                 operation_records.append(record)
             unchanged.append(content[cursor:])
@@ -1446,8 +1446,8 @@ def _validated_changes(
                     post_start, post_end, _post_identity, _post_matches = _region_span(postimage, region)
                     selection_id = region.get("selectionId")
                     expected_start = start + sum(
-                        len(str(operation.get("content", ""))) - (span_end - span_start)
-                        for (span_start, span_end), operation, record in spans
+                        len(replacement) - (span_end - span_start)
+                        for (span_start, span_end), replacement, record in spans
                         # A zero-width insertion at a region boundary belongs
                         # to the selection that authorized it.  An adjacent
                         # selection's boundary therefore still shifts.
@@ -1457,8 +1457,8 @@ def _validated_changes(
                         )
                     )
                     expected_end = end + sum(
-                        len(str(operation.get("content", ""))) - (span_end - span_start)
-                        for (span_start, span_end), operation, record in spans
+                        len(replacement) - (span_end - span_start)
+                        for (span_start, span_end), replacement, record in spans
                         if span_end <= end
                     )
                     if (post_start, post_end) != (expected_start, expected_end):

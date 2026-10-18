@@ -27,13 +27,13 @@
                        "pr-writer"
                    ],
     "resourceVersions":  {
-                             "workflow":  "1.38.0",
+                             "workflow":  "1.39.0",
                              "buildImplementationPlanTask":  "1.16.0",
                              "plannerAgent":  "1.15.0",
                              "implementationPlanningPrompt":  "1.14.0",
                              "implementationPlanEvaluation":  "1.11.0",
-                             "generatePatchTask":  "1.19.0",
-                             "codeGeneratorAgent":  "1.17.0",
+                             "generatePatchTask":  "1.20.0",
+                             "codeGeneratorAgent":  "1.18.0",
                              "filesystemTool":  "1.7.0",
                              "createPullRequestTask":  "1.2.0",
                              "publicationEvidencePolicy":  "1.1.0",

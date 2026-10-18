@@ -166,14 +166,45 @@ insertions. This is an evaluator disagreement caused by incompatible
 representations, not an unavailable README target, stale preimage, invalid
 region, path-boundary violation, or `git diff --check` failure.
 
-The corrected contract must make structural insertion intent explicit and use
+The pre-refactor correction made structural insertion intent explicit and used
 one canonical comparison in deterministic application, plan reconciliation,
-and Patch Evaluation. A tree addition must preserve its newline and
-indentation semantics as an exact multiline block (or as individually exact,
-line-qualified literals). Localized insertion validation must reject a splice
-that turns a line-oriented required insertion into a token appended to an
-anchor line. It must not paper over the defect by weakening Patch Evaluation's
-line-boundary matcher or accepting substrings as required insertions.
+and Patch Evaluation. It correctly rejected a splice that turned a
+line-oriented required insertion into a token appended to an anchor line; it
+did not weaken Patch Evaluation's line-boundary matcher or accept substrings as
+required insertions. The anchor refactor below retains those safety outcomes
+while moving line-boundary construction from the model-facing operation into
+the control plane.
+
+The low-level anchor representation is itself part of this correction. The
+current contract treats `anchor` as an arbitrary byte substring. The model
+therefore has to decide whether the anchor includes its terminal newline or
+whether `content` begins with a separator. That representation detail caused
+the issue #105 candidate to concatenate `deploy/` onto `review-aep-pr/`.
+
+The replacement contract treats `anchor` as the content of one complete
+logical line, excluding only its existing LF or CRLF terminator. The control
+plane resolves the unique complete line inside the server-derived trusted
+region, derives the `before` or `after` insertion offset at the line boundary,
+and preserves the target's line-ending convention. The model still supplies
+the exact anchor text, including indentation, and the exact inserted block,
+including its intended indentation; it no longer supplies a byte offset by
+choosing whether the anchor string contains a newline. Inline substring
+insertion remains unavailable unless explicitly authorized by immutable plan
+evidence. Revision, preimage, trusted-region, uniqueness, ordering, overlap,
+preservation, and postimage checks remain unchanged.
+
+For example, given this preimage:
+
+```text
+## Repository Layout
+  review-aep-pr/
+```
+
+the model supplies `anchor: "  review-aep-pr/"` and `placement: "after"`.
+The control plane matches the complete logical line and produces a new
+`deploy/` line regardless of whether the preimage uses LF or CRLF. An anchor
+that is only a substring of a longer line, or that matches more than once in
+the trusted region, remains rejected.
 
 Preserve WorkflowExecution `workflowexecution-c7355345-8391-55bc-ad19-d5f5528d0117`
 and all linked artifacts and EvaluationResults as immutable historical
@@ -248,12 +279,15 @@ Create credential-free regressions derived from issue #88:
    intended final layout.
 9. Demonstrate the corrected postimage-based representation, application,
    evaluation, rejected-artifact retention, and terminal explanation.
-10. For a line-oriented README layout, return an `after` insertion whose anchor
-    omits its terminal newline and whose content begins with `deploy/`. Prove
-    that deterministic localized-operation validation rejects the same-line
-    splice before it becomes a patch artifact.
-11. Represent the requested `deploy/` subtree as one exact multiline
-    canonical insertion, including its indentation. Verify that application,
+10. Under the refactored contract, return an `after` insertion whose anchor is
+    the complete logical line `  review-aep-pr/` without a terminal newline.
+    Prove that the control plane resolves the line boundary and produces a new
+    `deploy/` line for both LF and CRLF preimages.
+11. Prove that an anchor which is only a substring of a line, an anchor that
+    matches multiple complete lines in the trusted region, and a candidate
+    that attempts inline insertion are rejected before patch materialization.
+12. Represent the requested `deploy/` subtree as one exact multiline canonical
+    insertion, including its indentation. Verify that application,
     reconciliation, and Patch Evaluation agree for LF, CRLF, final-newline,
     and no-final-newline forms; a bare substring inside an existing line or
     inside an indented line must not satisfy a line-qualified requirement.
@@ -274,8 +308,8 @@ deterministic patch disposition model that:
   operations against exact preimage evidence instead of reproducing an entire
   existing file for every localized change;
 * binds each operation to normalized repository path, immutable revision,
-  preimage digest, supported region or anchor identity, expected match count,
-  and the applicable plan/postcondition identities;
+  preimage digest, supported region or logical-line anchor identity, expected
+  match count, and the applicable plan/postcondition identities;
 * resolves the immutable trusted region before anchor matching and counts only
   complete anchor spans contained by that region; occurrences outside the
   authorized region are non-authoritative and do not create ambiguity;
@@ -298,10 +332,13 @@ deterministic patch disposition model that:
 * represents line-oriented required insertions with their required newline and
   indentation structure, and applies one line-boundary-aware matching contract
   to proposed postimages, reconciliation evidence, and unified-diff additions;
-* validates `before` and `after` localized insertion splice boundaries against
-  the target's line structure, rejecting a candidate that concatenates a
-  line-oriented required insertion onto an anchor line unless the plan
-  explicitly authorizes an inline insertion;
+* defines localized `anchor` values as complete logical-line content rather
+  than arbitrary byte substrings, preserving indentation while excluding only
+  the target line's LF or CRLF terminator;
+* resolves `before` and `after` insertion offsets from the matched logical-line
+  boundary in control-plane code, preserving the target's line-ending
+  convention and rejecting substring or inline insertion unless immutable plan
+  evidence explicitly authorizes it;
 * verifies each literal required insertion and other deterministic acceptance
   criterion against the aggregate applied postimage in its authorized region;
   permits one or more safe localized operations to jointly satisfy multiple
@@ -409,18 +446,24 @@ so a human can inspect it.
   reconciliation and Patch Evaluation for LF, CRLF, final-newline, and
   no-final-newline variants. The issue #88 insertion is not falsely reported
   missing.
-* The issue #105 regression rejects `after` insertion of `deploy/` immediately
-  after the anchor `  review-aep-pr/` when neither side supplies the necessary
-  newline. It does not publish a malformed `review-aep-pr/deploy/` patch only
-  for a later evaluator to discover.
+* The issue #105 regression uses the logical-line anchor `  review-aep-pr/`
+  without a terminal newline and deterministically inserts `deploy/` as a new
+  line after it. It does not publish a malformed
+  `review-aep-pr/deploy/` patch or require the model to encode a byte-level
+  newline splice.
 * A valid README tree insertion uses an exact canonical block of `deploy/` and
   its indented `local/`, `self-hosting/`, and `validation/` lines. Deterministic
   application, plan reconciliation, and Patch Evaluation all accept it;
-  `deploy/` appended to another line and an unindented literal matched inside
-  `  local/` do not satisfy that structural requirement.
+  an anchor that is only a substring of another line, an ambiguous complete
+  line, and an inline insertion attempt do not satisfy that structural
+  requirement.
 * The line-boundary correction preserves aggregate postimage authorization:
   one safe multiline operation may satisfy the complete canonical tree block
   without reintroducing operation-count or model-content partitioning rules.
+* Logical-line anchor resolution produces identical authorized postimages for
+  LF and CRLF targets, preserves final-newline and no-final-newline behavior,
+  and records the resolved line span separately from the model-declared anchor
+  text.
 * Preservation, path-boundary, requested-scope, and configured validation
   criteria are assigned to deterministic evaluators and do not enter the plan
   as generic unsupported criteria when the platform has an owning check.

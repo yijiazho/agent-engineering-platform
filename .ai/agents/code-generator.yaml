@@ -1,10 +1,10 @@
 {
   "apiVersion": "aep.dev/v1alpha1",
   "kind": "Agent",
-  "metadata": {"name": "code-generator", "version": "1.17.0"},
+  "metadata": {"name": "code-generator", "version": "1.18.0"},
   "spec": {
     "role": "Code Generator",
-    "promptRef": {"kind": "Prompt", "name": "patch-generation", "version": "1.7.0"},
+    "promptRef": {"kind": "Prompt", "name": "patch-generation", "version": "1.8.0"},
     "modelRef": {"kind": "Model", "name": "default-reasoning", "version": "1.1.0"},
     "toolRefs": [
       {"kind": "Tool", "name": "filesystem", "version": "1.7.0"},

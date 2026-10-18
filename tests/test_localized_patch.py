@@ -17,7 +17,7 @@ REVISION = "a" * 40
 def operation(preimage: str, **values):
     return {
         "operation": "insert", "path": "README.md", "repositoryRevision": REVISION,
-        "preimageSha256": sha256(preimage.encode()).hexdigest(), "anchor": "## Repository Layout\n",
+        "preimageSha256": sha256(preimage.encode()).hexdigest(), "anchor": "## Repository Layout",
         "expectedMatchCount": 1, "placement": "after", "content": "src/    runtime\ntests/  tests\n",
         "regionId": "repository-layout", **values,
     }
@@ -69,7 +69,7 @@ def test_anchor_matching_is_scoped_to_the_server_derived_region() -> None:
     )
     item = operation(
         preimage,
-        anchor="schemas/\n",
+        anchor="schemas/",
         placement="before",
         content="fixtures/\n",
         expectedMatchCount=3,
@@ -115,7 +115,7 @@ def test_server_derived_local_match_count_cannot_be_authorized_by_model(
 ) -> None:
     item = operation(
         preimage,
-        anchor="anchor\n",
+        anchor="anchor",
         content="inserted\n",
         expectedMatchCount=expected_count,
     )
@@ -132,8 +132,8 @@ def test_server_derived_local_match_count_cannot_be_authorized_by_model(
 
 def test_overlapping_and_out_of_order_operations_fail_before_output() -> None:
     preimage = "## Repository Layout\nanchor\n"
-    first = operation(preimage, operation="replace", anchor="Repository Layout", content="Layout")
-    second = operation(preimage, operation="replace", anchor="Layout", content="Other")
+    first = operation(preimage, operation="replace", anchor="## Repository Layout", content="Layout")
+    second = operation(preimage, operation="replace", anchor="## Repository Layout", content="Other")
     with pytest.raises(LocalizedPatchError, match="OVERLAPPING_EDITS"):
         apply(preimage, [first, second])
 
@@ -176,7 +176,7 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
         {"kind": "MARKDOWN_SECTION", "name": "Second", "selectionId": "second"},
     )}
     change = _validated_changes(
-        {"changes": [operation(preimage, anchor="two\n", content="updated\n", regionId="model-label")]},
+        {"changes": [operation(preimage, anchor="two", content="updated\n", regionId="model-label")]},
         ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
     )
@@ -184,8 +184,8 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
     assert '"selectionId": "second"' in change[0]["localizedOperations"]
     combined = _validated_changes(
             {"changes": [
-                operation(preimage, anchor="one\n", content="first\n", regionId="first"),
-                operation(preimage, anchor="two\n", content="second\n", regionId="second"),
+                operation(preimage, anchor="one", content="first\n", regionId="first"),
+                operation(preimage, anchor="two", content="second\n", regionId="second"),
             ]}, ("README.md",),
         ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
@@ -197,7 +197,7 @@ def test_multiple_trusted_regions_allow_only_the_matching_server_derived_span() 
     }
     adjacent_boundary = _validated_changes(
         {"changes": [operation(
-            preimage, anchor="one\n", placement="after", content="first boundary\n",
+            preimage, anchor="one", placement="after", content="first boundary\n",
         )]},
         ("README.md",), ( {"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION, regions_by_path=regions,
@@ -256,7 +256,7 @@ def test_model_region_label_is_bounded_body_free_diagnostic(label) -> None:
 
 
 def test_overlapping_anchor_occurrences_are_ambiguous() -> None:
-    preimage = "aaa"
+    preimage = "aa\naa\n"
     item = operation(preimage, anchor="aa", content="x")
     with pytest.raises(LocalizedPatchError, match="ANCHOR_AMBIGUOUS"):
         apply(preimage, [item])
@@ -273,7 +273,7 @@ def test_explicit_rewrite_is_never_inferred_from_size() -> None:
 
 def test_line_endings_and_repeated_application_are_deterministic() -> None:
     preimage = "## Repository Layout\r\nbody\r\n"
-    item = operation(preimage, anchor="## Repository Layout\r\n", content="added\r\n")
+    item = operation(preimage, anchor="## Repository Layout", content="added\r\n")
     first = apply(preimage, [item])
     repeat = apply(preimage, [item])
     assert first == repeat
@@ -325,7 +325,7 @@ def test_matching_model_label_cannot_bypass_trusted_region() -> None:
 
 def test_outside_anchor_cannot_collapse_to_trusted_boundary() -> None:
     preimage = "outside\n## Repository Layout\ninside\n"
-    item = operation(preimage, anchor="outside\n", placement="after", content="escaped\n")
+    item = operation(preimage, anchor="outside", placement="after", content="escaped\n")
     with pytest.raises(LocalizedPatchError) as error:
         apply_localized_operations(
             path="README.md", preimage=preimage,
@@ -340,7 +340,7 @@ def test_insert_before_first_fence_body_line_stays_inside_trusted_region() -> No
     preimage = "before\n```layout\nfirst\n```\nafter\n"
     item = operation(
         preimage,
-        anchor="first\n",
+        anchor="first",
         placement="before",
         content="added\n",
     )
@@ -354,30 +354,29 @@ def test_insert_before_first_fence_body_line_stays_inside_trusted_region() -> No
     assert result.content == "before\n```layout\nadded\nfirst\n```\nafter\n"
 
 
-def test_section_end_insert_must_preserve_next_heading_boundary() -> None:
+def test_section_end_insert_derives_boundary_before_next_heading() -> None:
     preimage = "## Repository Layout\nlast\n## Elsewhere\noutside\n"
     item = operation(
         preimage,
-        anchor="last\n",
+        anchor="last",
         placement="after",
         content="joined",
     )
 
-    with pytest.raises(LocalizedPatchError) as error:
-        apply(
-            preimage,
-            [item],
-            region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
-        )
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
 
-    assert error.value.code == "OUT_OF_REGION"
+    assert result.content == "## Repository Layout\nlast\njoined\n## Elsewhere\noutside\n"
 
 
 def test_section_end_insert_with_line_break_preserves_next_heading() -> None:
     preimage = "## Repository Layout\nlast\n## Elsewhere\noutside\n"
     item = operation(
         preimage,
-        anchor="last\n",
+        anchor="last",
         placement="after",
         content="added\n",
     )
@@ -400,7 +399,7 @@ def test_section_end_insert_cannot_hide_next_heading_inside_new_fence() -> None:
     )
     item = operation(
         preimage,
-        anchor="last\n",
+        anchor="last",
         placement="after",
         content="wanted\n```\n",
     )
@@ -475,8 +474,8 @@ def test_generate_patch_accepts_each_required_insertion_for_one_path() -> None:
     digest = sha256(preimage.encode()).hexdigest()
     changes = _validated_changes(
         {"changes": [
-            {**operation(preimage, path="README.md", anchor="first\n", content="one\n"), "regionId": "r"},
-            {**operation(preimage, path="README.md", anchor="second\n", content="two\n"), "regionId": "r"},
+            {**operation(preimage, path="README.md", anchor="first", content="one\n"), "regionId": "r"},
+            {**operation(preimage, path="README.md", anchor="second", content="two\n"), "regionId": "r"},
         ]},
         ("README.md",), ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
         repository_revision=REVISION,
@@ -500,12 +499,31 @@ def test_generate_patch_accepts_one_subtree_insert_for_many_required_values() ->
     assert all(value in changes[0]["content"] for value in subtree.splitlines())
 
 
-def test_line_oriented_insert_rejects_same_line_splice_before_materialization() -> None:
+def test_logical_line_anchor_resolves_after_boundary_before_materialization() -> None:
     preimage = "## Repository Layout\n  review-aep-pr/\n"
     subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
     item = operation(
         preimage,
         anchor="  review-aep-pr/",
+        placement="after",
+        content=subtree,
+    )
+
+    result = apply(
+        preimage,
+        [item],
+        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
+    )
+
+    assert result.content == preimage.replace("  review-aep-pr/\n", "  review-aep-pr/\n" + subtree)
+
+
+def test_live_operation_rejects_legacy_newline_terminated_anchor() -> None:
+    preimage = "## Repository Layout\n  review-aep-pr/\n"
+    subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
+    item = operation(
+        preimage,
+        anchor="  review-aep-pr/\n",
         placement="after",
         content=subtree,
     )
@@ -517,42 +535,10 @@ def test_line_oriented_insert_rejects_same_line_splice_before_materialization() 
             region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
         )
 
-    assert error.value.code == "INVALID_LINE_SPLICE"
-    with pytest.raises(RejectedPatchCandidateError, match="INVALID_LINE_SPLICE"):
-        _validated_changes(
-            {"changes": [item]},
-            ("README.md",),
-            ({
-                "path": "README.md", "content": preimage,
-                "preimageSha256": sha256(preimage.encode()).hexdigest(),
-            },),
-            repository_revision=REVISION,
-            regions_by_path={"README.md": {
-                "kind": "MARKDOWN_SECTION", "name": "Repository Layout",
-            }},
-        )
+    assert error.value.code == "INVALID_ANCHOR"
 
 
-def test_line_oriented_insert_preserves_explicit_tree_boundaries() -> None:
-    preimage = "## Repository Layout\n  review-aep-pr/\n"
-    subtree = "deploy/\n  local/\n  self-hosting/\n  validation/\n"
-    item = operation(
-        preimage,
-        anchor="  review-aep-pr/\n",
-        placement="after",
-        content=subtree,
-    )
-
-    result = apply(
-        preimage,
-        [item],
-        region={"kind": "MARKDOWN_SECTION", "name": "Repository Layout"},
-    )
-
-    assert result.content == "## Repository Layout\n  review-aep-pr/\n" + subtree
-
-
-def test_line_oriented_insert_cannot_split_a_crlf_separator() -> None:
+def test_anchor_cannot_include_part_of_a_crlf_separator() -> None:
     preimage = "head\r\nnext\r\n"
     item = operation(
         preimage,
@@ -564,10 +550,10 @@ def test_line_oriented_insert_cannot_split_a_crlf_separator() -> None:
     with pytest.raises(LocalizedPatchError) as error:
         apply(preimage, [item])
 
-    assert error.value.code == "INVALID_LINE_SPLICE"
+    assert error.value.code == "INVALID_ANCHOR"
 
 
-def test_single_line_insert_cannot_concatenate_onto_an_anchor_line() -> None:
+def test_single_line_insert_is_materialized_as_a_new_logical_line() -> None:
     preimage = "## Repository Layout\n  review-aep-pr/\n"
     item = operation(
         preimage,
@@ -576,7 +562,79 @@ def test_single_line_insert_cannot_concatenate_onto_an_anchor_line() -> None:
         content="deploy/",
     )
 
-    with pytest.raises(LocalizedPatchError) as error:
-        apply(preimage, [item])
+    result = apply(preimage, [item])
 
-    assert error.value.code == "INVALID_LINE_SPLICE"
+    assert result.content == "## Repository Layout\n  review-aep-pr/\ndeploy/\n"
+
+
+@pytest.mark.parametrize(
+    ("preimage", "content", "expected"),
+    [
+        ("anchor", "added\n", "anchor\nadded"),
+        ("anchor", "added", "anchor\nadded"),
+        ("anchor", "added\r\n", "anchor\nadded"),
+        ("head\r\nanchor", "added\n", "head\r\nanchor\r\nadded"),
+        ("head\r\nanchor", "added\r\n", "head\r\nanchor\r\nadded"),
+    ],
+)
+def test_after_final_line_preserves_no_final_newline(
+    preimage: str, content: str, expected: str,
+) -> None:
+    item = operation(
+        preimage, anchor="anchor", placement="after", content=content,
+    )
+
+    result = apply(preimage, [item])
+
+    assert result.content == expected
+
+
+def test_aggregate_application_uses_effective_crlf_replacement_content() -> None:
+    preimage = "## Repository Layout\r\nanchor\r\nnext\r\n"
+    digest = sha256(preimage.encode()).hexdigest()
+    changes = _validated_changes(
+        {"changes": [operation(
+            preimage, anchor="anchor", placement="after", content="added",
+        )]},
+        ("README.md",),
+        ({"path": "README.md", "content": preimage, "preimageSha256": digest},),
+        repository_revision=REVISION,
+        regions_by_path={"README.md": {
+            "kind": "MARKDOWN_SECTION", "name": "Repository Layout",
+        }},
+    )
+
+    assert changes[0]["content"] == (
+        "## Repository Layout\r\nanchor\r\nadded\r\nnext\r\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "preimage",
+    ["first\nsecond", "first\r\nsecond"],
+)
+def test_exact_whole_file_delete_accepts_no_final_newline(preimage: str) -> None:
+    item = operation(
+        preimage, operation="delete", anchor=preimage, content="",
+    )
+
+    result = apply(preimage, [item])
+
+    assert result.content == ""
+    assert result.replacements == ("",)
+    assert result.operations[0]["anchorKind"] == "WHOLE_FILE"
+
+    changes = _validated_changes(
+        {"changes": [item]},
+        ("README.md",),
+        ({
+            "path": "README.md", "content": preimage,
+            "preimageSha256": sha256(preimage.encode()).hexdigest(),
+        },),
+        repository_revision=REVISION,
+        regions_by_path={"README.md": {
+            "kind": "WHOLE_FILE", "name": "WHOLE_FILE",
+        }},
+    )
+    assert changes[0]["operation"] == "delete"
+    assert changes[0]["content"] == ""
