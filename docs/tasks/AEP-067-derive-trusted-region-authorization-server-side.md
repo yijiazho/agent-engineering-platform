@@ -1,6 +1,6 @@
 # AEP-067: Derive Trusted Region Authorization Server-Side
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 

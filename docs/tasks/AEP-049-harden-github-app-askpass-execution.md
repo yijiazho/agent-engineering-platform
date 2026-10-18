@@ -1,12 +1,12 @@
 # AEP-049: Harden GitHub App Askpass Execution
 
-**Status:** In Progress
+**Status:** Completed
 
 Credential-free implementation and local contract validation are complete.
 The Docker-capable validation workflow now runs the service-image askpass gate
 for relevant source, test, documentation, and service-Dockerfile changes.
-The corrected immutable service generation still requires publication and the
-controlled MTP-09/MTP-10 live run before this task can be marked completed.
+The corrected immutable service generation and latest successful controlled
+MTP-09/MTP-10 live run complete the publication-path verification.
 
 ## Context
 

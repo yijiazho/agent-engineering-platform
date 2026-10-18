@@ -1,6 +1,6 @@
 # AEP-050: Normalize Publication Repository Identity
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 

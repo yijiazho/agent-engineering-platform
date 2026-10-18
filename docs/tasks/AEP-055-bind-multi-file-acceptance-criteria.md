@@ -1,6 +1,6 @@
 # AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 

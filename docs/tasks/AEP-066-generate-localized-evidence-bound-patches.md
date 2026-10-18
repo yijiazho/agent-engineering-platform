@@ -1,6 +1,6 @@
 # AEP-066: Generate Localized Evidence-Bound Patches
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 

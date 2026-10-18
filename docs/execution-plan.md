@@ -24,8 +24,8 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 44 |
-| In Progress | 16 |
+| Completed | 58 |
+| In Progress | 2 |
 | Not Started | 11 |
 | Blocked | 0 |
 | Total | 71 |
@@ -169,20 +169,20 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 41 | [AEP-041: Implement GitHub App Provider Integration](tasks/AEP-041-implement-github-app-provider-integration.md) | Completed |
 | 42 | [AEP-042: Implement Live Model Provider Adapter](tasks/AEP-042-implement-live-model-provider-adapter.md) | Completed |
 | 43 | [AEP-044: Stabilize Self-Hosting Dogfood Startup](tasks/AEP-044-stabilize-self-hosting-dogfood-startup.md) | Completed |
-| 44 | [AEP-045: Optimize Context Token Efficiency](tasks/AEP-045-optimize-context-token-efficiency.md) | In Progress |
-| 45 | [AEP-046: Coordinate Model Rate Limits](tasks/AEP-046-coordinate-model-rate-limits.md) | In Progress |
-| 46 | [AEP-047: Build Hermetic Validation Image](tasks/AEP-047-build-hermetic-validation-image.md) | In Progress |
-| 47 | [AEP-048: Align Publication Policy Evidence Contract](tasks/AEP-048-align-publication-policy-evidence-contract.md) | In Progress |
-| 48 | [AEP-049: Harden GitHub App Askpass Execution](tasks/AEP-049-harden-github-app-askpass-execution.md) | In Progress |
-| 49 | [AEP-050: Normalize Publication Repository Identity](tasks/AEP-050-normalize-publication-repository-identity.md) | In Progress |
-| 50 | [AEP-051: Bind Patch Generation To Editable Target Context](tasks/AEP-051-bind-patch-generation-to-editable-target-context.md) | In Progress |
-| 51 | [AEP-052: Validate Strict Provider Output Schemas](tasks/AEP-052-validate-strict-provider-output-schemas.md) | In Progress |
-| 52 | [AEP-053: Bind Planning Decisions To Exact Repository Evidence](tasks/AEP-053-bind-planning-decisions-to-exact-repository-evidence.md) | In Progress |
-| 53 | [AEP-054: Derive Planning Evidence Read Budgets](tasks/AEP-054-derive-planning-evidence-read-budgets.md) | In Progress |
-| 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | In Progress |
-| 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | In Progress |
-| 56 | [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md) | In Progress |
-| 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | In Progress |
+| 44 | [AEP-045: Optimize Context Token Efficiency](tasks/AEP-045-optimize-context-token-efficiency.md) | Completed |
+| 45 | [AEP-046: Coordinate Model Rate Limits](tasks/AEP-046-coordinate-model-rate-limits.md) | Completed |
+| 46 | [AEP-047: Build Hermetic Validation Image](tasks/AEP-047-build-hermetic-validation-image.md) | Completed |
+| 47 | [AEP-048: Align Publication Policy Evidence Contract](tasks/AEP-048-align-publication-policy-evidence-contract.md) | Completed |
+| 48 | [AEP-049: Harden GitHub App Askpass Execution](tasks/AEP-049-harden-github-app-askpass-execution.md) | Completed |
+| 49 | [AEP-050: Normalize Publication Repository Identity](tasks/AEP-050-normalize-publication-repository-identity.md) | Completed |
+| 50 | [AEP-051: Bind Patch Generation To Editable Target Context](tasks/AEP-051-bind-patch-generation-to-editable-target-context.md) | Completed |
+| 51 | [AEP-052: Validate Strict Provider Output Schemas](tasks/AEP-052-validate-strict-provider-output-schemas.md) | Completed |
+| 52 | [AEP-053: Bind Planning Decisions To Exact Repository Evidence](tasks/AEP-053-bind-planning-decisions-to-exact-repository-evidence.md) | Completed |
+| 53 | [AEP-054: Derive Planning Evidence Read Budgets](tasks/AEP-054-derive-planning-evidence-read-budgets.md) | Completed |
+| 54 | [AEP-055: Bind Multi-Insertion Acceptance Criteria To Planning Evidence](tasks/AEP-055-bind-multi-file-acceptance-criteria.md) | Completed |
+| 55 | [AEP-066: Generate Localized Evidence-Bound Patches](tasks/AEP-066-generate-localized-evidence-bound-patches.md) | Completed |
+| 56 | [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md) | Completed |
+| 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | Completed |
 | 58 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
 | 59 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Not Started |
 | 60 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
@@ -248,17 +248,17 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
 | AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047, AEP-048, AEP-049, AEP-050, AEP-051, AEP-052, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067, AEP-068, AEP-071 | In Progress |
 | AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
-| AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | In Progress |
-| AEP-046 | AEP-010, AEP-036, AEP-040, AEP-042, AEP-045 | In Progress |
-| AEP-047 | AEP-023, AEP-027, AEP-032, AEP-039, AEP-040 | In Progress |
-| AEP-048 | AEP-028, AEP-034, AEP-037, AEP-040, AEP-047 | In Progress |
-| AEP-049 | AEP-022, AEP-034, AEP-039, AEP-041, AEP-048 | In Progress |
-| AEP-050 | AEP-022, AEP-024, AEP-034, AEP-039, AEP-049 | In Progress |
-| AEP-051 | AEP-016, AEP-017, AEP-026, AEP-031, AEP-033, AEP-040, AEP-045, AEP-048 | In Progress |
-| AEP-052 | AEP-001, AEP-003, AEP-012, AEP-013, AEP-014, AEP-030, AEP-036, AEP-040, AEP-042 | In Progress |
-| AEP-053 | AEP-016, AEP-017, AEP-025, AEP-030, AEP-031, AEP-033, AEP-040, AEP-045, AEP-048, AEP-051 | In Progress |
-| AEP-054 | AEP-015, AEP-016, AEP-017, AEP-029, AEP-030, AEP-036, AEP-039, AEP-040, AEP-045, AEP-053 | In Progress |
-| AEP-055 | AEP-002, AEP-013, AEP-017, AEP-025, AEP-029, AEP-030, AEP-036, AEP-040, AEP-051, AEP-052, AEP-053, AEP-054 | In Progress |
+| AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | Completed |
+| AEP-046 | AEP-010, AEP-036, AEP-040, AEP-042, AEP-045 | Completed |
+| AEP-047 | AEP-023, AEP-027, AEP-032, AEP-039, AEP-040 | Completed |
+| AEP-048 | AEP-028, AEP-034, AEP-037, AEP-040, AEP-047 | Completed |
+| AEP-049 | AEP-022, AEP-034, AEP-039, AEP-041, AEP-048 | Completed |
+| AEP-050 | AEP-022, AEP-024, AEP-034, AEP-039, AEP-049 | Completed |
+| AEP-051 | AEP-016, AEP-017, AEP-026, AEP-031, AEP-033, AEP-040, AEP-045, AEP-048 | Completed |
+| AEP-052 | AEP-001, AEP-003, AEP-012, AEP-013, AEP-014, AEP-030, AEP-036, AEP-040, AEP-042 | Completed |
+| AEP-053 | AEP-016, AEP-017, AEP-025, AEP-030, AEP-031, AEP-033, AEP-040, AEP-045, AEP-048, AEP-051 | Completed |
+| AEP-054 | AEP-015, AEP-016, AEP-017, AEP-029, AEP-030, AEP-036, AEP-039, AEP-040, AEP-045, AEP-053 | Completed |
+| AEP-055 | AEP-002, AEP-013, AEP-017, AEP-025, AEP-029, AEP-030, AEP-036, AEP-040, AEP-051, AEP-052, AEP-053, AEP-054 | Completed |
 | AEP-056 | AEP-002, AEP-004, AEP-011, AEP-013, AEP-018, AEP-025, AEP-028, AEP-036 | Completed |
 | AEP-057 | AEP-004, AEP-008, AEP-010, AEP-013, AEP-017, AEP-039, AEP-051, AEP-056 | Not Started |
 | AEP-058 | AEP-004, AEP-009, AEP-010, AEP-011, AEP-018, AEP-039, AEP-051, AEP-056 | Not Started |
@@ -269,9 +269,9 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-063 | AEP-015, AEP-016, AEP-017, AEP-039, AEP-045 | Not Started |
 | AEP-064 | AEP-007, AEP-010, AEP-013, AEP-017, AEP-024, AEP-025, AEP-028, AEP-038, AEP-041, AEP-056, AEP-058 | Not Started |
 | AEP-065 | AEP-019, AEP-020, AEP-024, AEP-027, AEP-028, AEP-041, AEP-051, AEP-056 | Not Started |
-| AEP-066 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-036, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055 | In Progress |
-| AEP-067 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066 | In Progress |
-| AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | In Progress |
+| AEP-066 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-036, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055 | Completed |
+| AEP-067 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-020, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066 | Completed |
+| AEP-068 | AEP-002, AEP-013, AEP-017, AEP-018, AEP-025, AEP-026, AEP-029, AEP-030, AEP-031, AEP-033, AEP-039, AEP-040, AEP-051, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067 | Completed |
 | AEP-069 | AEP-003, AEP-004, AEP-015, AEP-016, AEP-017, AEP-018, AEP-039, AEP-045, AEP-046, AEP-062 | Not Started |
 | AEP-070 | AEP-016, AEP-017, AEP-029, AEP-045, AEP-053, AEP-054, AEP-069, AEP-046, AEP-062 | Not Started |
 | AEP-071 | AEP-002, AEP-004, AEP-008, AEP-010, AEP-011, AEP-018, AEP-036, AEP-040, AEP-056, AEP-058 | In Progress |
