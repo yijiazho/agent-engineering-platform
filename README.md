@@ -32,6 +32,10 @@ The initial MVP focuses on a GitHub-centered engineering loop:
 ## Repository Layout
 
 ```text
+deploy/
+  local/
+  self-hosting/
+  validation/
 docs/
   prd.md
   execution-plan.md
