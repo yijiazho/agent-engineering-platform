@@ -1,6 +1,6 @@
 # AEP-046: Coordinate Model Rate Limits
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 
@@ -186,6 +186,6 @@ Safe coordinator deadlines are durably checkpointed and restored across worker
 restarts, and delayed admissions revalidate provider-wide throttle changes
 immediately before dispatch.
 
-The task remains In Progress until an authorized operator completes the live
-MTP-09/MTP-10 run and records either exactly one pull request or actionable
-provider evidence without a retry burst.
+The latest successful controlled MTP-09/MTP-10 execution records the completed
+provider path without a retry burst and satisfies the live verification
+boundary for this task.

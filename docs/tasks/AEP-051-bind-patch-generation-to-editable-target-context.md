@@ -1,6 +1,6 @@
 # AEP-051: Bind Patch Generation To Editable Target Context
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 

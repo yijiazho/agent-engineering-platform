@@ -1,6 +1,6 @@
 # AEP-048: Align Publication Policy Evidence Contract
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Implementation Status
 
@@ -10,9 +10,9 @@ is versioned as `publication-evidence:1.1.0` ->
 `create-pull-request:1.2.0` -> `issue-to-pr:1.3.0`; semantic Resource and
 production-path fake-provider regressions cover allow and fail-closed paths;
 and Publication Policy now runs before Git mutation. The full local suite and
-the source/published exact-image verification pass. Publishing the corrected
-immutable generation and recording the controlled MTP-09/MTP-10 execution
-remain operator actions, so this task is not yet complete.
+the source/published exact-image verification pass. The latest successful
+controlled MTP-09/MTP-10 execution verified the corrected immutable generation
+and publication-policy evidence.
 
 ## Context
 

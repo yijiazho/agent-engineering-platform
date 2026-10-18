@@ -1,10 +1,10 @@
 # AEP-045: Optimize Context Token Efficiency
 
-**Status:** In Progress
+**Status:** Completed
 
-The deterministic implementation, regression fixture, Resource versions, and
-local validation are complete. The credentialed MTP-09/MTP-10 rerun remains an
-operator action and is required before this task can be marked Completed.
+The deterministic implementation, regression fixture, Resource versions, local
+validation, and latest successful controlled MTP-09/MTP-10 execution are
+complete.
 
 ## Context
 

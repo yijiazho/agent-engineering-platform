@@ -1,6 +1,6 @@
 # AEP-052: Validate Strict Provider Output Schemas
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 

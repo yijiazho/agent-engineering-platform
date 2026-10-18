@@ -1,6 +1,6 @@
 # AEP-054: Derive Planning Evidence Read Budgets
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 
