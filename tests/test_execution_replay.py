@@ -3,6 +3,7 @@ import json
 from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.inspection_cli import main
 from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.workflow_execution import _runtime_validator
 
 
 def _store():
@@ -34,13 +35,20 @@ def test_override_requires_versioned_known_resource_and_records_provenance():
     store, _ = _store()
     replay = ExecutionReplayService(store).replay("wf-source", overrides=["Prompt:plan:2.0.0"])
     assert replay["replayProvenance"]["overrides"] == [{"kind": "Prompt", "name": "plan", "version": "2.0.0"}]
-    assert replay["replayProvenance"]["resourceRefs"][-1]["version"] == "2.0.0"
+    assert next(ref for ref in replay["replayProvenance"]["resourceRefs"] if ref["kind"] == "Prompt")["version"] == "2.0.0"
     try:
         ExecutionReplayService(store).replay("wf-source", overrides=["Model:current:latest"])
     except ReplayError:
         pass
     else:
         raise AssertionError("floating override was accepted")
+    for invalid in ("Prompt:plan:not-a-version", "Prompt:plan:LATEST"):
+        try:
+            ExecutionReplayService(store).replay("wf-source", overrides=[invalid])
+        except ReplayError:
+            pass
+        else:
+            raise AssertionError(f"invalid override version was accepted: {invalid}")
 
 
 def test_exact_replay_fails_closed_without_historical_dependencies():
@@ -56,7 +64,10 @@ def test_exact_replay_fails_closed_without_historical_dependencies():
 
 
 def test_reuse_context_rejects_missing_historical_context():
-    store, source = _store()
+    store = InMemoryRuntimeObjectStore()
+    _, source = _store()
+    source["taskExecutionIds"] = ["task-source"]
+    store.create(source, deterministic_key="source")
     task = {"id": "task-source", "kind": "TaskExecution", "workflowExecutionId": source["id"],
             "contextPackageId": "context-missing"}
     store.create(task, deterministic_key="task")
@@ -68,6 +79,27 @@ def test_reuse_context_rejects_missing_historical_context():
         raise AssertionError("missing historical ContextPackage was accepted")
 
 
+def test_replay_requires_terminal_source_and_collects_related_resource_refs():
+    store, source = _store()
+    running = dict(source); running.update({"id": "wf-running", "status": "RUNNING"})
+    store.create(running, deterministic_key="running")
+    try:
+        ExecutionReplayService(store).replay("wf-running")
+    except ReplayError as error:
+        assert "terminal" in str(error)
+    else:
+        raise AssertionError("nonterminal source was replayed")
+    related = {"id": "resolved-1", "kind": "ResolvedAgent", "workflowExecutionId": "wf-source",
+               "provenance": {"resourceRefs": [{"kind": "Agent", "name": "planner", "version": "1.0.0"},
+                   {"kind": "Model", "name": "reasoner", "version": "2.1.0"}]},
+               "promptRef": {"kind": "Prompt", "name": "plan", "version": "1.0.0"}}
+    store.create(related, deterministic_key="resolved")
+    replay = ExecutionReplayService(store).replay("wf-source", overrides=["Prompt:plan:3.0.0"])
+    refs = replay["replayProvenance"]["resourceRefs"]
+    assert {ref["kind"] for ref in refs} >= {"Agent", "Model", "Prompt", "Workflow", "Event"}
+    assert next(ref for ref in refs if ref["kind"] == "Prompt")["version"] == "3.0.0"
+
+
 def test_cli_replay_persists_execution(tmp_path, capsys):
     store, source = _store()
     path = tmp_path / "objects.json"
@@ -76,4 +108,18 @@ def test_cli_replay_persists_execution(tmp_path, capsys):
     result = json.loads(capsys.readouterr().out)["workflowExecution"]
     assert result["sourceExecutionId"] == "wf-source"
     checkpoint = json.loads(path.read_text(encoding="utf-8"))
-    assert len(checkpoint["objects"]) == 2
+    assert len(checkpoint["objects"]) == 3
+    events = [value for value in checkpoint["objects"].values() if value["kind"] == "ExecutionEvent"]
+    assert len(events) == 1
+    replay_record = next(value for value in checkpoint["objects"].values() if value.get("sourceExecutionId") == "wf-source")
+    _runtime_validator("workflowexecution.schema.json").validate(replay_record)
+    _runtime_validator("executionevent.schema.json").validate(events[0])
+
+
+def test_cli_translates_durable_checkpoint_errors_to_json(tmp_path, capsys):
+    path = tmp_path / "malformed.json"
+    path.write_text("not-json", encoding="utf-8")
+    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source"]) == 2
+    error = json.loads(capsys.readouterr().err)["error"]
+    assert error["code"] == "RUNTIME_STORE_ERROR"
+    assert error["message"] == "runtime store operation failed"

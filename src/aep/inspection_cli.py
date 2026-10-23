@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from aep.execution_replay import ExecutionReplayService, ReplayError
-from aep.runtime_store import DurableJsonRuntimeObjectStore
+from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
 
 
 KIND_COMMANDS = {
@@ -428,6 +428,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except ReplayError as error:
         print(json.dumps({"error": {"code": "REPLAY_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except RuntimeStoreError as error:
+        print(json.dumps({"error": {"code": "RUNTIME_STORE_ERROR", "message": "runtime store operation failed", "diagnostic": dict(error.diagnostic)}}, sort_keys=True), file=sys.stderr)
         return 2
     if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
     else: print(_human(result))
