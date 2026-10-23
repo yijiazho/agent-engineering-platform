@@ -587,6 +587,8 @@ aep explain workflowexecution-...
 aep contexts show contextpackage-...
 aep artifacts show generatedartifact-...
 aep policy-decisions show policydecision-...
+aep replay workflowexecution-...
+aep replay workflowexecution-... --override Prompt:planner:2.0.0
 ```
 
 By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; its
@@ -609,6 +611,20 @@ invocation, artifact, and EvaluationResult IDs, then inspect the final
 `PolicyDecision` ID before treating publication as authorized. `aep explain
 <id>` identifies the decisive terminal evidence. The CLI never renders an Event
 body by default; use the persisted Event ID only as the correlation key.
+
+`aep replay <id>` writes a new durable WorkflowExecution with an explicit
+source link. It preserves the source repository revision and immutable
+Resource references, rejects missing historical provenance, and never changes
+the source record. `--override Kind:name:version` accepts explicit versions
+for Agent, Prompt, Model, Evaluation, or Policy resources; repeat the option
+for multiple overrides. Context handling is selected with `--context reuse`
+or `--context rebuild` (reuse verifies historical ContextPackage presence).
+Replay publication is disabled by default; `--publication` records an explicit
+publication mode for later policy-governed execution. This initial command
+creates an inert replay root and does not dispatch Tasks. Exact replay can
+reproduce recorded inputs and repository state, but model-provider outputs may
+vary across calls, provider versions, and nondeterministic sampling. The
+deterministic context rebuild and execution path remains in progress.
 
 ## Key Documents
 

@@ -1,6 +1,6 @@
 # AEP-057: Implement Deterministic Execution Replay
 
-**Status:** Not Started
+**Status:** In Progress
 
 ## Context
 
@@ -37,3 +37,17 @@ Support an exact replay mode that reuses the historical repository revision and 
 * Replay output is inspectable through AEP-056 and clearly distinguishes inherited inputs from overridden inputs and newly produced runtime evidence.
 * Tests cover exact replay, model/prompt override, missing historical dependency, context identity mismatch, source immutability, and side-effect suppression.
 * Documentation defines the reproducibility guarantees and the expected limits of determinism for model-provider outputs.
+
+## Implementation Notes
+
+The initial replay service creates a fresh, inert WorkflowExecution root in the
+durable runtime checkpoint. It carries the source ID, pinned repository
+revision, versioned source Resource references, and replay provenance. Missing
+revision or Resource provenance fails closed. `aep replay <id>` supports
+versioned Prompt, Agent, Model, Evaluation, and Policy overrides and records
+publication as disabled unless `--publication` is explicitly supplied.
+Context mode is recorded as `reuse` or `rebuild`; reuse verifies that referenced
+historical ContextPackages exist. The replay root itself does not mutate source
+records or dispatch workflow Tasks. Deterministic context reconstruction and
+provider execution remain follow-on work before the broader end-to-end
+reproducibility criteria can be marked complete.

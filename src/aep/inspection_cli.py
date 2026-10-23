@@ -11,6 +11,8 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from aep.execution_replay import ExecutionReplayService, ReplayError
+from aep.runtime_store import DurableJsonRuntimeObjectStore
 
 
 KIND_COMMANDS = {
@@ -396,6 +398,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--unsafe-debug", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
     explain = sub.add_parser("explain"); explain.add_argument("id")
+    replay = sub.add_parser("replay", help="create a replay derived from a prior execution")
+    replay.add_argument("id"); replay.add_argument("--mode", choices=("exact",), default="exact")
+    replay.add_argument("--override", action="append", default=[], metavar="KIND:NAME:VERSION")
+    replay.add_argument("--context", choices=("reuse", "rebuild"), default="reuse")
+    replay.add_argument("--publication", action="store_true")
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
@@ -404,12 +411,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             listing.add_argument("--status")
     try:
         args = parser.parse_args(arguments)
+        if args.command == "replay":
+            replayed = ExecutionReplayService(DurableJsonRuntimeObjectStore(args.state_file)).replay(
+                args.id, overrides=args.override, context_mode=args.context, publication=args.publication,
+            )
+            result = {"workflowExecution": dict(replayed)}
+            if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
+            else: print(_human(result))
+            return 0
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
         elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
         else: result = inspector.show(args.id, KIND_COMMANDS[args.command], unsafe=args.unsafe_debug)
     except InspectionError as error:
         print(json.dumps({"error": {"code": error.code, "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except ReplayError as error:
+        print(json.dumps({"error": {"code": "REPLAY_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
     if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
     else: print(_human(result))
