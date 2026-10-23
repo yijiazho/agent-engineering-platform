@@ -281,6 +281,10 @@ class ExecutionInspector:
             return [self._safe(item, unsafe=False) for item in value]
         return deepcopy(value)
 
+    def safe_output(self, value: Any, *, unsafe: bool = False) -> Any:
+        """Apply the same redaction policy used by inspection commands."""
+        return self._safe(value, unsafe=unsafe)
+
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
     fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
@@ -415,7 +419,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             replayed = ExecutionReplayService(DurableJsonRuntimeObjectStore(args.state_file)).replay(
                 args.id, overrides=args.override, context_mode=args.context, publication=args.publication,
             )
-            result = {"workflowExecution": dict(replayed)}
+            result = {"workflowExecution": ExecutionInspector({}).safe_output(
+                dict(replayed), unsafe=args.unsafe_debug
+            )}
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0

@@ -100,6 +100,49 @@ def test_replay_requires_terminal_source_and_collects_related_resource_refs():
     assert next(ref for ref in refs if ref["kind"] == "Prompt")["version"] == "3.0.0"
 
 
+def test_context_reuse_reads_provenance_ownership_and_collects_knowledgebase_refs():
+    store = InMemoryRuntimeObjectStore()
+    _, source = _store()
+    source["taskExecutionIds"] = ["task-source"]
+    store.create(source, deterministic_key="source")
+    store.create({"id": "task-source", "kind": "TaskExecution", "workflowExecutionId": "wf-source",
+                  "contextPackageId": "context-source", "taskRef": {"kind": "Task", "name": "plan", "version": "1.0.0"}},
+                 deterministic_key="task")
+    store.create({"id": "context-source", "kind": "ContextPackage", "provenance": {
+                    "workflowExecutionId": "wf-source", "taskExecutionId": "task-source",
+                    "resourceRefs": [{"kind": "Task", "name": "plan", "version": "1.0.0"}]},
+                  "elements": [{"type": "knowledge", "provenance": {"resourceRefs": [
+                      {"kind": "KnowledgeBase", "name": "repo-docs", "version": "1.2.0"}]}}]},
+                 deterministic_key="context")
+    replay = ExecutionReplayService(store).replay("wf-source")
+    refs = replay["replayProvenance"]["resourceRefs"]
+    assert {ref["kind"] for ref in refs} >= {"KnowledgeBase", "Task"}
+
+
+def test_invalid_timestamp_fails_before_store_mutation():
+    store, _ = _store()
+    before = len(store.list_by_workflow_execution("wf-source"))
+    try:
+        ExecutionReplayService(store).replay("wf-source", timestamp="not-rfc3339")
+    except ReplayError as error:
+        assert "RFC3339" in str(error)
+    else:
+        raise AssertionError("invalid replay timestamp was accepted")
+    assert len(store.list_by_workflow_execution("wf-source")) == before
+
+
+def test_atomic_runtime_create_rolls_back_if_initial_event_is_invalid():
+    store = InMemoryRuntimeObjectStore()
+    value = {"id": "execution-1", "kind": "WorkflowExecution"}
+    try:
+        store.create_with_event(value, {"id": "event-1", "kind": "WrongKind"}, deterministic_key="execution-1")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid initial event was accepted")
+    assert store.get("execution-1") is None
+
+
 def test_cli_replay_persists_execution(tmp_path, capsys):
     store, source = _store()
     path = tmp_path / "objects.json"
@@ -123,3 +166,16 @@ def test_cli_translates_durable_checkpoint_errors_to_json(tmp_path, capsys):
     error = json.loads(capsys.readouterr().err)["error"]
     assert error["code"] == "RUNTIME_STORE_ERROR"
     assert error["message"] == "runtime store operation failed"
+
+
+def test_cli_replay_redacts_sensitive_extension_fields_by_default(tmp_path, capsys):
+    _, source = _store()
+    source["prompt"] = "private prompt text"
+    path = tmp_path / "objects.json"
+    path.write_text(json.dumps({"objects": {source["id"]: source}, "deterministicKeys": {"source": source["id"]}, "claims": {}, "objectOrder": [source["id"]]}), encoding="utf-8")
+    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source"]) == 0
+    safe = json.loads(capsys.readouterr().out)["workflowExecution"]
+    assert safe["prompt"] == "[REDACTED]"
+    assert main(["--state-file", str(path), "--unsafe-debug", "--output", "json", "replay", "wf-source"]) == 0
+    unsafe = json.loads(capsys.readouterr().out)["workflowExecution"]
+    assert unsafe["prompt"] == "private prompt text"

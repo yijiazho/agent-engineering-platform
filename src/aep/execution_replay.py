@@ -10,6 +10,7 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
+from aep.runtime_validation import is_rfc3339_timestamp
 
 
 class ReplayError(ValueError):
@@ -66,6 +67,8 @@ class ExecutionReplayService:
         resource_refs = _apply_overrides(resource_refs, parsed_overrides)
 
         now = timestamp or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        if not isinstance(now, str) or not is_rfc3339_timestamp(now):
+            raise ReplayError("replay timestamp must be RFC3339")
         replay_id = f"workflowexecution-replay-{uuid4()}"
         trace_id = f"trace-replay-{uuid4()}"
         provenance = deepcopy(dict(source_provenance))
@@ -107,15 +110,17 @@ class ExecutionReplayService:
             },
         })
 
-        created = self._store.create(record, deterministic_key=f"execution-replay:{replay_id}")
-        self._store.append_event(_replay_started_event(created, source_id))
+        event = _replay_started_event(record, source_id)
+        created = self._store.create_with_event(
+            record, event, deterministic_key=f"execution-replay:{replay_id}"
+        )
         return self._store.get(replay_id) or created
 
 
 def _validate_context_evidence(
     source: Mapping[str, Any], related: Sequence[RuntimeObject]
 ) -> None:
-    task_ids = source.get("taskExecutionIds", [])
+    task_ids = source.get("taskExecutionIds")
     if not isinstance(task_ids, list) or not all(isinstance(value, str) and value for value in task_ids):
         raise ReplayError("source WorkflowExecution task references are malformed")
     if len(task_ids) != len(set(task_ids)):
@@ -132,11 +137,22 @@ def _validate_context_evidence(
         if not isinstance(context_id, str) or not context_id:
             raise ReplayError("historical ContextPackage is required but not recorded on a TaskExecution")
         context = by_id.get(context_id)
+        context_provenance = context.get("provenance") if isinstance(context, Mapping) else None
+        context_workflow_id = (
+            context.get("workflowExecutionId")
+            if isinstance(context, Mapping)
+            else None
+        ) or (context_provenance.get("workflowExecutionId") if isinstance(context_provenance, Mapping) else None)
+        context_task_id = (
+            context.get("taskExecutionId")
+            if isinstance(context, Mapping)
+            else None
+        ) or (context_provenance.get("taskExecutionId") if isinstance(context_provenance, Mapping) else None)
         if (
             context is None
             or context.get("kind") != "ContextPackage"
-            or context.get("workflowExecutionId") != source.get("id")
-            or context.get("taskExecutionId") != task_id
+            or context_workflow_id != source.get("id")
+            or context_task_id != task_id
         ):
             raise ReplayError("historical ContextPackage is missing or has mismatched ownership")
 
@@ -165,6 +181,20 @@ def _collect_resource_refs(
             refs = item.get(field)
             if isinstance(refs, list):
                 candidates.extend(refs)
+        if item.get("kind") == "ContextPackage":
+            elements = item.get("elements", ())
+            if not isinstance(elements, (list, tuple)):
+                raise ReplayError("historical ContextPackage elements are malformed")
+            for element in elements:
+                if not isinstance(element, Mapping):
+                    raise ReplayError("historical ContextPackage element is malformed")
+                element_provenance = element.get("provenance")
+                if not isinstance(element_provenance, Mapping):
+                    continue
+                element_refs = element_provenance.get("resourceRefs", ())
+                if not isinstance(element_refs, (list, tuple)):
+                    raise ReplayError("historical ContextPackage Resource references are malformed")
+                candidates.extend(element_refs)
     unique: dict[tuple[str, str, str], dict[str, str]] = {}
     for candidate in candidates:
         if candidate is None:

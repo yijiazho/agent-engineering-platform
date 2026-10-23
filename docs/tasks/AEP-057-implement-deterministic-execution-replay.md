@@ -51,3 +51,9 @@ historical ContextPackages exist. The replay root itself does not mutate source
 records or dispatch workflow Tasks. Deterministic context reconstruction and
 provider execution remain follow-on work before the broader end-to-end
 reproducibility criteria can be marked complete.
+
+Replay creation writes the WorkflowExecution root and its start ExecutionEvent
+atomically. Context ownership is read from persisted provenance, including
+KnowledgeBase Resource references nested in ContextPackage elements. Replay
+inspection uses the CLI's normal redaction policy, and supplied timestamps must
+be RFC3339 values.
