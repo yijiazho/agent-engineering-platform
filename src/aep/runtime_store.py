@@ -96,6 +96,16 @@ class RuntimeObjectStore(ABC):
     def append_event(self, event: RuntimeObject) -> RuntimeObject:
         """Append an ExecutionEvent to the audit stream."""
 
+    def create_with_event(
+        self,
+        runtime_object: RuntimeObject,
+        event: RuntimeObject,
+        *,
+        deterministic_key: str,
+    ) -> RuntimeObject:
+        """Atomically create one runtime object and its initial lifecycle event."""
+        raise NotImplementedError("store does not support atomic object and event creation")
+
     @abstractmethod
     def append_task_execution_id(
         self,
@@ -175,6 +185,25 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             self._deterministic_keys[deterministic_key] = object_id
             self._index(value)
             return _snapshot(value)
+
+    def create_with_event(
+        self,
+        runtime_object: RuntimeObject,
+        event: RuntimeObject,
+        *,
+        deterministic_key: str,
+    ) -> RuntimeObject:
+        with self._lock:
+            snapshot = self._memory_snapshot()
+            try:
+                created = InMemoryRuntimeObjectStore.create(
+                    self, runtime_object, deterministic_key=deterministic_key
+                )
+                InMemoryRuntimeObjectStore.append_event(self, event)
+                return created
+            except Exception:
+                self._restore_memory_snapshot(snapshot)
+                raise
 
     def claim(self, deterministic_key: str, value: RuntimeObject) -> tuple[bool, RuntimeObject]:
         if not deterministic_key:
@@ -417,6 +446,21 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
         return self._mutate(lambda: InMemoryRuntimeObjectStore.create(
             self, runtime_object, deterministic_key=deterministic_key
         ))
+
+    def create_with_event(
+        self,
+        runtime_object: RuntimeObject,
+        event: RuntimeObject,
+        *,
+        deterministic_key: str,
+    ) -> RuntimeObject:
+        def mutation() -> RuntimeObject:
+            created = InMemoryRuntimeObjectStore.create(
+                self, runtime_object, deterministic_key=deterministic_key
+            )
+            InMemoryRuntimeObjectStore.append_event(self, event)
+            return created
+        return self._mutate(mutation)
 
     def claim(
         self, deterministic_key: str, value: RuntimeObject
