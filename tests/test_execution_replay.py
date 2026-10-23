@@ -98,6 +98,22 @@ def test_replay_requires_terminal_source_and_collects_related_resource_refs():
     refs = replay["replayProvenance"]["resourceRefs"]
     assert {ref["kind"] for ref in refs} >= {"Agent", "Model", "Prompt", "Workflow", "Event"}
     assert next(ref for ref in refs if ref["kind"] == "Prompt")["version"] == "3.0.0"
+    assert "resolvedTaskPlan" not in replay
+
+
+def test_replay_collects_unstarted_plan_task_refs_and_preserves_plan():
+    _, source = _store()
+    source["resolvedTaskPlan"] = [
+        {"taskRef": {"kind": "Task", "name": "compile", "version": "1.0.0"}, "dependencies": []},
+        {"taskRef": {"kind": "Task", "name": "publish", "version": "2.0.0"},
+         "dependencies": [{"kind": "Task", "name": "compile", "version": "1.0.0"}]},
+    ]
+    store = InMemoryRuntimeObjectStore()
+    store.create(source, deterministic_key="source-with-plan")
+    replay = ExecutionReplayService(store).replay("wf-source")
+    assert replay["resolvedTaskPlan"] == source["resolvedTaskPlan"]
+    task_versions = {(ref["name"], ref["version"]) for ref in replay["replayProvenance"]["resourceRefs"] if ref["kind"] == "Task"}
+    assert task_versions == {("compile", "1.0.0"), ("publish", "2.0.0")}
 
 
 def test_context_reuse_reads_provenance_ownership_and_collects_knowledgebase_refs():

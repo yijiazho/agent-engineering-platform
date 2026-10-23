@@ -96,7 +96,6 @@ class ExecutionReplayService:
             "taskExecutionIds": [],
             "provenance": provenance,
             "sourceExecutionId": source_id,
-            "resolvedTaskPlan": deepcopy(source.get("resolvedTaskPlan", [])),
             "replayProvenance": {
                 "mode": "exact",
                 "sourceExecutionId": source_id,
@@ -109,6 +108,8 @@ class ExecutionReplayService:
                 "newRuntimeEvidence": [],
             },
         })
+        if "resolvedTaskPlan" in source:
+            record["resolvedTaskPlan"] = deepcopy(source["resolvedTaskPlan"])
 
         event = _replay_started_event(record, source_id)
         created = self._store.create_with_event(
@@ -161,6 +162,19 @@ def _collect_resource_refs(
     source: Mapping[str, Any], related: Sequence[RuntimeObject]
 ) -> list[dict[str, str]]:
     candidates: list[Any] = [source.get("workflowRef"), source.get("eventRef")]
+    task_plan = source.get("resolvedTaskPlan")
+    if task_plan is not None:
+        if not isinstance(task_plan, (list, tuple)):
+            raise ReplayError("historical resolved Task plan is malformed")
+        for node in task_plan:
+            if not isinstance(node, Mapping):
+                raise ReplayError("historical resolved Task plan node is malformed")
+            if node.get("taskRef") is not None:
+                candidates.append(node["taskRef"])
+            dependencies = node.get("dependencies", ())
+            if not isinstance(dependencies, (list, tuple)):
+                raise ReplayError("historical Task dependencies are malformed")
+            candidates.extend(dependencies)
     root_provenance = source.get("provenance")
     if isinstance(root_provenance, Mapping):
         root_refs = root_provenance.get("resourceRefs", ())
