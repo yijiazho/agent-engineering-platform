@@ -92,6 +92,7 @@ class CreatePullRequestTaskHandler:
         event_resolver: EventResolver,
         clock: Clock,
         publication_guard: Callable[[], bool] | None = None,
+        publication_disabled_message: str = "publication is emergency-disabled by the operator",
     ) -> None:
         if not isinstance(resources, ResourceCollection):
             raise TypeError("resources must be a ResourceCollection")
@@ -112,7 +113,10 @@ class CreatePullRequestTaskHandler:
         self._clock = clock
         if publication_guard is not None and not callable(publication_guard):
             raise TypeError("publication_guard must be callable")
+        if not isinstance(publication_disabled_message, str) or not publication_disabled_message:
+            raise ValueError("publication_disabled_message must be non-empty text")
         self._publication_guard = publication_guard or _environment_publication_guard
+        self._publication_disabled_message = publication_disabled_message
         self._publication_policy = PublicationPolicy(runtime_store)
         self._capability_policy = PreExecutionCapabilityPolicy(runtime_store)
 
@@ -123,7 +127,7 @@ class CreatePullRequestTaskHandler:
             if not self._publication_guard():
                 return TaskExecutionResult.failure(
                     FailureClass.POLICY,
-                    "publication is emergency-disabled by the operator",
+                    self._publication_disabled_message,
                 )
             workflow = self._validate_inputs(task, task_execution)
             configuration = self._configuration(task, task_execution, workflow)

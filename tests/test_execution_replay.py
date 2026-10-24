@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.inspection_cli import main
@@ -16,7 +17,8 @@ def _store():
         "taskExecutionIds": [], "provenance": {"actor": "test", "resourceRefs": [
             {"kind": "Workflow", "name": "build", "version": "1.0.0"},
             {"kind": "Event", "name": "trigger", "version": "1.0.0"},
-            {"kind": "Prompt", "name": "plan", "version": "1.0.0"}], "repositoryRevision": "a" * 40}}
+            {"kind": "Prompt", "name": "plan", "version": "1.0.0"},
+            {"kind": "Model", "name": "reasoner", "version": "1.0.0"}], "repositoryRevision": "a" * 40}}
     store.create(source, deterministic_key="source")
     return store, source
 
@@ -26,15 +28,24 @@ def test_exact_replay_is_distinct_and_preserves_lineage_and_inputs():
     replay = ExecutionReplayService(store).replay("wf-source", timestamp="2026-01-02T00:00:00Z")
     assert replay["id"] != source["id"]
     assert replay["sourceExecutionId"] == source["id"]
+    assert replay["status"] == "PENDING"
+    assert "startedAt" not in replay
     assert replay["repositoryRevision"] == source["repositoryRevision"]
     assert replay["replayProvenance"]["publicationMode"] == "disabled"
+    events = [item for item in store.list_by_workflow_execution(replay["id"]) if item["kind"] == "ExecutionEvent"]
+    assert [event["eventType"] for event in events] == ["WorkflowExecutionReplayCreated"]
     assert store.get("wf-source") == source
 
 
 def test_override_requires_versioned_known_resource_and_records_provenance():
     store, _ = _store()
-    replay = ExecutionReplayService(store).replay("wf-source", overrides=["Prompt:plan:2.0.0"])
-    assert replay["replayProvenance"]["overrides"] == [{"kind": "Prompt", "name": "plan", "version": "2.0.0"}]
+    replay = ExecutionReplayService(store).replay(
+        "wf-source", overrides=["Prompt:plan:2.0.0", "Model:reasoner:3.0.0"]
+    )
+    assert replay["replayProvenance"]["overrides"] == [
+        {"kind": "Prompt", "name": "plan", "version": "2.0.0"},
+        {"kind": "Model", "name": "reasoner", "version": "3.0.0"},
+    ]
     assert next(ref for ref in replay["replayProvenance"]["resourceRefs"] if ref["kind"] == "Prompt")["version"] == "2.0.0"
     try:
         ExecutionReplayService(store).replay("wf-source", overrides=["Model:current:latest"])
@@ -124,15 +135,52 @@ def test_context_reuse_reads_provenance_ownership_and_collects_knowledgebase_ref
     store.create({"id": "task-source", "kind": "TaskExecution", "workflowExecutionId": "wf-source",
                   "contextPackageId": "context-source", "taskRef": {"kind": "Task", "name": "plan", "version": "1.0.0"}},
                  deterministic_key="task")
-    store.create({"id": "context-source", "kind": "ContextPackage", "provenance": {
-                    "workflowExecutionId": "wf-source", "taskExecutionId": "task-source",
-                    "resourceRefs": [{"kind": "Task", "name": "plan", "version": "1.0.0"}]},
-                  "elements": [{"type": "knowledge", "provenance": {"resourceRefs": [
-                      {"kind": "KnowledgeBase", "name": "repo-docs", "version": "1.2.0"}]}}]},
-                 deterministic_key="context")
+    store.create(
+        {
+            "id": "context-source", "kind": "ContextPackage",
+            "taskRef": {"kind": "Task", "name": "plan", "version": "1.0.0"},
+            "provenance": {
+                "workflowExecutionId": "wf-source", "taskExecutionId": "task-source",
+                "resourceRefs": [{"kind": "Task", "name": "plan", "version": "1.0.0"}],
+            },
+            "repositoryRevision": source["repositoryRevision"],
+            "elements": [{"type": "knowledge", "provenance": {"resourceRefs": [
+                {"kind": "KnowledgeBase", "name": "repo-docs", "version": "1.2.0"},
+            ]}}],
+        },
+        deterministic_key="context",
+    )
     replay = ExecutionReplayService(store).replay("wf-source")
     refs = replay["replayProvenance"]["resourceRefs"]
     assert {ref["kind"] for ref in refs} >= {"KnowledgeBase", "Task"}
+    assert replay["replayProvenance"]["contextIdentities"][0]["mode"] == "reuse"
+
+
+def test_context_rebuild_fails_closed_without_rebuilder_and_on_identity_mismatch():
+    store = InMemoryRuntimeObjectStore()
+    _, source = _store()
+    source["taskExecutionIds"] = ["task-source"]
+    store.create(source, deterministic_key="source")
+    store.create({
+        "id": "task-source", "kind": "TaskExecution",
+        "workflowExecutionId": source["id"], "contextPackageId": "context-source",
+        "taskRef": {"kind": "Task", "name": "plan", "version": "1.0.0"},
+    }, deterministic_key="task")
+    context = {
+        "id": "context-source", "kind": "ContextPackage",
+        "taskExecutionId": "task-source", "taskRef": {"kind": "Task", "name": "plan", "version": "1.0.0"},
+        "repositoryRevision": source["repositoryRevision"], "elements": [{"type": "event", "content": {"id": "event-1"}}],
+        "provenance": {"workflowExecutionId": source["id"], "taskExecutionId": "task-source"},
+    }
+    store.create(context, deterministic_key="context")
+
+    rebuilt = ExecutionReplayService(store).replay("wf-source", context_mode="rebuild")
+    assert rebuilt["replayProvenance"]["contextIdentities"][0]["mode"] == "rebuild"
+    with pytest.raises(ReplayError, match="identity mismatch"):
+        ExecutionReplayService(
+            store,
+            context_rebuilder=lambda task, prior: {**prior, "elements": []},
+        ).replay("wf-source", context_mode="rebuild")
 
 
 def test_invalid_timestamp_fails_before_store_mutation():
@@ -163,9 +211,10 @@ def test_cli_replay_persists_execution(tmp_path, capsys):
     store, source = _store()
     path = tmp_path / "objects.json"
     path.write_text(json.dumps({"objects": {source["id"]: source}, "deterministicKeys": {"source": source["id"]}, "claims": {}, "objectOrder": [source["id"]]}), encoding="utf-8")
-    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source"]) == 0
+    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source", "--plan-only"]) == 0
     result = json.loads(capsys.readouterr().out)["workflowExecution"]
     assert result["sourceExecutionId"] == "wf-source"
+    assert result["status"] == "PENDING"
     checkpoint = json.loads(path.read_text(encoding="utf-8"))
     assert len(checkpoint["objects"]) == 3
     events = [value for value in checkpoint["objects"].values() if value["kind"] == "ExecutionEvent"]
@@ -175,10 +224,24 @@ def test_cli_replay_persists_execution(tmp_path, capsys):
     _runtime_validator("executionevent.schema.json").validate(events[0])
 
 
+def test_cli_replay_without_runtime_configuration_requires_explicit_plan_only(
+    tmp_path, capsys, monkeypatch,
+):
+    _, source = _store()
+    path = tmp_path / "objects.json"
+    original = {"objects": {source["id"]: source}, "deterministicKeys": {"source": source["id"]}, "claims": {}, "objectOrder": [source["id"]]}
+    path.write_text(json.dumps(original), encoding="utf-8")
+    monkeypatch.delenv("AEP_STATE_ROOT", raising=False)
+
+    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "REPLAY_RUNTIME_ERROR"
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+
+
 def test_cli_translates_durable_checkpoint_errors_to_json(tmp_path, capsys):
     path = tmp_path / "malformed.json"
     path.write_text("not-json", encoding="utf-8")
-    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source"]) == 2
+    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source", "--plan-only"]) == 2
     error = json.loads(capsys.readouterr().err)["error"]
     assert error["code"] == "RUNTIME_STORE_ERROR"
     assert error["message"] == "runtime store operation failed"
@@ -189,9 +252,9 @@ def test_cli_replay_redacts_sensitive_extension_fields_by_default(tmp_path, caps
     source["prompt"] = "private prompt text"
     path = tmp_path / "objects.json"
     path.write_text(json.dumps({"objects": {source["id"]: source}, "deterministicKeys": {"source": source["id"]}, "claims": {}, "objectOrder": [source["id"]]}), encoding="utf-8")
-    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source"]) == 0
+    assert main(["--state-file", str(path), "--output", "json", "replay", "wf-source", "--plan-only"]) == 0
     safe = json.loads(capsys.readouterr().out)["workflowExecution"]
     assert safe["prompt"] == "[REDACTED]"
-    assert main(["--state-file", str(path), "--unsafe-debug", "--output", "json", "replay", "wf-source"]) == 0
+    assert main(["--state-file", str(path), "--unsafe-debug", "--output", "json", "replay", "wf-source", "--plan-only"]) == 0
     unsafe = json.loads(capsys.readouterr().out)["workflowExecution"]
     assert unsafe["prompt"] == "private prompt text"

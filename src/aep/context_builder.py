@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
+from aep.context_identity import context_identity
 from aep.generated_artifact_store import GeneratedArtifactStore
 from aep.observability import StructuredLifecycleLogger, propagation_fields
 from aep.repository_knowledge import (
@@ -103,6 +104,10 @@ class ContextBuilder:
         runtime_store: RuntimeObjectStore | None = None,
         lifecycle_logger: StructuredLifecycleLogger | None = None,
         repository_file_reader: RepositoryPlanningEvidenceReader | None = None,
+        reused_contexts: Mapping[tuple[str, str, str], JsonMapping] | None = None,
+        expected_context_identities: Mapping[tuple[str, str, str], str] | None = None,
+        require_reused_context: bool = False,
+        require_expected_context_identity: bool = False,
     ) -> None:
         if not isinstance(repository_knowledge, RepositoryKnowledgeProvider):
             raise TypeError("repository_knowledge must implement RepositoryKnowledgeProvider")
@@ -119,6 +124,10 @@ class ContextBuilder:
                 "repository_file_reader must implement inspect and verify_absent"
             )
         self._repository_file_reader = repository_file_reader
+        self._reused_contexts = dict(reused_contexts or {})
+        self._expected_context_identities = dict(expected_context_identities or {})
+        self._require_reused_context = require_reused_context
+        self._require_expected_context_identity = require_expected_context_identity
 
     def build(
         self,
@@ -203,6 +212,41 @@ class ContextBuilder:
         )
         trace_id = correlation["traceId"]
         workflow_execution_id = correlation["workflowExecutionId"]
+        task_key = (
+            str(task_ref["kind"]), str(task_ref["name"]), str(task_ref["version"]),
+        )
+        reused = self._reused_contexts.get(task_key)
+        if reused is not None:
+            historical_package = _json_copy(reused)
+            if (
+                historical_package.get("kind") != "ContextPackage"
+                or historical_package.get("taskRef") != task_ref
+                or historical_package.get("repositoryRevision") != repository_revision
+            ):
+                raise ContextInputValidationError(
+                    "reused ContextPackage does not match the replay Task or repository revision"
+                )
+            event_elements = [
+                element for element in historical_package.get("elements", ())
+                if isinstance(element, Mapping) and element.get("type") == "event"
+            ]
+            if event is not None and "event" in required.union(optional) and (
+                len(event_elements) != 1
+                or event_elements[0].get("content") != _json_copy(event)
+            ):
+                raise ContextInputValidationError(
+                    "reused ContextPackage does not contain the replay's historical Event"
+                )
+            _validate_context_package(historical_package)
+            return _freeze(historical_package)
+        if self._require_reused_context:
+            raise ContextInputValidationError(
+                f"historical ContextPackage is unavailable for replay Task {task_ref['name']}"
+            )
+        if self._require_expected_context_identity and task_key not in self._expected_context_identities:
+            raise ContextInputValidationError(
+                f"historical ContextPackage identity is unavailable for replay Task {task_ref['name']}"
+            )
         base_provenance = {
             "actor": "context-builder",
             "workflowExecutionId": workflow_execution_id,
@@ -854,6 +898,11 @@ class ContextBuilder:
             "selection": selection,
         }
         _validate_context_package(package)
+        expected_identity = self._expected_context_identities.get(task_key)
+        if expected_identity is not None and context_identity(package) != expected_identity:
+            raise ContextInputValidationError(
+                f"rebuilt ContextPackage identity mismatch for Task {task_ref['name']}"
+            )
         if self._runtime_store is not None:
             stored = self._runtime_store.create(
                 package,

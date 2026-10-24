@@ -1,6 +1,6 @@
 # AEP-057: Implement Deterministic Execution Replay
 
-**Status:** In Progress
+**Status:** Completed
 
 ## Context
 
@@ -40,20 +40,32 @@ Support an exact replay mode that reuses the historical repository revision and 
 
 ## Implementation Notes
 
-The initial replay service creates a fresh, inert WorkflowExecution root in the
-durable runtime checkpoint. It carries the source ID, pinned repository
-revision, versioned source Resource references, and replay provenance. Missing
-revision or Resource provenance fails closed. `aep replay <id>` supports
-versioned Prompt, Agent, Model, Evaluation, and Policy overrides and records
-publication as disabled unless `--publication` is explicitly supplied.
-Context mode is recorded as `reuse` or `rebuild`; reuse verifies that referenced
-historical ContextPackages exist. The replay root itself does not mutate source
-records or dispatch workflow Tasks. Deterministic context reconstruction and
-provider execution remain follow-on work before the broader end-to-end
-reproducibility criteria can be marked complete.
+The replay service first writes a distinct `PENDING` WorkflowExecution linked
+to its source and emits `WorkflowExecutionReplayCreated` atomically. The normal
+CLI then dispatches that root through the Dogfood Workflow Runtime; `--plan-only`
+is the explicit option for creating a pending record without dispatch. Replay
+checks out the source repository revision, loads Resource versions from that
+checkout, verifies every effective inherited or overridden version, and fails closed when the Event,
+repository knowledge snapshot, or any required Resource cannot be reconstructed.
+Explicit Prompt, Agent, Model, Evaluation, and Policy overrides must be
+versioned and are applied to a copied Resource collection; source records remain
+unchanged.
 
-Replay creation writes the WorkflowExecution root and its start ExecutionEvent
-atomically. Context ownership is read from persisted provenance, including
-KnowledgeBase Resource references nested in ContextPackage elements. Replay
-inspection uses the CLI's normal redaction policy, and supplied timestamps must
+The default `--context reuse` path passes the source ContextPackage to the new
+Task invocation without changing that package. Inspection accepts this
+cross-execution reference only when the source execution, source Task, replay
+lineage, Task reference, and stable context identity agree. `--context rebuild`
+uses the normal ContextBuilder and checks each rebuilt package identity before
+the handler can invoke its Agent. Missing historical context evidence fails
+closed. Rebuilt contexts can diverge after an earlier model output changes; the
+replay then stops before the next Agent call. Provider outputs are not promised
+to be byte-for-byte deterministic across provider versions or sampling.
+
+Replay publication is disabled by default. The publication Task is denied before
+Git push or pull-request creation unless `--publication` is explicitly supplied;
+enabled publication still passes the normal emergency guard, capability
+policies, and publication policy. Workflow status transitions and lifecycle
+events are committed atomically. AEP-056 inspection distinguishes inherited
+Resources and ContextPackages, overrides, and newly created runtime evidence.
+Inspection uses the normal CLI redaction policy, and supplied timestamps must
 be RFC3339 values.

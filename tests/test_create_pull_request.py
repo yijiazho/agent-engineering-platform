@@ -321,6 +321,21 @@ def test_emergency_disable_prevents_commit_push_and_pull_request() -> None:
     assert github.calls == []
 
 
+def test_replay_publication_guard_suppresses_all_external_side_effects() -> None:
+    store, handler, task, _artifacts, git, github = setup_handler(
+        publication_guard=lambda: False,
+        publication_disabled_message="publication is disabled for replay",
+    )
+
+    result = handler.execute(task, store.get(CREATE_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.POLICY
+    assert result.message == "publication is disabled for replay"
+    assert git.calls == []
+    assert github.calls == []
+
+
 def test_deployment_emergency_marker_is_the_default_publication_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -618,6 +633,7 @@ def setup_handler(
     github_outcome: Mapping[str, Any] | Exception | None = None,
     fail_description_once: bool = False,
     publication_guard=None,
+    publication_disabled_message: str = "publication is emergency-disabled by the operator",
     repository_resources: bool = False,
 ):
     store, acceptance_handler, acceptance_task, base_artifacts = setup_acceptance()
@@ -760,6 +776,7 @@ def setup_handler(
         event_resolver=lambda event_id: event if event_id == "event-34" else None,
         clock=lambda: TIMESTAMP,
         publication_guard=publication_guard,
+        publication_disabled_message=publication_disabled_message,
     )
     return store, handler, task, artifacts, git, github
 

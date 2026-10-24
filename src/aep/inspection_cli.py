@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from aep.execution_replay import ExecutionReplayService, ReplayError
+from aep.context_identity import context_identity
 from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
 
 
@@ -127,8 +128,21 @@ class ExecutionInspector:
             self._validate_task_references(task_value, workflow)
         tasks.extend(_blocked_plan_nodes(workflow, [self._get(str(task["id"])) for task in tasks]))
         related = [item for item in self._objects.values() if _belongs_to_workflow(item, execution_id)]
+        workflow_output = deepcopy(workflow)
+        replay_provenance = workflow_output.get("replayProvenance")
+        if isinstance(replay_provenance, dict):
+            replay_provenance["newRuntimeEvidence"] = sorted(
+                (
+                    {"kind": str(item["kind"]), "id": str(item["id"])}
+                    for item in related
+                    if item.get("kind") != "ExecutionEvent"
+                    and isinstance(item.get("kind"), str)
+                    and isinstance(item.get("id"), str)
+                ),
+                key=lambda item: (item["kind"], item["id"]),
+            )
         return self._safe({
-            "workflowExecution": workflow,
+            "workflowExecution": workflow_output,
             "elapsed": _elapsed(workflow),
             "tasks": tasks,
             "relatedObjects": [_summary(item) for item in _ordered(related)],
@@ -261,12 +275,78 @@ class ExecutionInspector:
         workflow_id = value.get("workflowExecutionId") or (provenance.get("workflowExecutionId") if isinstance(provenance, Mapping) else None)
         trace_id = value.get("traceId")
         if workflow_id != workflow.get("id") or trace_id != workflow.get("traceId"):
+            if self._is_reused_source_context(value, workflow, task_id=task_id):
+                return
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference belongs to another execution")
         if task_id is None:
             return
         owner_task_id = value.get("taskExecutionId") or (provenance.get("taskExecutionId") if isinstance(provenance, Mapping) else None)
         if owner_task_id != task_id:
             raise InspectionError("RUNTIME_REFERENCE_MALFORMED", "runtime reference belongs to another task")
+
+    def _is_reused_source_context(
+        self,
+        value: Mapping[str, Any],
+        workflow: Mapping[str, Any],
+        *,
+        task_id: str | None,
+    ) -> bool:
+        source_id = workflow.get("sourceExecutionId")
+        replay = workflow.get("replayProvenance")
+        replay_contexts = replay.get("contextIdentities") if isinstance(replay, Mapping) else None
+        context_provenance = value.get("provenance")
+        context_workflow_id = value.get("workflowExecutionId") or (
+            context_provenance.get("workflowExecutionId")
+            if isinstance(context_provenance, Mapping) else None
+        )
+        if (
+            value.get("kind") != "ContextPackage"
+            or not isinstance(source_id, str)
+            or not isinstance(replay, Mapping)
+            or replay.get("contextPackages") != "reuse"
+            or not isinstance(replay_contexts, list)
+            or context_workflow_id != source_id
+        ):
+            return False
+        identities = [
+            item.get("identity") for item in replay_contexts
+            if isinstance(item, Mapping)
+            and item.get("sourceContextPackageId") == value.get("id")
+        ]
+        try:
+            if not identities or context_identity(value) not in identities:
+                return False
+        except (TypeError, ValueError):
+            return False
+        source = self._objects.get(source_id)
+        source_task_ids = source.get("taskExecutionIds") if isinstance(source, Mapping) else None
+        if (
+            not isinstance(source, Mapping)
+            or source.get("kind") != "WorkflowExecution"
+            or value.get("traceId") != source.get("traceId")
+            or not isinstance(source_task_ids, list)
+        ):
+            return False
+        source_task_id = value.get("taskExecutionId") or context_provenance.get("taskExecutionId")
+        source_task = self._objects.get(source_task_id) if isinstance(source_task_id, str) else None
+        if (
+            not isinstance(source_task, Mapping)
+            or source_task.get("kind") != "TaskExecution"
+            or source_task.get("workflowExecutionId") != source_id
+            or source_task_id not in source_task_ids
+            or source_task.get("contextPackageId") != value.get("id")
+            or value.get("taskRef") != source_task.get("taskRef")
+        ):
+            return False
+        if task_id is None:
+            return True
+        replay_task = self._objects.get(task_id)
+        return (
+            isinstance(replay_task, Mapping)
+            and replay_task.get("workflowExecutionId") == workflow.get("id")
+            and replay_task.get("contextPackageId") == value.get("id")
+            and replay_task.get("taskRef") == value.get("taskRef")
+        )
 
     def _safe(self, value: Any, *, unsafe: bool) -> Any:
         if unsafe:
@@ -287,7 +367,7 @@ class ExecutionInspector:
 
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
+    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "sourceExecutionId", "replayProvenance", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance")
     return {field: deepcopy(value[field]) for field in fields if field in value}
 
 
@@ -407,6 +487,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     replay.add_argument("--override", action="append", default=[], metavar="KIND:NAME:VERSION")
     replay.add_argument("--context", choices=("reuse", "rebuild"), default="reuse")
     replay.add_argument("--publication", action="store_true")
+    replay.add_argument("--plan-only", action="store_true", help="record a pending replay without dispatching Tasks")
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
@@ -416,9 +497,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = parser.parse_args(arguments)
         if args.command == "replay":
-            replayed = ExecutionReplayService(DurableJsonRuntimeObjectStore(args.state_file)).replay(
-                args.id, overrides=args.override, context_mode=args.context, publication=args.publication,
-            )
+            if args.plan_only:
+                replayed = ExecutionReplayService(
+                    DurableJsonRuntimeObjectStore(args.state_file)
+                ).replay(
+                    args.id,
+                    overrides=args.override,
+                    context_mode=args.context,
+                    publication=args.publication,
+                )
+            else:
+                from aep.dogfood_runtime import DogfoodWorkflowRunner
+
+                runner = DogfoodWorkflowRunner(os.environ, state_file=args.state_file)
+                replay_id = runner.replay(
+                    args.id,
+                    overrides=tuple(args.override),
+                    context_mode=args.context,
+                    publication=args.publication,
+                )
+                replayed = DurableJsonRuntimeObjectStore(args.state_file).get(replay_id)
+                if replayed is None:
+                    raise ReplayError("replay runner did not persist its WorkflowExecution")
             result = {"workflowExecution": ExecutionInspector({}).safe_output(
                 dict(replayed), unsafe=args.unsafe_debug
             )}
@@ -434,6 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except ReplayError as error:
         print(json.dumps({"error": {"code": "REPLAY_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except RuntimeError as error:
+        print(json.dumps({"error": {"code": "REPLAY_RUNTIME_ERROR", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
     except RuntimeStoreError as error:
         print(json.dumps({"error": {"code": "RUNTIME_STORE_ERROR", "message": "runtime store operation failed", "diagnostic": dict(error.diagnostic)}}, sort_keys=True), file=sys.stderr)

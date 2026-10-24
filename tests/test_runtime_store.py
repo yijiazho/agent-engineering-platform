@@ -160,6 +160,69 @@ def test_task_execution_ids_are_attached_atomically_and_idempotently() -> None:
     assert set(attached) == {first["id"], second["id"]}
 
 
+@pytest.mark.parametrize("durable", [False, True])
+def test_workflow_transition_and_event_commit_atomically(tmp_path, durable: bool) -> None:
+    store = (
+        DurableJsonRuntimeObjectStore(tmp_path / "objects.json")
+        if durable else InMemoryRuntimeObjectStore()
+    )
+    workflow = {
+        "kind": "WorkflowExecution", "id": WORKFLOW_ID, "status": "RUNNING",
+        "updatedAt": "2026-07-10T00:00:00Z", "taskExecutionIds": [],
+    }
+    store.create(workflow, deterministic_key="workflow")
+    event = {
+        "kind": "ExecutionEvent", "id": "executionevent-failed",
+        "eventType": "WorkflowExecutionFailed",
+        "payload": {"status": "FAILED", "failureClass": "CONFIGURATION"},
+        "subject": {"kind": "WorkflowExecution", "id": WORKFLOW_ID},
+        "provenance": {"workflowExecutionId": WORKFLOW_ID},
+    }
+
+    terminal = store.commit_workflow_execution_transition(
+        WORKFLOW_ID, "FAILED", event=event, expected_status="RUNNING",
+        updated_at="2026-07-10T00:01:00Z",
+        changes={"failure": {"class": "CONFIGURATION", "message": "not dispatched"}},
+    )
+
+    assert terminal["status"] == "FAILED"
+    assert store.get("executionevent-failed") == event
+
+
+def test_workflow_transition_rolls_back_when_event_is_invalid() -> None:
+    store = InMemoryRuntimeObjectStore()
+    workflow = {"kind": "WorkflowExecution", "id": WORKFLOW_ID, "status": "RUNNING"}
+    store.create(workflow, deterministic_key="workflow")
+
+    with pytest.raises(ValueError, match="ExecutionEvent"):
+        store.commit_workflow_execution_transition(
+            WORKFLOW_ID, "FAILED", event={"kind": "TaskExecution", "id": "not-event"},
+            expected_status="RUNNING", updated_at="2026-07-10T00:01:00Z",
+        )
+
+    assert store.get(WORKFLOW_ID)["status"] == "RUNNING"
+
+
+def test_workflow_transition_rejects_foreign_lifecycle_event() -> None:
+    store = InMemoryRuntimeObjectStore()
+    workflow = {"kind": "WorkflowExecution", "id": WORKFLOW_ID, "status": "RUNNING"}
+    store.create(workflow, deterministic_key="workflow")
+
+    with pytest.raises(ValueError, match="must belong"):
+        store.commit_workflow_execution_transition(
+            WORKFLOW_ID, "FAILED",
+            event={
+                "kind": "ExecutionEvent", "id": "foreign-event",
+                "subject": {"kind": "WorkflowExecution", "id": "workflowexecution-foreign"},
+                "provenance": {"workflowExecutionId": "workflowexecution-foreign"},
+            },
+            expected_status="RUNNING", updated_at="2026-07-10T00:01:00Z",
+        )
+
+    assert store.get(WORKFLOW_ID)["status"] == "RUNNING"
+    assert store.get("foreign-event") is None
+
+
 def test_task_execution_membership_rejects_wrong_owner() -> None:
     store = InMemoryRuntimeObjectStore()
     store.create(

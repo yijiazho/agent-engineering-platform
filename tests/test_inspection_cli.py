@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from aep.context_identity import context_identity
 from aep.inspection_cli import main
 from aep.workflow_execution import _runtime_validator
 
@@ -149,6 +150,45 @@ def test_execution_checks_task_references_and_redacts_evaluation_logs(tmp_path, 
     assert json.loads(capsys.readouterr().out)["logs"] == "[REDACTED]"
     assert main(["--state-file", str(state), "--output", "json", "tasks", "show", "task-1"]) == 0
     assert json.loads(capsys.readouterr().out)["failure"]["message"] == "[REDACTED]"
+
+
+def test_replay_inspection_allows_only_lineage_bound_reused_context(tmp_path, capsys):
+    records = _records()
+    records[1]["contextPackageId"] = "ctx-1"
+    records[2]["taskExecutionId"] = "task-1"
+    records[2]["taskRef"] = records[1]["taskRef"]
+    records[2]["repositoryRevision"] = records[0]["repositoryRevision"]
+    replay = dict(records[0])
+    replay.update({
+        "id": "wf-replay", "traceId": "trace-replay",
+        "sourceExecutionId": "wf-1", "status": "SUCCEEDED",
+        "taskExecutionIds": ["task-replay"],
+        "replayProvenance": {
+            "contextPackages": "reuse",
+            "contextIdentities": [{
+                "sourceContextPackageId": "ctx-1",
+                "identity": context_identity(records[2]),
+            }],
+        },
+    })
+    replay_task = dict(records[1])
+    replay_task.update({
+        "id": "task-replay", "traceId": "trace-replay",
+        "workflowExecutionId": "wf-replay", "contextPackageId": "ctx-1",
+    })
+    state = _checkpoint(tmp_path, [*records, replay, replay_task])
+
+    assert main(["--state-file", str(state), "--output", "json", "executions", "show", "wf-replay"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["tasks"][0]["contextPackageId"] == "ctx-1"
+    assert output["workflowExecution"]["replayProvenance"]["newRuntimeEvidence"] == [
+        {"kind": "TaskExecution", "id": "task-replay"},
+    ]
+
+    replay["sourceExecutionId"] = "missing-source"
+    state = _checkpoint(tmp_path, [*records, replay, replay_task])
+    assert main(["--state-file", str(state), "executions", "show", "wf-replay"]) == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "RUNTIME_REFERENCE_MALFORMED"
 
 
 def test_explain_reports_transitively_blocked_dependencies_and_rejects_foreign_evidence(tmp_path, capsys):

@@ -7,8 +7,10 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import re
 from typing import Any
+from typing import Callable
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from aep.context_identity import context_identity
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 from aep.runtime_validation import is_rfc3339_timestamp
 
@@ -30,8 +32,14 @@ _RESOURCE_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
 
 
 class ExecutionReplayService:
-    def __init__(self, store: RuntimeObjectStore) -> None:
+    def __init__(
+        self,
+        store: RuntimeObjectStore,
+        *,
+        context_rebuilder: Callable[[Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    ) -> None:
         self._store = store
+        self._context_rebuilder = context_rebuilder
 
     def replay(
         self,
@@ -58,8 +66,24 @@ class ExecutionReplayService:
             raise ReplayError("source WorkflowExecution provenance is malformed")
 
         related = self._store.list_by_workflow_execution(source_id)
-        if context_mode == "reuse":
-            _validate_context_evidence(source, related)
+        contexts = _validate_context_evidence(source, related)
+        context_identities = []
+        for task, context in contexts:
+            rebuilt = (
+                self._context_rebuilder(task, context)
+                if context_mode == "rebuild" and self._context_rebuilder is not None
+                else context
+            )
+            expected_identity = context_identity(context)
+            if context_identity(rebuilt) != expected_identity:
+                raise ReplayError(
+                    f"rebuilt ContextPackage identity mismatch for TaskExecution {task['id']}"
+                )
+            context_identities.append({
+                "sourceContextPackageId": context["id"],
+                "identity": expected_identity,
+                "mode": context_mode,
+            })
         resource_refs = _collect_resource_refs(source, related)
         if not resource_refs:
             raise ReplayError("exact replay is missing historical Resource provenance")
@@ -91,8 +115,9 @@ class ExecutionReplayService:
             "traceId": trace_id,
             "createdAt": now,
             "updatedAt": now,
-            "startedAt": now,
-            "status": "RUNNING",
+            # Creation does not dispatch the replay's first Task. Keep the
+            # execution queued until a replay runner claims it.
+            "status": "PENDING",
             "taskExecutionIds": [],
             "provenance": provenance,
             "sourceExecutionId": source_id,
@@ -106,12 +131,13 @@ class ExecutionReplayService:
                 "overrides": parsed_overrides,
                 "publicationMode": "enabled" if publication else "disabled",
                 "newRuntimeEvidence": [],
+                "contextIdentities": context_identities,
             },
         })
         if "resolvedTaskPlan" in source:
             record["resolvedTaskPlan"] = deepcopy(source["resolvedTaskPlan"])
 
-        event = _replay_started_event(record, source_id)
+        event = _replay_created_event(record, source_id)
         created = self._store.create_with_event(
             record, event, deterministic_key=f"execution-replay:{replay_id}"
         )
@@ -120,13 +146,14 @@ class ExecutionReplayService:
 
 def _validate_context_evidence(
     source: Mapping[str, Any], related: Sequence[RuntimeObject]
-) -> None:
+) -> list[tuple[Mapping[str, Any], Mapping[str, Any]]]:
     task_ids = source.get("taskExecutionIds")
     if not isinstance(task_ids, list) or not all(isinstance(value, str) and value for value in task_ids):
         raise ReplayError("source WorkflowExecution task references are malformed")
     if len(task_ids) != len(set(task_ids)):
         raise ReplayError("source WorkflowExecution contains duplicate TaskExecution references")
     by_id = {str(item.get("id")): item for item in related if isinstance(item.get("id"), str)}
+    contexts: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
     for task_id in task_ids:
         task = by_id.get(task_id)
         if task is None or task.get("kind") != "TaskExecution" or task.get("workflowExecutionId") != source.get("id"):
@@ -154,8 +181,12 @@ def _validate_context_evidence(
             or context.get("kind") != "ContextPackage"
             or context_workflow_id != source.get("id")
             or context_task_id != task_id
+            or context.get("taskRef") != task.get("taskRef")
+            or context.get("repositoryRevision") != source.get("repositoryRevision")
         ):
             raise ReplayError("historical ContextPackage is missing or has mismatched ownership")
+        contexts.append((task, context))
+    return contexts
 
 
 def _collect_resource_refs(
@@ -263,9 +294,9 @@ def _parse_override(value: str) -> dict[str, str]:
     return result
 
 
-def _replay_started_event(execution: Mapping[str, Any], source_id: str) -> dict[str, Any]:
+def _replay_created_event(execution: Mapping[str, Any], source_id: str) -> dict[str, Any]:
     execution_id = str(execution["id"])
-    event_id = uuid5(NAMESPACE_URL, f"execution-event:{execution_id}:WorkflowExecutionStarted")
+    event_id = uuid5(NAMESPACE_URL, f"execution-event:{execution_id}:WorkflowExecutionReplayCreated")
     return {
         "apiVersion": "aep.dev/v1alpha1",
         "kind": "ExecutionEvent",
@@ -280,7 +311,7 @@ def _replay_started_event(execution: Mapping[str, Any], source_id: str) -> dict[
             "knowledgeGraphVersion": execution.get("knowledgeGraphVersion", "unknown"),
             "resourceRefs": deepcopy(execution["provenance"]["resourceRefs"]),
         },
-        "eventType": "WorkflowExecutionStarted",
+        "eventType": "WorkflowExecutionReplayCreated",
         "subject": {"kind": "WorkflowExecution", "id": execution_id},
         "sequence": 1,
         "emittedAt": execution["createdAt"],

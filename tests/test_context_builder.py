@@ -11,6 +11,7 @@ from aep.context_builder import (
     ImmutableContextPackageError,
     RequiredContextError,
 )
+from aep.context_identity import context_identity
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.observability import StructuredLifecycleLogger
 from aep.planning_evidence import PlanningEvidenceInspection
@@ -764,6 +765,84 @@ def build(task_resource: dict, **changes):
     }
     values.update(changes)
     return builder().build(**values)
+
+
+def test_replay_context_reuse_returns_the_historical_package_verbatim() -> None:
+    task_resource = task("analyze-issue", ["task", "event"])
+    historical = builder().build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=event(),
+        created_at=CREATED_AT,
+    )
+    key = ("Task", "analyze-issue", "1.0.0")
+    replay_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=artifact_store(),
+        reused_contexts={key: historical},
+    )
+
+    reused = replay_builder.build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=event(),
+        created_at=CREATED_AT,
+    )
+
+    assert dict(reused) == dict(historical)
+    assert context_identity(reused) == context_identity(historical)
+
+
+def test_replay_context_rebuild_fails_before_use_when_identity_differs() -> None:
+    task_resource = task("analyze-issue", ["task", "event"])
+    replay_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=artifact_store(),
+        expected_context_identities={
+            ("Task", "analyze-issue", "1.0.0"): "sha256:unexpected",
+        },
+    )
+
+    with pytest.raises(ContextInputValidationError, match="identity mismatch"):
+        replay_builder.build(
+            task=task_resource,
+            task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(),
+            event=event(),
+            created_at=CREATED_AT,
+        )
+
+
+@pytest.mark.parametrize(
+    ("require_reused_context", "require_expected_context_identity", "message"),
+    [
+        (True, False, "historical ContextPackage is unavailable"),
+        (False, True, "historical ContextPackage identity is unavailable"),
+    ],
+)
+def test_exact_replay_fails_closed_when_expected_context_evidence_is_missing(
+    require_reused_context: bool,
+    require_expected_context_identity: bool,
+    message: str,
+) -> None:
+    task_resource = task("analyze-issue", ["task", "event"])
+    replay_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=artifact_store(),
+        require_reused_context=require_reused_context,
+        require_expected_context_identity=require_expected_context_identity,
+    )
+
+    with pytest.raises(ContextInputValidationError, match=message):
+        replay_builder.build(
+            task=task_resource,
+            task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(),
+            event=event(),
+            created_at=CREATED_AT,
+        )
 
 
 def test_builds_context_for_every_mvp_task_type_from_deterministic_fixture() -> None:

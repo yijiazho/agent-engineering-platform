@@ -24,8 +24,8 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 58 |
-| In Progress | 3 |
+| Completed | 59 |
+| In Progress | 2 |
 | Not Started | 10 |
 | Blocked | 0 |
 | Total | 71 |
@@ -116,7 +116,10 @@ fencing tokens, and repository-cache-scoped claims protect those mutations
 across workers and restarts. Lease heartbeats cover the full duration of active
 mutations, while one checkout-bound orchestration seam constructs repository
 context, Tool boundaries, and publication inputs without independent path or
-revision drift.
+revision drift. Deterministic execution replay now dispatches a lineage-linked
+WorkflowExecution against the source revision and pinned Resource versions,
+reuses or identity-checks Task context, records overrides and new runtime
+evidence, and suppresses publication by default.
 
 ---
 
@@ -184,7 +187,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 56 | [AEP-067: Derive Trusted Region Authorization Server-Side](tasks/AEP-067-derive-trusted-region-authorization-server-side.md) | Completed |
 | 57 | [AEP-068: Support Multi-Scope Planning Evidence](tasks/AEP-068-support-multi-scope-planning-evidence.md) | Completed |
 | 58 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
-| 59 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | In Progress |
+| 59 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Completed |
 | 60 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
 | 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Not Started |
 | 62 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Not Started |
@@ -260,7 +263,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-054 | AEP-015, AEP-016, AEP-017, AEP-029, AEP-030, AEP-036, AEP-039, AEP-040, AEP-045, AEP-053 | Completed |
 | AEP-055 | AEP-002, AEP-013, AEP-017, AEP-025, AEP-029, AEP-030, AEP-036, AEP-040, AEP-051, AEP-052, AEP-053, AEP-054 | Completed |
 | AEP-056 | AEP-002, AEP-004, AEP-011, AEP-013, AEP-018, AEP-025, AEP-028, AEP-036 | Completed |
-| AEP-057 | AEP-004, AEP-008, AEP-010, AEP-013, AEP-017, AEP-039, AEP-051, AEP-056 | In Progress |
+| AEP-057 | AEP-004, AEP-008, AEP-010, AEP-013, AEP-017, AEP-039, AEP-051, AEP-056 | Completed |
 | AEP-058 | AEP-004, AEP-009, AEP-010, AEP-011, AEP-018, AEP-039, AEP-051, AEP-056 | Not Started |
 | AEP-059 | AEP-002, AEP-010, AEP-011, AEP-020, AEP-028, AEP-036, AEP-051, AEP-056 | Not Started |
 | AEP-060 | AEP-025, AEP-026, AEP-027, AEP-033, AEP-051, AEP-052, AEP-056, AEP-057 | Not Started |
