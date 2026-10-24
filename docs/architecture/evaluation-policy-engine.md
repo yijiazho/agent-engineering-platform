@@ -569,6 +569,10 @@ target action, repository revision, authorized reviewers, and SHA-256 digest of
 the canonical action/target/revision/artifact-digest tuple. A changed tuple
 invalidates the request. Only an authorized identity may record APPROVED or
 REJECTED, and a rejection remains durable evidence.
+The TaskExecution stores the identity of its current approval request so restart
+recovery cannot reuse an earlier approval after a new gate is opened. Requests
+with `expiresAt` become `EXPIRED` when the decision timestamp reaches the
+deadline and cannot wake the waiting task.
 
 Contains:
 

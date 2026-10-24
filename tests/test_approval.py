@@ -16,6 +16,7 @@ def _decision():
 
 def test_approval_is_artifact_and_target_bound_and_idempotent():
     store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
     gate = ApprovalGate(store)
     digest = approval_digest(action="github.create_pr", target={"repository": "acme/widgets", "branch": "main"},
                              repository_revision="a" * 40, artifact_digests={"patch": "sha256:" + "b" * 64})
@@ -33,7 +34,9 @@ def test_approval_is_artifact_and_target_bound_and_idempotent():
 
 
 def test_approval_rejects_unauthorized_and_changed_artifact():
-    gate = ApprovalGate(InMemoryRuntimeObjectStore())
+    store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
+    gate = ApprovalGate(store)
     digest = "sha256:" + "c" * 64
     gate.request(approval_id="approval-1", policy_decision=_decision(), requester="runtime",
                  timestamp="2026-01-01T00:00:00Z", digest=digest,
@@ -48,7 +51,9 @@ def test_approval_rejects_unauthorized_and_changed_artifact():
 
 
 def test_rejection_is_durable():
-    gate = ApprovalGate(InMemoryRuntimeObjectStore())
+    store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
+    gate = ApprovalGate(store)
     digest = "sha256:" + "e" * 64
     gate.request(approval_id="approval-1", policy_decision=_decision(), requester="runtime",
                  timestamp="2026-01-01T00:00:00Z", digest=digest,
@@ -72,12 +77,23 @@ def _add_claimed_waiting_task(store):
 def test_approved_task_wakeup_clears_durable_dispatch_claim():
     store = InMemoryRuntimeObjectStore()
     _add_claimed_waiting_task(store)
+    store.bind_approval_request("taskexecution-000000000001", "approval-1", updated_at="2026-01-01T00:00:00Z")
     store.wake_approved_task("taskexecution-000000000001", "approval-1", updated_at="2026-01-01T00:01:00Z")
     task = store.get("taskexecution-000000000001")
     assert task["status"] == "PENDING"
     assert task["approvalId"] == "approval-1"
     assert "dispatchState" not in task
     assert "dispatchOwnerId" not in task
+
+
+def test_historical_approval_cannot_wake_a_new_approval_wait():
+    store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
+    store.bind_approval_request("taskexecution-000000000001", "approval-old", updated_at="2026-01-01T00:00:00Z")
+    store.bind_approval_request("taskexecution-000000000001", "approval-current", updated_at="2026-01-01T00:01:00Z")
+    task = store.wake_approved_task("taskexecution-000000000001", "approval-old", updated_at="2026-01-01T00:02:00Z")
+    assert task["status"] == "AWAITING_APPROVAL"
+    assert task["approvalId"] == "approval-current"
 
 
 def test_duplicate_approval_repairs_interrupted_task_wakeup():
@@ -98,6 +114,7 @@ def test_duplicate_approval_repairs_interrupted_task_wakeup():
 
 def test_duplicate_decision_rejects_changed_digest_after_approval():
     store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
     gate = ApprovalGate(store)
     digest = "sha256:" + "a" * 64
     gate.request(approval_id="approval-1", policy_decision=_decision(), requester="runtime",
@@ -110,3 +127,19 @@ def test_duplicate_decision_rejects_changed_digest_after_approval():
         gate.decide("approval-1", actor="alice", decision="APPROVED",
                     timestamp="2026-01-01T00:02:00Z", reason="Reviewed",
                     current_digest="sha256:" + "b" * 64)
+
+
+def test_expired_approval_is_recorded_and_cannot_wake_task():
+    store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
+    gate = ApprovalGate(store)
+    digest = "sha256:" + "1" * 64
+    gate.request(approval_id="approval-1", policy_decision=_decision(), requester="runtime",
+                 timestamp="2026-07-09T00:00:00Z", digest=digest,
+                 authorized_reviewers=("alice",), expires_at="2026-07-10T00:00:00Z")
+    import pytest
+    with pytest.raises(ValueError, match="expired"):
+        gate.decide("approval-1", actor="alice", decision="APPROVED",
+                    timestamp="2026-07-11T00:00:00Z", reason="Late approval", current_digest=digest)
+    assert store.get("approval-1")["status"] == "EXPIRED"
+    assert store.get("taskexecution-000000000001")["status"] == "AWAITING_APPROVAL"

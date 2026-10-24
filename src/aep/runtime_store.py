@@ -19,7 +19,7 @@ from typing import Any, Callable, Final
 
 RuntimeObject = Mapping[str, Any]
 
-TERMINAL_STATUSES: Final = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
+TERMINAL_STATUSES: Final = frozenset({"SUCCEEDED", "FAILED", "CANCELLED", "APPROVED", "REJECTED", "EXPIRED"})
 RUNTIME_IDENTITY_FIELDS: Final = frozenset(
     {"apiVersion", "id", "kind", "traceId", "createdAt", "provenance"}
 )
@@ -172,6 +172,10 @@ class RuntimeObjectStore(ABC):
         """Return an approval-blocked TaskExecution to schedulable PENDING state."""
         raise NotImplementedError("store does not support approval wake-up")
 
+    def bind_approval_request(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
+        """Bind the current approval wait to its durable request identity."""
+        raise NotImplementedError("store does not support approval request binding")
+
 
 class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     """Thread-safe in-memory store intended for tests and local execution."""
@@ -298,12 +302,23 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             task = self._require(task_execution_id)
             if task.get("kind") != "TaskExecution":
                 raise ValueError("approval wake-up requires a TaskExecution")
+            if task.get("approvalId") != approval_id:
+                return _snapshot(task)
             if task.get("status") not in {"AWAITING_APPROVAL", "PENDING"}:
                 return _snapshot(task)
             if task.get("status") == "AWAITING_APPROVAL":
                 task["status"] = "PENDING"
             task.pop("dispatchState", None)
             task.pop("dispatchOwnerId", None)
+            task["approvalId"] = approval_id
+            task["updatedAt"] = updated_at
+            return _snapshot(task)
+
+    def bind_approval_request(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
+        with self._lock:
+            task = self._require(task_execution_id)
+            if task.get("kind") != "TaskExecution" or task.get("status") != "AWAITING_APPROVAL":
+                raise ValueError("approval requests can bind only to an awaiting TaskExecution")
             task["approvalId"] = approval_id
             task["updatedAt"] = updated_at
             return _snapshot(task)
@@ -541,6 +556,11 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
 
     def wake_approved_task(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
         return self._mutate(lambda: InMemoryRuntimeObjectStore.wake_approved_task(
+            self, task_execution_id, approval_id, updated_at=updated_at
+        ))
+
+    def bind_approval_request(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.bind_approval_request(
             self, task_execution_id, approval_id, updated_at=updated_at
         ))
 

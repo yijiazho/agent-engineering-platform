@@ -5,6 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
@@ -28,7 +29,7 @@ class ApprovalGate:
 
     def request(self, *, approval_id: str, policy_decision: Mapping[str, Any],
                 requester: str, timestamp: str, digest: str,
-                authorized_reviewers: tuple[str, ...]) -> RuntimeObject:
+                authorized_reviewers: tuple[str, ...], expires_at: str | None = None) -> RuntimeObject:
         if policy_decision.get("decision") != "REQUIRE_APPROVAL":
             raise ValueError("approval requires a REQUIRE_APPROVAL PolicyDecision")
         if not authorized_reviewers:
@@ -48,7 +49,11 @@ class ApprovalGate:
             "artifactRequestDigest": digest,
             "authorizedReviewers": list(authorized_reviewers),
         }
-        return self.store.create(record, deterministic_key=f"approval:{policy_decision['id']}:{digest}")
+        if expires_at is not None:
+            record["expiresAt"] = expires_at
+        approval = self.store.create(record, deterministic_key=f"approval:{policy_decision['id']}:{digest}")
+        self.store.bind_approval_request(str(record["taskExecutionId"]), approval_id, updated_at=timestamp)
+        return approval
 
     def decide(self, approval_id: str, *, actor: str, decision: str,
                timestamp: str, reason: str, current_digest: str) -> RuntimeObject:
@@ -59,6 +64,13 @@ class ApprovalGate:
             raise PermissionError("identity is not authorized by the resolved approval policy")
         if current_digest != approval.get("artifactRequestDigest"):
             raise ValueError("approval is stale because its bound artifact or action changed")
+        expires_at = approval.get("expiresAt")
+        if approval.get("status") == "PENDING" and expires_at is not None and _timestamp(timestamp) >= _timestamp(expires_at):
+            self.store.update_status(
+                approval_id, "EXPIRED", expected_status="PENDING", updated_at=timestamp,
+                changes={"decidedAt": timestamp, "reason": "Approval request expired."},
+            )
+            raise ValueError("approval request has expired")
         if approval.get("status") != "PENDING":
             if approval.get("approver") == actor and approval.get("status") == decision:
                 if decision == "APPROVED":
@@ -83,3 +95,13 @@ class ApprovalGate:
             task = self.store.get(task_id)
             if task is not None and task.get("status") in {"AWAITING_APPROVAL", "PENDING"}:
                 self.store.wake_approved_task(task_id, approval_id, updated_at=timestamp)
+
+
+def _timestamp(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as error:
+        raise ValueError("approval timestamps must be RFC3339 values") from error
+    if parsed.tzinfo is None:
+        raise ValueError("approval timestamps must include a timezone")
+    return parsed
