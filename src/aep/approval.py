@@ -57,12 +57,14 @@ class ApprovalGate:
             raise ValueError("approval request was not found")
         if actor not in approval.get("authorizedReviewers", ()):
             raise PermissionError("identity is not authorized by the resolved approval policy")
-        if approval.get("status") != "PENDING":
-            if approval.get("approver") == actor and approval.get("status") == decision:
-                return approval
-            raise ValueError("approval request already has a terminal decision")
         if current_digest != approval.get("artifactRequestDigest"):
             raise ValueError("approval is stale because its bound artifact or action changed")
+        if approval.get("status") != "PENDING":
+            if approval.get("approver") == actor and approval.get("status") == decision:
+                if decision == "APPROVED":
+                    self._wake_task(approval, approval_id, timestamp)
+                return approval
+            raise ValueError("approval request already has a terminal decision")
         if decision not in {"APPROVED", "REJECTED"}:
             raise ValueError("decision must be APPROVED or REJECTED")
         if not isinstance(reason, str) or not reason.strip():
@@ -72,11 +74,12 @@ class ApprovalGate:
             changes={"approver": actor, "decidedAt": timestamp, "reason": reason.strip()},
         )
         if decision == "APPROVED":
-            task_id = approval.get("taskExecutionId")
-            task = self.store.get(task_id) if isinstance(task_id, str) else None
-            # Moving back to PENDING is the scheduler wake-up signal. Its
-            # optimistic transition makes duplicate approvals harmless.
-            if task is not None and task.get("status") == "AWAITING_APPROVAL":
-                self.store.update_status(task_id, "PENDING", expected_status="AWAITING_APPROVAL",
-                                         updated_at=timestamp, changes={"approvalId": approval_id})
+            self._wake_task(approval, approval_id, timestamp)
         return decided
+
+    def _wake_task(self, approval: Mapping[str, Any], approval_id: str, timestamp: str) -> None:
+        task_id = approval.get("taskExecutionId")
+        if isinstance(task_id, str):
+            task = self.store.get(task_id)
+            if task is not None and task.get("status") in {"AWAITING_APPROVAL", "PENDING"}:
+                self.store.wake_approved_task(task_id, approval_id, updated_at=timestamp)

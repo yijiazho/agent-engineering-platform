@@ -168,6 +168,10 @@ class RuntimeObjectStore(ABC):
         """Atomically claim one durable TaskExecution for executor dispatch."""
         raise NotImplementedError("store does not support atomic task dispatch claims")
 
+    def wake_approved_task(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
+        """Return an approval-blocked TaskExecution to schedulable PENDING state."""
+        raise NotImplementedError("store does not support approval wake-up")
+
 
 class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     """Thread-safe in-memory store intended for tests and local execution."""
@@ -288,6 +292,21 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             value["dispatchOwnerId"] = owner_id
             value["updatedAt"] = updated_at
             return True, _snapshot(value)
+
+    def wake_approved_task(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
+        with self._lock:
+            task = self._require(task_execution_id)
+            if task.get("kind") != "TaskExecution":
+                raise ValueError("approval wake-up requires a TaskExecution")
+            if task.get("status") not in {"AWAITING_APPROVAL", "PENDING"}:
+                return _snapshot(task)
+            if task.get("status") == "AWAITING_APPROVAL":
+                task["status"] = "PENDING"
+            task.pop("dispatchState", None)
+            task.pop("dispatchOwnerId", None)
+            task["approvalId"] = approval_id
+            task["updatedAt"] = updated_at
+            return _snapshot(task)
 
     def update_status(
         self,
@@ -518,6 +537,11 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
     ) -> tuple[bool, RuntimeObject]:
         return self._mutate(lambda: InMemoryRuntimeObjectStore.claim_task_dispatch(
             self, task_execution_id, owner_id, updated_at=updated_at
+        ))
+
+    def wake_approved_task(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.wake_approved_task(
+            self, task_execution_id, approval_id, updated_at=updated_at
         ))
 
     def update_status(

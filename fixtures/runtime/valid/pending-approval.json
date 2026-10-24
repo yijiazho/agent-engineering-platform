@@ -18,7 +18,18 @@
     ]
   },
   "policyDecisionId": "policydecision-000000000002",
+  "governingPolicyRefs": [
+    {
+      "kind": "Policy",
+      "name": "publication-policy",
+      "version": "1.0.0"
+    }
+  ],
   "requester": "workflow-controller",
+  "targetAction": "github.create_pr",
+  "repositoryRevision": "abc1234",
+  "artifactRequestDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "authorizedReviewers": ["repository-owner"],
   "status": "PENDING",
   "reason": "Publication requires human approval.",
   "requestedAt": "2026-07-09T10:04:00Z",

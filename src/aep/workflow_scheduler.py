@@ -234,6 +234,7 @@ class WorkflowScheduler:
         ) = _validate_inputs(
             plan, workflow_execution, self._store
         )
+        self._recover_approved_task_wakeups(workflow_id, timestamp)
         self._ensure_resolved_task_plan(workflow_id, plan, timestamp)
         self._repair_attempt_evidence(workflow_id, timestamp)
         attempts_by_ref = _attempts_by_task(
@@ -429,6 +430,27 @@ class WorkflowScheduler:
                 attempt for attempt in persisted if attempt is not None
             )
         )
+
+    def _recover_approved_task_wakeups(self, workflow_id: str, timestamp: str) -> None:
+        """Repair approval commits whose task wake-up was interrupted."""
+        records = self._store.list_by_workflow_execution(workflow_id)
+        decisions = {
+            str(record.get("id")): record
+            for record in records
+            if record.get("kind") == "PolicyDecision"
+        }
+        for approval in records:
+            if approval.get("kind") != "Approval" or approval.get("status") != "APPROVED":
+                continue
+            policy = decisions.get(str(approval.get("policyDecisionId")))
+            if policy is None or policy.get("decision") != "REQUIRE_APPROVAL":
+                continue
+            task_id = approval.get("taskExecutionId")
+            task = self._store.get(str(task_id)) if task_id else None
+            if task is not None and task.get("status") in {"AWAITING_APPROVAL", "PENDING"}:
+                self._store.wake_approved_task(
+                    str(task_id), str(approval["id"]), updated_at=timestamp
+                )
 
     def _recover_durable_start(
         self,
