@@ -26,9 +26,9 @@ or `Blocked` as implementation state changes.
 | ------ | ----: |
 | Completed | 59 |
 | In Progress | 2 |
-| Not Started | 10 |
+| Not Started | 11 |
 | Blocked | 0 |
-| Total | 71 |
+| Total | 72 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -120,6 +120,9 @@ revision drift. Deterministic execution replay now dispatches a lineage-linked
 WorkflowExecution against the source revision and pinned Resource versions,
 reuses or identity-checks Task context, records overrides and new runtime
 evidence, and suppresses publication by default.
+The issue #120 live run and its replay exposed an unowned documentation scope
+criterion during AnalyzeIssue. AEP-072 tracks a typed changed-path evaluator
+contract before that issue shape can support the AEP-043 live pilot.
 
 ---
 
@@ -199,7 +202,8 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 68 | [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md) | Not Started |
 | 69 | [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md) | Not Started |
 | 70 | [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md) | In Progress |
-| 71 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
+| 71 | [AEP-072: Bind Documentation Scope Constraints to Patch Evidence](tasks/AEP-072-bind-documentation-scope-constraints.md) | Not Started |
+| 72 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
 
 ---
 
@@ -249,7 +253,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-040 | AEP-003, AEP-017, AEP-020, AEP-025, AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034 | Completed |
 | AEP-041 | AEP-022, AEP-024, AEP-036, AEP-038 | Completed |
 | AEP-042 | AEP-013, AEP-014, AEP-036 | Completed |
-| AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047, AEP-048, AEP-049, AEP-050, AEP-051, AEP-052, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067, AEP-068, AEP-071 | In Progress |
+| AEP-043 | AEP-031, AEP-032, AEP-033, AEP-034, AEP-035, AEP-036, AEP-037, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-045, AEP-046, AEP-047, AEP-048, AEP-049, AEP-050, AEP-051, AEP-052, AEP-053, AEP-054, AEP-055, AEP-066, AEP-067, AEP-068, AEP-071, AEP-072 | In Progress |
 | AEP-044 | AEP-035, AEP-038, AEP-039, AEP-040, AEP-041, AEP-042 | Completed |
 | AEP-045 | AEP-016, AEP-017, AEP-029, AEP-040, AEP-042 | Completed |
 | AEP-046 | AEP-010, AEP-036, AEP-040, AEP-042, AEP-045 | Completed |
@@ -278,6 +282,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-069 | AEP-003, AEP-004, AEP-015, AEP-016, AEP-017, AEP-018, AEP-039, AEP-045, AEP-046, AEP-062 | Not Started |
 | AEP-070 | AEP-016, AEP-017, AEP-029, AEP-045, AEP-053, AEP-054, AEP-069, AEP-046, AEP-062 | Not Started |
 | AEP-071 | AEP-002, AEP-004, AEP-008, AEP-010, AEP-011, AEP-018, AEP-036, AEP-040, AEP-056, AEP-058 | In Progress |
+| AEP-072 | AEP-025, AEP-027, AEP-029, AEP-030, AEP-040, AEP-052, AEP-055, AEP-056, AEP-066, AEP-068, AEP-057 | Not Started |
 
 ---
 
@@ -291,7 +296,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Repository Context | AEP-015, AEP-016, AEP-017, AEP-018, AEP-045, AEP-051, AEP-053, AEP-054 | In Progress |
 | Tool Platform | AEP-019, AEP-020, AEP-021, AEP-022, AEP-023, AEP-024, AEP-049, AEP-050 | In Progress |
 | Evaluation And Policy | AEP-025, AEP-026, AEP-027, AEP-028, AEP-048 | In Progress |
-| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034, AEP-055, AEP-066, AEP-067, AEP-068 | In Progress |
+| MVP Workflow | AEP-029, AEP-030, AEP-031, AEP-032, AEP-033, AEP-034, AEP-055, AEP-066, AEP-067, AEP-068, AEP-072 | In Progress |
 | Deployment And Observability | AEP-035, AEP-036, AEP-037, AEP-071 | In Progress |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043, AEP-044, AEP-046, AEP-047, AEP-052 | In Progress |
 | Operations And Governance Expansion | AEP-056, AEP-057, AEP-058, AEP-059, AEP-062 | In Progress |
