@@ -621,7 +621,10 @@ for multiple overrides. Replay dispatch uses the configured self-hosted runtime
 and exact source revision. Publication is disabled by default;
 `--publication` enables the normal capability and publication policy checks.
 `--plan-only` explicitly creates a pending replay record without dispatching
-Tasks. Exact replay reuses historical ContextPackages by default;
+Tasks. The replay command displays the persisted execution after dispatch,
+including its final status, elapsed time, and linked Tasks, just like
+`aep executions show <id>`. A plan-only replay shows `PENDING`, `not started`,
+and no Tasks. Exact replay reuses historical ContextPackages by default;
 `--context rebuild` reconstructs each package and checks its stable input
 identity before invoking the Agent. Model-provider outputs may still vary
 across calls, provider versions, and nondeterministic sampling, so later

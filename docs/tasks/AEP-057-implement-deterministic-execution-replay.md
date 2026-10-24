@@ -4,7 +4,7 @@
 
 ## Context
 
-AEP records immutable Resource references, repository revisions, ContextPackages, invocation records, evaluation results, policy decisions, and generated artifacts so that AI engineering work has durable provenance. The platform does not yet expose a first-class way to reconstruct a historical execution from that evidence.
+AEP records immutable Resource references, repository revisions, ContextPackages, invocation records, evaluation results, policy decisions, and generated artifacts so that AI engineering work has durable provenance. The replay service reconstructs historical executions from that evidence.
 
 Replay is required to debug model behavior, verify reproducibility, compare configuration changes, and build regression evaluation workflows. A replay must never silently resolve floating or current Resource versions, current repository HEAD, or newly assembled context when the caller requests an exact replay.
 
@@ -73,3 +73,9 @@ events are committed atomically. AEP-056 inspection distinguishes inherited
 Resources and ContextPackages, overrides, and newly created runtime evidence.
 Inspection uses the normal CLI redaction policy, and supplied timestamps must
 be RFC3339 values.
+
+The replay CLI reads the full persisted checkpoint after dispatch and renders
+the same execution view as `aep executions show`, including Task references,
+elapsed time, and newly produced evidence. Terminal failures therefore display
+their failed Task and measured duration immediately; a plan-only replay has no
+Task executions and displays `PENDING` with `not started` elapsed time.

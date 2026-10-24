@@ -506,6 +506,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     context_mode=args.context,
                     publication=args.publication,
                 )
+                replay_id = replayed["id"]
             else:
                 from aep.dogfood_runtime import DogfoodWorkflowRunner
 
@@ -516,12 +517,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     context_mode=args.context,
                     publication=args.publication,
                 )
-                replayed = DurableJsonRuntimeObjectStore(args.state_file).get(replay_id)
-                if replayed is None:
-                    raise ReplayError("replay runner did not persist its WorkflowExecution")
-            result = {"workflowExecution": ExecutionInspector({}).safe_output(
-                dict(replayed), unsafe=args.unsafe_debug
-            )}
+            inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
+            result = inspector.execution(replay_id, unsafe=args.unsafe_debug)
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0
@@ -560,7 +557,12 @@ def _human(value: Any) -> str:
         workflow = value["workflowExecution"]
         workflow_ref = workflow.get("workflowRef", {})
         elapsed = value.get("elapsed", {})
-        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Workflow: {workflow_ref.get('name', '')}:{workflow_ref.get('version', '')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", f"Elapsed: {elapsed.get('milliseconds', 'in progress')} ms", "Tasks:"]
+        duration = elapsed.get("milliseconds")
+        status = workflow.get("status")
+        elapsed_text = f"{duration} ms" if duration is not None else (
+            "not started" if status == "PENDING" else "in progress" if status == "RUNNING" else "unknown"
+        )
+        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Workflow: {workflow_ref.get('name', '')}:{workflow_ref.get('version', '')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", f"Elapsed: {elapsed_text}", "Tasks:"]
         for item in value.get("tasks", ()):
             dependencies = item.get("dependencyTaskExecutionIds") or _human_refs(item.get("dependencyTaskRefs"))
             evidence = _human_task_evidence(item)
@@ -568,6 +570,8 @@ def _human(value: Any) -> str:
             attempt = f" attempt {item['attempt']}" if "attempt" in item else ""
             line = f"- {item['id']}  {task_ref}{attempt}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(dependencies) or 'none'}"
             lines.append(f"{line}\n  evidence: {evidence}" if evidence else line)
+        if not value.get("tasks"):
+            lines.append("- none")
         return "\n".join(lines)
     if isinstance(value, Mapping) and "decisiveEvidence" in value:
         evidence = value["decisiveEvidence"]

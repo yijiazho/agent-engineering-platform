@@ -222,6 +222,53 @@ def test_cli_replay_persists_execution(tmp_path, capsys):
     replay_record = next(value for value in checkpoint["objects"].values() if value.get("sourceExecutionId") == "wf-source")
     _runtime_validator("workflowexecution.schema.json").validate(replay_record)
     _runtime_validator("executionevent.schema.json").validate(events[0])
+    assert main(["--state-file", str(path), "replay", "wf-source", "--plan-only"]) == 0
+    human = capsys.readouterr().out
+    assert "Status: PENDING" in human
+    assert "Elapsed: not started" in human
+    assert "Tasks:\n- none" in human
+
+
+def test_cli_replay_reports_dispatched_failure_and_task_evidence(tmp_path, capsys, monkeypatch):
+    _, source = _store()
+    path = tmp_path / "objects.json"
+    path.write_text(json.dumps({"objects": {source["id"]: source}}), encoding="utf-8")
+
+    class FinishedRunner:
+        def __init__(self, environment, *, state_file):
+            assert state_file == path
+
+        def replay(self, source_id, **kwargs):
+            assert source_id == source["id"]
+            checkpoint = json.loads(path.read_text(encoding="utf-8"))
+            checkpoint["objects"]["wf-replay"] = {
+                **source, "id": "wf-replay", "sourceExecutionId": source_id,
+                "status": "FAILED", "startedAt": "2026-01-02T00:00:00Z",
+                "completedAt": "2026-01-02T00:00:02Z", "taskExecutionIds": ["task-replay"],
+            }
+            checkpoint["objects"]["task-replay"] = {
+                "kind": "TaskExecution", "id": "task-replay", "traceId": "trace-source",
+                "workflowExecutionId": "wf-replay", "status": "FAILED",
+                "taskRef": {"kind": "Task", "name": "AnalyzeIssue", "version": "1.0.0"},
+            }
+            path.write_text(json.dumps(checkpoint), encoding="utf-8")
+            return "wf-replay"
+
+    monkeypatch.setattr("aep.dogfood_runtime.DogfoodWorkflowRunner", FinishedRunner)
+    args = ["--state-file", str(path), "--output", "json", "replay", source["id"]]
+    assert main(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["workflowExecution"]["status"] == "FAILED"
+    assert result["elapsed"]["milliseconds"] == 2000
+    assert [(task["id"], task["status"]) for task in result["tasks"]] == [("task-replay", "FAILED")]
+    assert {item["id"] for item in result["relatedObjects"]} == {"task-replay"}
+
+    assert main(["--state-file", str(path), "replay", source["id"]]) == 0
+    human = capsys.readouterr().out
+    assert "Status: FAILED" in human
+    assert "Elapsed: 2000 ms" in human
+    assert "task-replay  Task/AnalyzeIssue:1.0.0  FAILED" in human
+    assert "in progress" not in human
 
 
 def test_cli_replay_without_runtime_configuration_requires_explicit_plan_only(
