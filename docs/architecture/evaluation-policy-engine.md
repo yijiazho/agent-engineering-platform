@@ -561,6 +561,19 @@ Approval becomes a runtime event.
 
 Approval is a runtime object.
 
+Approval Policy Resources may declare `spec.approval.reviewers` as stable
+provider-neutral identities and optional `groups`. The identity adapter resolves
+group membership before calling the approval gate; Task handlers do not contain
+provider-specific identity logic. A request stores its governing Policy refs,
+target action, repository revision, authorized reviewers, and SHA-256 digest of
+the canonical action/target/revision/artifact-digest tuple. A changed tuple
+invalidates the request. Only an authorized identity may record APPROVED or
+REJECTED, and a rejection remains durable evidence.
+The TaskExecution stores the identity of its current approval request so restart
+recovery cannot reuse an earlier approval after a new gate is opened. Requests
+with `expiresAt` become `EXPIRED` when the decision timestamp reaches the
+deadline and cannot wake the waiting task.
+
 Contains:
 
 * requester

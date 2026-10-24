@@ -660,6 +660,12 @@ workflow, and governed GitHub Actions evidence. These increments are tracked
 by AEP-056 through AEP-065 and AEP-069 through AEP-070 and are organized in
 [ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
 
+AEP-059 approval-gate foundations now include versioned reviewer declarations,
+durable request and decision evidence, canonical action/target/revision/artifact
+binding, stale-request rejection, and an approval wake-up signal for the
+scheduler. Full handler integration, unauthorized-attempt audit evidence, and
+workflow-level pending status remain in progress.
+
 AEP-066 tracks the issue #88 GeneratePatch remediation: localized
 preimage-bound edit operations, server-derived region-local anchor matching,
 deterministic preservation evidence,

@@ -192,7 +192,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 58 | [AEP-056: Build Execution Inspection and Explanation CLI](tasks/AEP-056-build-execution-inspection-and-explaination-cli.md) | Completed |
 | 59 | [AEP-057: Implement Deterministic Execution Replay](tasks/AEP-057-implement-deterministic-execution-replay.md) | Completed |
 | 60 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
-| 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Not Started |
+| 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | In Progress |
 | 62 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Not Started |
 | 63 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Not Started |
 | 64 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |

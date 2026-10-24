@@ -1,6 +1,6 @@
 # AEP-059: Implement Artifact-Bound Human Approval Gates
 
-**Status:** Not Started
+**Status:** In Progress
 
 ## Context
 
@@ -13,6 +13,13 @@ Approval must not become a generic bypass around policy. It must be bound to imm
 Implement end-to-end approval-gate handling for policy decisions that require approval, including pending workflow state, authorization checks, approval/rejection recording, scheduler wake-up, artifact/action binding, and inspection support.
 
 Define the declarative Resource contract needed to specify approval requirements and authorized reviewer identities or groups without embedding provider-specific identity logic in Task handlers.
+
+The initial runtime contract is implemented in `src/aep/approval.py`: approval
+requests are durable runtime objects, decisions are identity-checked, and the
+approved digest must still match the current action, target, repository revision,
+and artifact digests. Approval policy Resources declare reviewer identities in
+`spec.approval.reviewers`; identity-to-group resolution remains the caller's
+provider-neutral responsibility.
 
 ## Dependencies
 

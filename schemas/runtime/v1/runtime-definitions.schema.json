@@ -641,7 +641,7 @@
         { "$ref": "#/$defs/runtimeBase" },
         {
           "type": "object",
-          "required": ["kind", "policyDecisionId", "requester", "status", "requestedAt"],
+          "required": ["kind", "policyDecisionId", "requester", "status", "requestedAt", "governingPolicyRefs", "targetAction", "repositoryRevision", "artifactRequestDigest", "authorizedReviewers"],
           "properties": {
             "kind": { "const": "Approval" },
             "policyDecisionId": { "$ref": "#/$defs/runtimeId" },
@@ -652,6 +652,11 @@
             "requestedAt": { "$ref": "#/$defs/timestamp" },
             "decidedAt": { "$ref": "#/$defs/timestamp" },
             "expiresAt": { "$ref": "#/$defs/timestamp" }
+            ,"governingPolicyRefs": { "$ref": "../../resources/v1/resource-definitions.schema.json#/$defs/policyRefList" }
+            ,"targetAction": { "type": "string", "minLength": 1 }
+            ,"repositoryRevision": { "$ref": "#/$defs/repositoryRevision" }
+            ,"artifactRequestDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+            ,"authorizedReviewers": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
           },
           "additionalProperties": true
         }
