@@ -29,7 +29,8 @@ class ApprovalGate:
 
     def request(self, *, approval_id: str, policy_decision: Mapping[str, Any],
                 requester: str, timestamp: str, digest: str,
-                authorized_reviewers: tuple[str, ...], expires_at: str | None = None) -> RuntimeObject:
+                authorized_reviewers: tuple[str, ...], expires_at: str | None = None,
+                expected_current_approval_id: str | None = None) -> RuntimeObject:
         if policy_decision.get("decision") != "REQUIRE_APPROVAL":
             raise ValueError("approval requires a REQUIRE_APPROVAL PolicyDecision")
         if not authorized_reviewers:
@@ -51,11 +52,12 @@ class ApprovalGate:
         }
         if expires_at is not None:
             record["expiresAt"] = expires_at
-        approval = self.store.create(record, deterministic_key=f"approval:{policy_decision['id']}:{digest}")
-        self.store.bind_approval_request(
-            str(approval["taskExecutionId"]), str(approval["id"]), updated_at=timestamp
+        return self.store.create_approval_request(
+            record,
+            deterministic_key=f"approval:{policy_decision['id']}:{digest}",
+            expected_current_approval_id=expected_current_approval_id,
+            updated_at=timestamp,
         )
-        return approval
 
     def decide(self, approval_id: str, *, actor: str, decision: str,
                timestamp: str, reason: str, current_digest: str) -> RuntimeObject:

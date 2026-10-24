@@ -176,6 +176,11 @@ class RuntimeObjectStore(ABC):
         """Bind the current approval wait to its durable request identity."""
         raise NotImplementedError("store does not support approval request binding")
 
+    def create_approval_request(self, approval: RuntimeObject, *, deterministic_key: str,
+                                expected_current_approval_id: str | None,
+                                updated_at: str) -> RuntimeObject:
+        raise NotImplementedError("store does not support atomic approval request creation")
+
 
 class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     """Thread-safe in-memory store intended for tests and local execution."""
@@ -322,6 +327,32 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             task["approvalId"] = approval_id
             task["updatedAt"] = updated_at
             return _snapshot(task)
+
+    def create_approval_request(self, approval: RuntimeObject, *, deterministic_key: str,
+                                expected_current_approval_id: str | None,
+                                updated_at: str) -> RuntimeObject:
+        with self._lock:
+            snapshot = self._memory_snapshot()
+            try:
+                persisted = InMemoryRuntimeObjectStore.create(
+                    self, approval, deterministic_key=deterministic_key
+                )
+                task_id = str(persisted["taskExecutionId"])
+                task = self._require(task_id)
+                if task.get("kind") != "TaskExecution" or task.get("status") != "AWAITING_APPROVAL":
+                    raise ValueError("approval requests can bind only to an awaiting TaskExecution")
+                current = task.get("approvalId")
+                persisted_id = str(persisted["id"])
+                if current == persisted_id:
+                    return persisted
+                if current != expected_current_approval_id:
+                    raise StatusConflictError("TaskExecution approval binding changed")
+                task["approvalId"] = persisted_id
+                task["updatedAt"] = updated_at
+                return persisted
+            except Exception:
+                self._restore_memory_snapshot(snapshot)
+                raise
 
     def update_status(
         self,
@@ -562,6 +593,15 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
     def bind_approval_request(self, task_execution_id: str, approval_id: str, *, updated_at: str) -> RuntimeObject:
         return self._mutate(lambda: InMemoryRuntimeObjectStore.bind_approval_request(
             self, task_execution_id, approval_id, updated_at=updated_at
+        ))
+
+    def create_approval_request(self, approval: RuntimeObject, *, deterministic_key: str,
+                                expected_current_approval_id: str | None,
+                                updated_at: str) -> RuntimeObject:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.create_approval_request(
+            self, approval, deterministic_key=deterministic_key,
+            expected_current_approval_id=expected_current_approval_id,
+            updated_at=updated_at,
         ))
 
     def update_status(

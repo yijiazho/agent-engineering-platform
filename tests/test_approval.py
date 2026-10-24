@@ -1,5 +1,5 @@
 from aep.approval import ApprovalGate, approval_digest
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import InMemoryRuntimeObjectStore, StatusConflictError
 import json
 from pathlib import Path
 
@@ -109,6 +109,41 @@ def test_deduplicated_request_binds_persisted_approval_identity():
     second = gate.request(approval_id="approval-2", **args)
     assert first["id"] == second["id"] == "approval-1"
     assert store.get("taskexecution-000000000001")["approvalId"] == "approval-1"
+
+
+def test_historical_request_retry_cannot_replace_a_new_approval_wait():
+    store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
+    gate = ApprovalGate(store)
+    digest_a = "sha256:" + "3" * 64
+    args_a = {
+        "policy_decision": _decision(), "requester": "runtime",
+        "timestamp": "2026-01-01T00:00:00Z", "digest": digest_a,
+        "authorized_reviewers": ("alice",),
+    }
+    gate.request(approval_id="approval-1", **args_a)
+    gate.decide("approval-1", actor="alice", decision="APPROVED",
+                timestamp="2026-01-01T00:01:00Z", reason="Reviewed", current_digest=digest_a)
+    store.update_status("taskexecution-000000000001", "AWAITING_APPROVAL",
+                        expected_status="PENDING", updated_at="2026-01-01T00:02:00Z")
+    decision_b = _decision()
+    decision_b["id"] = "policydecision-000000000003"
+    decision_b["action"] = "git.push"
+    digest_b = "sha256:" + "4" * 64
+    gate.request(
+        approval_id="approval-2", policy_decision=decision_b, requester="runtime",
+        timestamp="2026-01-01T00:02:00Z", digest=digest_b,
+        authorized_reviewers=("alice",), expected_current_approval_id="approval-1",
+    )
+    import pytest
+    with pytest.raises(StatusConflictError, match="binding changed"):
+        gate.request(approval_id="approval-1", **args_a)
+    gate.decide("approval-1", actor="alice", decision="APPROVED",
+                timestamp="2026-01-01T00:03:00Z", reason="Duplicate", current_digest=digest_a)
+    gate.decide("approval-2", actor="alice", decision="REJECTED",
+                timestamp="2026-01-01T00:04:00Z", reason="Changed evidence", current_digest=digest_b)
+    assert store.get("taskexecution-000000000001")["status"] == "AWAITING_APPROVAL"
+    assert store.get("taskexecution-000000000001")["approvalId"] == "approval-2"
 
 
 def test_duplicate_approval_repairs_interrupted_task_wakeup():
