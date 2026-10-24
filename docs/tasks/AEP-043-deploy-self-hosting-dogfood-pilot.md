@@ -59,6 +59,7 @@ Create the self-hosting deployment and operator runbook that:
 * AEP-067
 * AEP-068
 * AEP-071
+* AEP-072
 
 ## Acceptance Criteria
 
@@ -100,3 +101,8 @@ enable authenticated ingress, run one labeled issue through all six Tasks, and
 record exactly one open, unmerged pull request plus the complete correlated
 runtime and publication evidence described by the runbook. Repository tests
 cannot satisfy that live acceptance criterion.
+
+The live issue #120 attempt and its exact replay reached AnalyzeIssue but
+failed semantic criterion-ownership validation before planning. AEP-072 tracks
+the missing typed changed-path owner for the issue's documentation-only
+constraint. Neither failed execution satisfies the six-Task pilot gate.
