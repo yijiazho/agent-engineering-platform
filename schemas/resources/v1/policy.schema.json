@@ -15,6 +15,16 @@
       "required": ["type", "rules"],
       "properties": {
         "type": { "type": "string", "enum": ["pre-execution-capability", "publication", "approval"] },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewers"],
+          "properties": {
+            "reviewers": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "groups": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "requireReason": { "type": "boolean", "default": true }
+          }
+        },
         "rules": {
           "type": "array",
           "minItems": 1,
@@ -36,6 +46,10 @@
         }
       },
       "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "approval" } }, "required": ["type"] },
+          "then": { "required": ["approval"] }
+        },
         {
           "if": {
             "properties": {

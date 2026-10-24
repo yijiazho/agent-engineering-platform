@@ -381,6 +381,16 @@ Agents receive only the capabilities explicitly granted.
 
 Certain capabilities require human approval.
 
+An approval request is bound to one action, publication target, repository
+revision, and immutable artifact/request digest. Operators must review those
+identifiers together; changing any bound input requires a new request. The
+resolved Policy declares authorized reviewer identities (and optional groups)
+under `spec.approval`; group membership is resolved outside Task handlers.
+Unauthorized decisions do not change task eligibility. An approved request
+returns its awaiting TaskExecution to `PENDING`, where normal scheduler dispatch
+and capability/publication policy checks run again. Rejection leaves durable
+evidence and does not wake the task.
+
 Examples:
 
 * merge pull request
