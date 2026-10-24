@@ -114,6 +114,52 @@ def test_replay_resource_override_rewrites_pinned_resource_dependencies() -> Non
     assert agent.data["spec"]["promptRef"]["version"] == "1.0.0"
 
 
+def test_exact_replay_preserves_multiple_inherited_versions_of_same_resource() -> None:
+    workspace = Resource(
+        ResourceRef("Workspace", "platform", "1.0.0"), Path("workspace.yaml"),
+        {"kind": "Workspace", "metadata": {"name": "platform", "version": "1.0.0"}}, (),
+    )
+    model_v1 = Resource(
+        ResourceRef("Model", "reasoner", "1.0.0"), Path("model-v1.yaml"),
+        {"kind": "Model", "metadata": {"name": "reasoner", "version": "1.0.0"}}, (),
+    )
+    model_v2 = Resource(
+        ResourceRef("Model", "reasoner", "2.0.0"), Path("model-v2.yaml"),
+        {"kind": "Model", "metadata": {"name": "reasoner", "version": "2.0.0"}}, (),
+    )
+    agents = tuple(
+        Resource(
+            ResourceRef("Agent", name, "1.0.0"), Path(f"{name}.yaml"),
+            {
+                "kind": "Agent",
+                "metadata": {"name": name, "version": "1.0.0"},
+                "spec": {"modelRef": {
+                    "kind": "Model", "name": "reasoner", "version": model.ref.version,
+                }},
+            },
+            (model.ref,),
+        )
+        for name, model in (("analyzer", model_v1), ("planner", model_v2))
+    )
+    historical = ResourceCollection(
+        workspace, (workspace, model_v1, model_v2, *agents),
+    )
+    inherited = [
+        {"kind": resource.kind, "name": resource.name, "version": resource.version}
+        for resource in historical.resources if resource.kind != "Workspace"
+    ]
+    provenance = {
+        "inheritedResourceRefs": inherited,
+        "resourceRefs": inherited,
+        "overrides": [],
+    }
+
+    replay_resources = _replay_resource_collection(historical, historical, provenance)
+
+    assert replay_resources.get(agents[0].ref).references == (model_v1.ref,)
+    assert replay_resources.get(agents[1].ref).references == (model_v2.ref,)
+
+
 def test_replay_resource_resolution_fails_closed_for_missing_override() -> None:
     workspace = Resource(
         ResourceRef("Workspace", "platform", "1.0.0"), Path("workspace.yaml"),

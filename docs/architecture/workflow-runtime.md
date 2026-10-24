@@ -127,7 +127,10 @@ checkpoint. Replay creation stays `PENDING` until a runner claims it, then
 records `WorkflowExecutionStarted` before scheduling Tasks and one terminal
 event with the final status. A replay records source-owned reused ContextPackages
 as inherited inputs; inspection accepts those references only when lineage,
-Task identity, and the recorded context identity all match.
+Task identity, and the recorded context identity all match. AgentInvocation
+repeats that check before accepting a context whose source execution differs
+from the active replay, preventing unverified cross-execution inputs from
+reaching a Model provider.
 Reconciliation repairs idempotent lifecycle events and WorkflowExecution
 membership before advancing the DAG. A later reconciliation observes newly
 successful prerequisites and schedules the next wave; configuration,

@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
@@ -793,6 +794,58 @@ def test_replay_context_reuse_returns_the_historical_package_verbatim() -> None:
 
     assert dict(reused) == dict(historical)
     assert context_identity(reused) == context_identity(historical)
+
+
+def test_context_identity_ignores_execution_local_metadata_but_preserves_content() -> None:
+    historical = {
+        "taskRef": {"kind": "Task", "name": "build-plan", "version": "1.0.0"},
+        "repositoryRevision": "a" * 40,
+        "elements": [
+            {
+                "type": "knowledge",
+                "content": {"retrieval": {
+                    "snapshotVersion": "sha256:stable",
+                    "snapshotCreatedAt": "2026-01-01T00:00:00Z",
+                }},
+                "provenance": {"workflowExecutionId": "workflow-source", "resourceRefs": []},
+            },
+            {
+                "type": "artifact",
+                "content": {
+                    "metadata": {
+                        "id": "artifact-source",
+                        "createdAt": "2026-01-01T00:00:00Z",
+                        "contentAddress": "sha256:artifact-content",
+                    },
+                    "content": {"plan": ["keep this content"]},
+                },
+                "provenance": {
+                    "workflowExecutionId": "workflow-source",
+                    "taskExecutionId": "task-source",
+                    "inputArtifactRefs": [{
+                        "generatedArtifactId": "artifact-source",
+                        "contentAddress": "sha256:artifact-content",
+                    }],
+                },
+            },
+        ],
+    }
+    rebuilt = deepcopy(historical)
+    rebuilt["elements"][0]["content"]["retrieval"]["snapshotCreatedAt"] = "2026-02-01T00:00:00Z"
+    rebuilt["elements"][0]["provenance"]["workflowExecutionId"] = "workflow-replay"
+    artifact = rebuilt["elements"][1]
+    artifact["content"]["metadata"].update(
+        id="artifact-replay", createdAt="2026-02-01T00:00:00Z"
+    )
+    artifact["provenance"].update(
+        workflowExecutionId="workflow-replay", taskExecutionId="task-replay"
+    )
+    artifact["provenance"]["inputArtifactRefs"][0]["generatedArtifactId"] = "artifact-replay"
+
+    assert context_identity(rebuilt) == context_identity(historical)
+
+    rebuilt["elements"][1]["content"]["content"]["plan"] = ["changed content"]
+    assert context_identity(rebuilt) != context_identity(historical)
 
 
 def test_replay_context_rebuild_fails_before_use_when_identity_differs() -> None:

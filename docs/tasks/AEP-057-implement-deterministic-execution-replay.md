@@ -56,10 +56,14 @@ Task invocation without changing that package. Inspection accepts this
 cross-execution reference only when the source execution, source Task, replay
 lineage, Task reference, and stable context identity agree. `--context rebuild`
 uses the normal ContextBuilder and checks each rebuilt package identity before
-the handler can invoke its Agent. Missing historical context evidence fails
-closed. Rebuilt contexts can diverge after an earlier model output changes; the
-replay then stops before the next Agent call. Provider outputs are not promised
-to be byte-for-byte deterministic across provider versions or sampling.
+the handler can invoke its Agent. The AgentInvocation boundary repeats the
+lineage and identity check before allowing a source-owned ContextPackage to
+cross execution identities. Context identity excludes execution-local ownership
+fields and generated timestamps or artifact IDs, while retaining retrieved
+content and artifact content. Missing historical context evidence fails closed.
+Rebuilt contexts can diverge after an earlier model output changes; the replay
+then stops before the next Agent call. Provider outputs are not promised to be
+byte-for-byte deterministic across provider versions or sampling.
 
 Replay publication is disabled by default. The publication Task is denied before
 Git push or pull-request creation unless `--publication` is explicitly supplied;

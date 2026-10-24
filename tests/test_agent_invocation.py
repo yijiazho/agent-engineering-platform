@@ -11,6 +11,7 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.agent_invocation import AgentInvocationContractError, invoke_agent
+from aep.context_identity import context_identity
 from aep.model_invocation import (
     FakeModelAdapter,
     ModelConfiguration,
@@ -456,6 +457,73 @@ def test_rejects_context_package_with_conflicting_workflow_provenance_before_pro
         )
 
     assert adapter.requests == []
+
+
+def test_invocation_accepts_only_lineage_verified_reused_replay_context() -> None:
+    store = InMemoryRuntimeObjectStore()
+    package = context_package()
+    agent = resolved_agent()
+    source_id = package["provenance"]["workflowExecutionId"]
+    replay_id = "workflowexecution-abcdef123456"
+    source_task_id = package["taskExecutionId"]
+    replay_task_id = "taskexecution-abcdef123456"
+    agent["traceId"] = "trace-replay-test"
+    agent["provenance"]["workflowExecutionId"] = replay_id
+    agent["provenance"]["taskExecutionId"] = replay_task_id
+    agent["taskExecutionId"] = replay_task_id
+
+    store.create({
+        "id": source_id, "kind": "WorkflowExecution",
+        "traceId": package["traceId"],
+        "taskExecutionIds": [source_task_id],
+    }, deterministic_key="source")
+    store.create({
+        "id": replay_id, "kind": "WorkflowExecution",
+        "traceId": agent["traceId"],
+        "sourceExecutionId": source_id,
+        "replayProvenance": {
+            "sourceExecutionId": source_id,
+            "contextIdentities": [{
+                "sourceContextPackageId": package["id"],
+                "identity": context_identity(package),
+                "mode": "reuse",
+            }],
+        },
+    }, deterministic_key="replay")
+    store.create({
+        "id": source_task_id, "kind": "TaskExecution",
+        "traceId": package["traceId"],
+        "workflowExecutionId": source_id,
+        "taskRef": package["taskRef"],
+        "contextPackageId": package["id"],
+    }, deterministic_key="source-task")
+    store.create({
+        "id": replay_task_id, "kind": "TaskExecution",
+        "traceId": agent["traceId"],
+        "workflowExecutionId": replay_id,
+        "taskRef": package["taskRef"],
+        "contextPackageId": package["id"],
+    }, deterministic_key="replay-task")
+
+    adapter = FakeModelAdapter([
+        ModelResponse(output={"summary": "replayed"}, usage=ModelUsage(1, 1), latency_ms=1)
+    ])
+    result = invoke_agent(
+        store=store,
+        invocation_id="agentinvocation-abcdef123456",
+        model_invocation_id="modelinvocation-abcdef123456",
+        resolved_agent=agent,
+        context_package=package,
+        prompt=prompt(),
+        model_configuration=model_configuration(),
+        adapter=adapter,
+        started_at="2026-08-06T12:00:00Z",
+        completed_at="2026-08-06T12:00:01Z",
+    )
+
+    assert result["status"] == "SUCCEEDED"
+    assert result["contextPackageId"] == package["id"]
+    assert adapter.requests[0].correlation.workflow_execution_id == replay_id
 
 
 def test_concurrent_identical_calls_claim_one_provider_execution() -> None:

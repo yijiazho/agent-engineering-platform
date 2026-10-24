@@ -151,18 +151,20 @@ def _replay_resource_collection(
 
     inherited = replay_provenance.get("inheritedResourceRefs", ())
     effective = replay_provenance.get("resourceRefs", ())
-    effective_by_name = {
-        (item.get("kind"), item.get("name")): item
-        for item in effective if isinstance(item, Mapping)
-    }
+    override_by_name: dict[tuple[str, str], ResourceRef] = {}
+    for item in overrides:
+        if not isinstance(item, Mapping):
+            raise ReplayError("replay Resource override is malformed")
+        ref = ResourceRef.from_mapping(dict(item))
+        override_by_name[(ref.kind, ref.name)] = ref
     replacements: dict[tuple[str, str, str], tuple[str, str, str]] = {}
     for original in inherited:
         if not isinstance(original, Mapping):
             continue
-        replacement = effective_by_name.get((original.get("kind"), original.get("name")))
-        if isinstance(replacement, Mapping) and replacement.get("version") != original.get("version"):
+        replacement = override_by_name.get((original.get("kind"), original.get("name")))
+        if replacement is not None and replacement.version != original.get("version"):
             replacements[(str(original["kind"]), str(original["name"]), str(original["version"]))] = (
-                str(replacement["kind"]), str(replacement["name"]), str(replacement["version"]),
+                replacement.kind, replacement.name, replacement.version,
             )
 
     rewritten = []
