@@ -52,7 +52,9 @@ class ApprovalGate:
         if expires_at is not None:
             record["expiresAt"] = expires_at
         approval = self.store.create(record, deterministic_key=f"approval:{policy_decision['id']}:{digest}")
-        self.store.bind_approval_request(str(record["taskExecutionId"]), approval_id, updated_at=timestamp)
+        self.store.bind_approval_request(
+            str(approval["taskExecutionId"]), str(approval["id"]), updated_at=timestamp
+        )
         return approval
 
     def decide(self, approval_id: str, *, actor: str, decision: str,

@@ -96,6 +96,21 @@ def test_historical_approval_cannot_wake_a_new_approval_wait():
     assert task["approvalId"] == "approval-current"
 
 
+def test_deduplicated_request_binds_persisted_approval_identity():
+    store = InMemoryRuntimeObjectStore()
+    _add_claimed_waiting_task(store)
+    gate = ApprovalGate(store)
+    args = {
+        "policy_decision": _decision(), "requester": "runtime",
+        "timestamp": "2026-01-01T00:00:00Z", "digest": "sha256:" + "2" * 64,
+        "authorized_reviewers": ("alice",),
+    }
+    first = gate.request(approval_id="approval-1", **args)
+    second = gate.request(approval_id="approval-2", **args)
+    assert first["id"] == second["id"] == "approval-1"
+    assert store.get("taskexecution-000000000001")["approvalId"] == "approval-1"
+
+
 def test_duplicate_approval_repairs_interrupted_task_wakeup():
     store = InMemoryRuntimeObjectStore()
     _add_claimed_waiting_task(store)
