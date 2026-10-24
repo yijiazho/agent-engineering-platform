@@ -617,14 +617,16 @@ source link. It preserves the source repository revision and immutable
 Resource references, rejects missing historical provenance, and never changes
 the source record. `--override Kind:name:version` accepts explicit versions
 for Agent, Prompt, Model, Evaluation, or Policy resources; repeat the option
-for multiple overrides. Context handling is selected with `--context reuse`
-or `--context rebuild` (reuse verifies historical ContextPackage presence).
-Replay publication is disabled by default; `--publication` records an explicit
-publication mode for later policy-governed execution. This initial command
-creates an inert replay root and does not dispatch Tasks. Exact replay can
-reproduce recorded inputs and repository state, but model-provider outputs may
-vary across calls, provider versions, and nondeterministic sampling. The
-deterministic context rebuild and execution path remains in progress.
+for multiple overrides. Replay dispatch uses the configured self-hosted runtime
+and exact source revision. Publication is disabled by default;
+`--publication` enables the normal capability and publication policy checks.
+`--plan-only` explicitly creates a pending replay record without dispatching
+Tasks. Exact replay reuses historical ContextPackages by default;
+`--context rebuild` reconstructs each package and checks its stable input
+identity before invoking the Agent. Model-provider outputs may still vary
+across calls, provider versions, and nondeterministic sampling, so later
+rebuilt contexts can fail their identity check after an earlier model output
+changes.
 
 ## Key Documents
 

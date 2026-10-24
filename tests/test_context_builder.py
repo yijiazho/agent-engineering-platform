@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from aep.context_builder import (
     ImmutableContextPackageError,
     RequiredContextError,
 )
+from aep.context_identity import context_identity
 from aep.generated_artifact_store import InMemoryGeneratedArtifactStore
 from aep.observability import StructuredLifecycleLogger
 from aep.planning_evidence import PlanningEvidenceInspection
@@ -764,6 +766,136 @@ def build(task_resource: dict, **changes):
     }
     values.update(changes)
     return builder().build(**values)
+
+
+def test_replay_context_reuse_returns_the_historical_package_verbatim() -> None:
+    task_resource = task("analyze-issue", ["task", "event"])
+    historical = builder().build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=event(),
+        created_at=CREATED_AT,
+    )
+    key = ("Task", "analyze-issue", "1.0.0")
+    replay_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=artifact_store(),
+        reused_contexts={key: historical},
+    )
+
+    reused = replay_builder.build(
+        task=task_resource,
+        task_execution=task_execution(task_resource),
+        workflow_execution=workflow_execution(),
+        event=event(),
+        created_at=CREATED_AT,
+    )
+
+    assert dict(reused) == dict(historical)
+    assert context_identity(reused) == context_identity(historical)
+
+
+def test_context_identity_ignores_execution_local_metadata_but_preserves_content() -> None:
+    historical = {
+        "taskRef": {"kind": "Task", "name": "build-plan", "version": "1.0.0"},
+        "repositoryRevision": "a" * 40,
+        "elements": [
+            {
+                "type": "knowledge",
+                "content": {"retrieval": {
+                    "snapshotVersion": "sha256:stable",
+                    "snapshotCreatedAt": "2026-01-01T00:00:00Z",
+                }},
+                "provenance": {"workflowExecutionId": "workflow-source", "resourceRefs": []},
+            },
+            {
+                "type": "artifact",
+                "content": {
+                    "metadata": {
+                        "id": "artifact-source",
+                        "createdAt": "2026-01-01T00:00:00Z",
+                        "contentAddress": "sha256:artifact-content",
+                    },
+                    "content": {"plan": ["keep this content"]},
+                },
+                "provenance": {
+                    "workflowExecutionId": "workflow-source",
+                    "taskExecutionId": "task-source",
+                    "inputArtifactRefs": [{
+                        "generatedArtifactId": "artifact-source",
+                        "contentAddress": "sha256:artifact-content",
+                    }],
+                },
+            },
+        ],
+    }
+    rebuilt = deepcopy(historical)
+    rebuilt["elements"][0]["content"]["retrieval"]["snapshotCreatedAt"] = "2026-02-01T00:00:00Z"
+    rebuilt["elements"][0]["provenance"]["workflowExecutionId"] = "workflow-replay"
+    artifact = rebuilt["elements"][1]
+    artifact["content"]["metadata"].update(
+        id="artifact-replay", createdAt="2026-02-01T00:00:00Z"
+    )
+    artifact["provenance"].update(
+        workflowExecutionId="workflow-replay", taskExecutionId="task-replay"
+    )
+    artifact["provenance"]["inputArtifactRefs"][0]["generatedArtifactId"] = "artifact-replay"
+
+    assert context_identity(rebuilt) == context_identity(historical)
+
+    rebuilt["elements"][1]["content"]["content"]["plan"] = ["changed content"]
+    assert context_identity(rebuilt) != context_identity(historical)
+
+
+def test_replay_context_rebuild_fails_before_use_when_identity_differs() -> None:
+    task_resource = task("analyze-issue", ["task", "event"])
+    replay_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=artifact_store(),
+        expected_context_identities={
+            ("Task", "analyze-issue", "1.0.0"): "sha256:unexpected",
+        },
+    )
+
+    with pytest.raises(ContextInputValidationError, match="identity mismatch"):
+        replay_builder.build(
+            task=task_resource,
+            task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(),
+            event=event(),
+            created_at=CREATED_AT,
+        )
+
+
+@pytest.mark.parametrize(
+    ("require_reused_context", "require_expected_context_identity", "message"),
+    [
+        (True, False, "historical ContextPackage is unavailable"),
+        (False, True, "historical ContextPackage identity is unavailable"),
+    ],
+)
+def test_exact_replay_fails_closed_when_expected_context_evidence_is_missing(
+    require_reused_context: bool,
+    require_expected_context_identity: bool,
+    message: str,
+) -> None:
+    task_resource = task("analyze-issue", ["task", "event"])
+    replay_builder = ContextBuilder(
+        repository_knowledge=knowledge_provider(),
+        artifact_store=artifact_store(),
+        require_reused_context=require_reused_context,
+        require_expected_context_identity=require_expected_context_identity,
+    )
+
+    with pytest.raises(ContextInputValidationError, match=message):
+        replay_builder.build(
+            task=task_resource,
+            task_execution=task_execution(task_resource),
+            workflow_execution=workflow_execution(),
+            event=event(),
+            created_at=CREATED_AT,
+        )
 
 
 def test_builds_context_for_every_mvp_task_type_from_deterministic_fixture() -> None:

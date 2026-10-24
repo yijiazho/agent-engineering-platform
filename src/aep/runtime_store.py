@@ -129,6 +129,20 @@ class RuntimeObjectStore(ABC):
         """List objects produced by a TaskExecution in creation order."""
 
     supports_atomic_task_transitions: bool = False
+    supports_atomic_workflow_transitions: bool = False
+
+    def commit_workflow_execution_transition(
+        self,
+        workflow_execution_id: str,
+        status: str,
+        *,
+        event: RuntimeObject,
+        expected_status: str,
+        updated_at: str,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        """Atomically persist a WorkflowExecution transition and its event."""
+        raise NotImplementedError("store does not support atomic workflow transitions")
 
     def commit_task_execution_transition(
         self,
@@ -201,6 +215,33 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
                 )
                 InMemoryRuntimeObjectStore.append_event(self, event)
                 return created
+            except Exception:
+                self._restore_memory_snapshot(snapshot)
+                raise
+
+    def commit_workflow_execution_transition(
+        self,
+        workflow_execution_id: str,
+        status: str,
+        *,
+        event: RuntimeObject,
+        expected_status: str,
+        updated_at: str,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        with self._lock:
+            snapshot = self._memory_snapshot()
+            try:
+                workflow = self._require(workflow_execution_id)
+                if workflow.get("kind") != "WorkflowExecution":
+                    raise ValueError("workflow transitions require a WorkflowExecution")
+                _validate_workflow_transition_event(workflow_execution_id, status, event)
+                InMemoryRuntimeObjectStore.append_event(self, event)
+                return InMemoryRuntimeObjectStore.update_status(
+                    self, workflow_execution_id, status,
+                    expected_status=expected_status, updated_at=updated_at,
+                    changes=changes,
+                )
             except Exception:
                 self._restore_memory_snapshot(snapshot)
                 raise
@@ -429,6 +470,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
     """Durable JSON store with a cross-process writer fence and safe checkpoints."""
 
     supports_atomic_task_transitions = True
+    supports_atomic_workflow_transitions = True
 
     def __init__(self, path: Path | str) -> None:
         super().__init__()
@@ -534,6 +576,30 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             )
             InMemoryRuntimeObjectStore.append_event(self, event)
             return updated
+
+        return self._mutate(mutation)
+
+    def commit_workflow_execution_transition(
+        self,
+        workflow_execution_id: str,
+        status: str,
+        *,
+        event: RuntimeObject,
+        expected_status: str,
+        updated_at: str,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        def mutation() -> RuntimeObject:
+            workflow = InMemoryRuntimeObjectStore.get(self, workflow_execution_id)
+            if workflow is None or workflow.get("kind") != "WorkflowExecution":
+                raise ValueError("workflow transitions require a WorkflowExecution")
+            _validate_workflow_transition_event(workflow_execution_id, status, event)
+            InMemoryRuntimeObjectStore.append_event(self, event)
+            return InMemoryRuntimeObjectStore.update_status(
+                self, workflow_execution_id, status,
+                expected_status=expected_status, updated_at=updated_at,
+                changes=changes,
+            )
 
         return self._mutate(mutation)
 
@@ -843,6 +909,47 @@ def _copy_and_validate(runtime_object: RuntimeObject) -> dict[str, Any]:
     if not isinstance(kind, str) or not kind:
         raise ValueError("runtime_object.kind must be a non-empty string")
     return value
+
+
+def _validate_workflow_transition_event(
+    workflow_execution_id: str,
+    status: str,
+    event: RuntimeObject,
+) -> None:
+    if not isinstance(event, Mapping) or event.get("kind") != "ExecutionEvent":
+        raise ValueError("workflow transitions require an ExecutionEvent")
+    subject = event.get("subject")
+    provenance = event.get("provenance")
+    if (
+        not isinstance(subject, Mapping)
+        or subject.get("kind") != "WorkflowExecution"
+        or subject.get("id") != workflow_execution_id
+        or not isinstance(provenance, Mapping)
+        or provenance.get("workflowExecutionId") != workflow_execution_id
+    ):
+        raise ValueError("ExecutionEvent must belong to the transitioning WorkflowExecution")
+    expected_event = {
+        "RUNNING": "WorkflowExecutionStarted",
+        "SUCCEEDED": "WorkflowExecutionCompleted",
+        "FAILED": "WorkflowExecutionFailed",
+        "CANCELLED": "WorkflowExecutionCancelled",
+    }.get(status)
+    payload = event.get("payload")
+    if (
+        expected_event is None
+        or event.get("eventType") != expected_event
+        or not isinstance(payload, Mapping)
+        or payload.get("status") != status
+    ):
+        raise ValueError("ExecutionEvent type and status must match the WorkflowExecution transition")
+    failure_class = payload.get("failureClass")
+    valid_failure_classes = {
+        "RECOVERABLE", "CONFIGURATION", "EVALUATION", "POLICY", "PERMANENT",
+    }
+    if status == "FAILED" and failure_class not in valid_failure_classes:
+        raise ValueError("WorkflowExecutionFailed requires a valid failure class")
+    if status != "FAILED" and failure_class is not None:
+        raise ValueError("successful WorkflowExecution transitions must not contain a failure class")
 
 
 def _workflow_execution_id(value: RuntimeObject) -> str | None:

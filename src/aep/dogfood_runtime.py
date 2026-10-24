@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import codecs
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 import logging
+import json
 from pathlib import Path
 import re
 import subprocess
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
@@ -19,7 +21,9 @@ from aep.analyze_issue import AnalyzeIssueTaskHandler
 from aep.build_implementation_plan import BuildImplementationPlanTaskHandler
 from aep.capability_policy import ApplicablePolicy, PolicyScope, PreExecutionCapabilityPolicy
 from aep.context_builder import ContextBuilder
+from aep.context_identity import context_identity
 from aep.create_pull_request import CreatePullRequestTaskHandler
+from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.docker_validation_tool import (
     ContentAddressedDockerLogStore,
     DockerCliExecutor,
@@ -53,9 +57,10 @@ from aep.github_tool import GitHubToolAdapter
 from aep.local_service import verify_resource_checkout
 from aep.openai_model_provider import openai_model_adapter_from_environment
 from aep.repository_knowledge import MvpRepositoryScanner
-from aep.resource_loader import Resource, ResourceLoader, ResourceRef
+from aep.resource_loader import Resource, ResourceCollection, ResourceLoader, ResourceRef
 from aep.run_validation import RunValidationTaskHandler
-from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeObject
+from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeObject, StatusConflictError
+from aep.task_execution import FailureClass
 from aep.task_dag import resolve_task_dag
 from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 from aep.workflow_execution import WorkflowExecutionCreator
@@ -65,6 +70,198 @@ from aep.workflow_scheduler import TaskExecutionResult, WorkflowScheduler
 
 class DogfoodReconciliationError(RuntimeError):
     """Safe terminal reconciliation failure suitable for persisted evidence."""
+
+
+def _historical_replay_inputs(
+    source: Mapping[str, Any], related: tuple[RuntimeObject, ...],
+) -> tuple[dict[str, Any], dict[tuple[str, str, str], Mapping[str, Any]]]:
+    by_id = {str(item.get("id")): item for item in related if item.get("id")}
+    contexts: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+    event_candidates: list[Mapping[str, Any]] = []
+    task_ids = source.get("taskExecutionIds")
+    if not isinstance(task_ids, list):
+        raise ReplayError("source TaskExecution references are malformed")
+    for task_id in task_ids:
+        task = by_id.get(task_id)
+        if not isinstance(task, Mapping) or task.get("kind") != "TaskExecution":
+            raise ReplayError("source TaskExecution evidence is missing")
+        context_id = task.get("contextPackageId")
+        context = by_id.get(context_id) if isinstance(context_id, str) else None
+        if not isinstance(context, Mapping) or context.get("kind") != "ContextPackage":
+            continue
+        task_ref = context.get("taskRef")
+        if not isinstance(task_ref, Mapping):
+            continue
+        task_key = (
+            str(task_ref.get("kind", "")), str(task_ref.get("name", "")),
+            str(task_ref.get("version", "")),
+        )
+        contexts[task_key] = context
+        for element in context.get("elements", ()):
+            if not isinstance(element, Mapping) or element.get("type") != "event":
+                continue
+            if element.get("truncated") is True or not isinstance(element.get("content"), Mapping):
+                raise ReplayError("historical Event context is truncated or malformed")
+            event_candidates.append(element["content"])
+    matches = [
+        event for event in event_candidates
+        if event.get("id") == source.get("eventId")
+    ]
+    unique = {
+        json.dumps(dict(event), sort_keys=True, separators=(",", ":"))
+        for event in matches
+    }
+    if len(unique) != 1:
+        raise ReplayError("source execution does not contain one complete historical Event")
+    event = json.loads(next(iter(unique)))
+    required_fields = ("id", "source", "type", "receivedAt", "deduplicationKey")
+    if any(not isinstance(event.get(field), str) or not event[field] for field in required_fields):
+        raise ReplayError("historical Event is missing required normalized fields")
+    return event, contexts
+
+
+def _replay_resource_collection(
+    historical: ResourceCollection,
+    available: ResourceCollection,
+    replay_provenance: Mapping[str, Any],
+) -> ResourceCollection:
+    resources = {resource.ref: resource for resource in historical.resources}
+    overrides = replay_provenance.get("overrides", ())
+    if not isinstance(overrides, (list, tuple)):
+        raise ReplayError("replay Resource overrides are malformed")
+    for raw in overrides:
+        if not isinstance(raw, Mapping):
+            raise ReplayError("replay Resource override is malformed")
+        ref = ResourceRef.from_mapping(dict(raw))
+        candidate = resources.get(ref) or available.get(ref)
+        if candidate is None:
+            raise ReplayError("an overridden Resource version cannot be reconstructed")
+        resources[ref] = candidate
+        pending = [candidate]
+        while pending:
+            current = pending.pop()
+            for dependency in current.references:
+                if dependency in resources:
+                    continue
+                resolved = available.get(dependency)
+                if resolved is None:
+                    raise ReplayError("an overridden Resource dependency cannot be reconstructed")
+                resources[dependency] = resolved
+                pending.append(resolved)
+
+    inherited = replay_provenance.get("inheritedResourceRefs", ())
+    effective = replay_provenance.get("resourceRefs", ())
+    override_by_name: dict[tuple[str, str], ResourceRef] = {}
+    for item in overrides:
+        if not isinstance(item, Mapping):
+            raise ReplayError("replay Resource override is malformed")
+        ref = ResourceRef.from_mapping(dict(item))
+        override_by_name[(ref.kind, ref.name)] = ref
+    replacements: dict[tuple[str, str, str], tuple[str, str, str]] = {}
+    for original in inherited:
+        if not isinstance(original, Mapping):
+            continue
+        replacement = override_by_name.get((original.get("kind"), original.get("name")))
+        if replacement is not None and replacement.version != original.get("version"):
+            replacements[(str(original["kind"]), str(original["name"]), str(original["version"]))] = (
+                replacement.kind, replacement.name, replacement.version,
+            )
+
+    rewritten = []
+    for resource in resources.values():
+        data = _replace_versioned_refs(deepcopy(resource.data), replacements)
+        references = tuple(
+            ResourceRef(*replacements.get((ref.kind, ref.name, ref.version), (ref.kind, ref.name, ref.version)))
+            for ref in resource.references
+        )
+        rewritten.append(Resource(resource.ref, resource.path, data, references))
+    workspace = resources.get(historical.workspace.ref, historical.workspace)
+    collection = ResourceCollection(workspace, tuple(sorted(rewritten, key=lambda item: (item.kind, item.name, item.version))))
+    for reference in effective:
+        if not isinstance(reference, Mapping) or collection.get(ResourceRef.from_mapping(dict(reference))) is None:
+            raise ReplayError("a required historical Resource version is unavailable")
+    return collection
+
+
+def _replace_versioned_refs(
+    value: Any,
+    replacements: Mapping[tuple[str, str, str], tuple[str, str, str]],
+) -> Any:
+    if isinstance(value, Mapping):
+        result = {str(key): _replace_versioned_refs(item, replacements) for key, item in value.items()}
+        if all(field in result for field in ("kind", "name", "version")):
+            key = (str(result["kind"]), str(result["name"]), str(result["version"]))
+            replacement = replacements.get(key)
+            if replacement is not None:
+                result.update(kind=replacement[0], name=replacement[1], version=replacement[2])
+        return result
+    if isinstance(value, list):
+        return [_replace_versioned_refs(item, replacements) for item in value]
+    return value
+
+
+def _workflow_lifecycle_event(
+    execution: Mapping[str, Any],
+    *,
+    event_type: str,
+    sequence: int,
+    emitted_at: str,
+    status: str,
+    payload: Mapping[str, Any] | None = None,
+    failure: Mapping[str, Any] | None = None,
+) -> RuntimeObject:
+    execution_id = str(execution["id"])
+    event_uuid = uuid5(NAMESPACE_URL, f"execution-event:{execution_id}:{event_type}")
+    values = {"status": status, **dict(payload or {})}
+    source_id = execution.get("sourceExecutionId")
+    if isinstance(source_id, str):
+        values["sourceExecutionId"] = source_id
+    if failure is not None:
+        values["failureClass"] = failure.get("class")
+    provenance = execution.get("provenance", {})
+    return {
+        "apiVersion": "aep.dev/v1alpha1",
+        "kind": "ExecutionEvent",
+        "id": f"executionevent-{event_uuid}",
+        "traceId": execution["traceId"],
+        "createdAt": emitted_at,
+        "updatedAt": emitted_at,
+        "provenance": {
+            "actor": "execution-replay" if source_id else "workflow-controller",
+            "workflowExecutionId": execution_id,
+            "repositoryRevision": execution["repositoryRevision"],
+            "knowledgeGraphVersion": execution.get("knowledgeGraphVersion", "unknown"),
+            "resourceRefs": deepcopy(provenance.get("resourceRefs", [])),
+        },
+        "eventType": event_type,
+        "subject": {"kind": "WorkflowExecution", "id": execution_id},
+        "sequence": sequence,
+        "emittedAt": emitted_at,
+        "payload": values,
+    }
+
+
+def _new_runtime_evidence(related: tuple[RuntimeObject, ...]) -> list[dict[str, str]]:
+    evidence = [
+        {"kind": str(item["kind"]), "id": str(item["id"])}
+        for item in related
+        if item.get("kind") != "ExecutionEvent"
+        and isinstance(item.get("id"), str)
+        and isinstance(item.get("kind"), str)
+    ]
+    return sorted(evidence, key=lambda item: (item["kind"], item["id"]))
+
+
+def _workflow_failure(related: tuple[RuntimeObject, ...]) -> dict[str, str]:
+    for item in reversed(related):
+        failure = item.get("failure")
+        if item.get("kind") == "TaskExecution" and item.get("status") == "FAILED" and isinstance(failure, Mapping):
+            try:
+                classification = FailureClass(str(failure.get("class"))).value
+            except ValueError:
+                classification = FailureClass.PERMANENT.value
+            return {"class": classification, "message": "one or more replay Tasks failed"}
+    return {"class": FailureClass.PERMANENT.value, "message": "one or more replay Tasks failed"}
 
 
 class _HostPathDockerExecutor(DockerExecutor):
@@ -139,8 +336,14 @@ class _TaskExecutor:
 class DogfoodWorkflowRunner:
     """Compose the existing six production handlers for one durable Event."""
 
-    def __init__(self, environment: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        environment: Mapping[str, str],
+        *,
+        state_file: Path | str | None = None,
+    ) -> None:
         self._environment = dict(environment)
+        self._resource_lock = RLock()
         self._state_root = Path(self._required("AEP_STATE_ROOT")).resolve()
         repository_root = Path(self._required("AEP_REPOSITORY_ROOT"))
         verify_resource_checkout(
@@ -159,7 +362,7 @@ class DogfoodWorkflowRunner:
             schema_root=Path(self._required("AEP_RESOURCE_SCHEMA_ROOT")),
         ).load()
         self._store = DurableJsonRuntimeObjectStore(
-            self._state_root / "runtime" / "objects.json"
+            state_file or self._state_root / "runtime" / "objects.json"
         )
         self._artifacts = InMemoryGeneratedArtifactStore(
             runtime_store=self._store,
@@ -172,7 +375,195 @@ class DogfoodWorkflowRunner:
             "openai", environ=self._environment
         )
 
+    def replay(
+        self,
+        source_id: str,
+        *,
+        overrides: tuple[str, ...] = (),
+        context_mode: str = "reuse",
+        publication: bool = False,
+    ) -> str:
+        with self._resource_lock:
+            return self._replay_locked(
+                source_id,
+                overrides=overrides,
+                context_mode=context_mode,
+                publication=publication,
+            )
+
+    def _replay_locked(
+        self,
+        source_id: str,
+        *,
+        overrides: tuple[str, ...] = (),
+        context_mode: str = "reuse",
+        publication: bool = False,
+    ) -> str:
+        """Create and execute a replay using the source revision and Resources."""
+        replay = ExecutionReplayService(self._store).replay(
+            source_id,
+            overrides=overrides,
+            context_mode=context_mode,
+            publication=publication,
+        )
+        replay_id = str(replay["id"])
+        original_resources = self._resources
+        try:
+            source = self._store.get(source_id)
+            if source is None:
+                raise ReplayError("source WorkflowExecution disappeared")
+            event, inherited_contexts = _historical_replay_inputs(
+                source, self._store.list_by_workflow_execution(source_id)
+            )
+            expected_repository = (
+                f"{self._required('AEP_REPOSITORY_OWNER')}/"
+                f"{self._required('AEP_REPOSITORY_NAME')}"
+            ).casefold()
+            if (
+                not isinstance(event.get("repository"), Mapping)
+                or str(event["repository"].get("full_name", "")).casefold()
+                != expected_repository
+            ):
+                raise ReplayError(
+                    "historical Event repository differs from the configured execution repository"
+                )
+            manager = self._checkout_manager()
+            checkout, _ = manager.provision_orchestration(
+                CheckoutRequest(
+                    execution_id=replay_id,
+                    repository=RepositoryIdentity(
+                        "github",
+                        self._required("AEP_REPOSITORY_OWNER"),
+                        self._required("AEP_REPOSITORY_NAME"),
+                    ),
+                    default_branch=self._required("AEP_REPOSITORY_DEFAULT_BRANCH"),
+                    base_revision=str(replay["repositoryRevision"]),
+                    knowledge_revision=str(replay["repositoryRevision"]),
+                )
+            )
+            historical_resources = ResourceLoader(
+                checkout.workspace_path,
+                schema_root=checkout.workspace_path / "schemas" / "resources" / "v1",
+            ).load()
+            self._resources = _replay_resource_collection(
+                historical_resources,
+                original_resources,
+                replay["replayProvenance"],
+            )
+            for reference in replay["replayProvenance"]["resourceRefs"]:
+                if self._resources.get(ResourceRef.from_mapping(reference)) is None:
+                    raise ReplayError(
+                        "a required historical or overridden Resource version is unavailable"
+                    )
+            resolution = resolve_workflow_for_event(event, self._resources)
+            if resolution.workflow_ref != ResourceRef.from_mapping(source["workflowRef"]):
+                raise ReplayError("pinned Workflow does not match the source execution")
+            expected_context_identities: dict[tuple[str, str, str], str] = {}
+            reused_contexts: dict[tuple[str, str, str], Mapping[str, Any]] = {}
+            for task_key, package in inherited_contexts.items():
+                if context_mode == "reuse":
+                    reused_contexts[task_key] = package
+                else:
+                    expected_context_identities[task_key] = context_identity(package)
+            return self.run({
+                "event": event,
+                "workflowExecutionId": replay_id,
+                "isReplay": True,
+                "publicationEnabled": publication,
+                "sourceExecutionId": source_id,
+                "reusedContexts": reused_contexts,
+                "expectedContextIdentities": expected_context_identities,
+                "requireReusedContext": context_mode == "reuse",
+                "requireExpectedContextIdentity": context_mode == "rebuild",
+            })
+        except Exception as error:
+            self._fail_replay(replay_id, error)
+            if isinstance(error, ReplayError):
+                raise
+            raise ReplayError("replay could not be dispatched from its pinned inputs") from error
+        finally:
+            self._resources = original_resources
+
+    def _checkout_manager(self) -> ExecutionCheckoutManager:
+        return ExecutionCheckoutManager(
+            source=GitRepositorySource(
+                "https://github.com/yijiazho/agent-engineering-platform.git"
+            ),
+            source_cache_root=self._state_root / "repository-cache",
+            worktree_root=self._state_root / "execution-worktrees",
+            registry=local_checkout_registry(self._state_root),
+            credential_provider=self._github.credentials,
+        )
+
+    def _commit_workflow_transition(
+        self,
+        execution: Mapping[str, Any],
+        status: str,
+        *,
+        expected_status: str,
+        event_type: str,
+        changes: Mapping[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> RuntimeObject:
+        timestamp = _timestamp()
+        sequence = (
+            3 if execution.get("sourceExecutionId") and execution.get("startedAt")
+            else 2
+        )
+        event = _workflow_lifecycle_event(
+            execution,
+            event_type=event_type,
+            sequence=sequence,
+            emitted_at=timestamp,
+            status=status,
+            payload=payload,
+            failure=(changes or {}).get("failure"),
+        )
+        return self._store.commit_workflow_execution_transition(
+            str(execution["id"]),
+            status,
+            event=event,
+            expected_status=expected_status,
+            updated_at=timestamp,
+            changes=dict(changes or {}),
+        )
+
+    def _fail_replay(self, replay_id: str, error: Exception) -> None:
+        execution = self._store.get(replay_id)
+        if execution is None or execution.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+            return
+        status = str(execution.get("status"))
+        candidate_class = getattr(error, "classification", None)
+        if candidate_class is None:
+            candidate_class = (
+                FailureClass.CONFIGURATION.value
+                if isinstance(error, (ReplayError, DogfoodReconciliationError, ValueError))
+                else FailureClass.PERMANENT.value
+            )
+        try:
+            failure_class = FailureClass(str(getattr(candidate_class, "value", candidate_class))).value
+        except ValueError:
+            failure_class = FailureClass.PERMANENT.value
+        message = str(error) if isinstance(error, (ReplayError, DogfoodReconciliationError)) else "replay execution failed"
+        related = self._store.list_by_workflow_execution(replay_id)
+        replay_provenance = dict(execution.get("replayProvenance", {}))
+        replay_provenance["newRuntimeEvidence"] = _new_runtime_evidence(related)
+        self._commit_workflow_transition(
+            execution,
+            "FAILED",
+            expected_status=status,
+            event_type="WorkflowExecutionFailed",
+            changes={
+                "failure": {"class": failure_class, "message": message},
+                "replayProvenance": replay_provenance,
+            },
+        )
+
     def run(self, request: Mapping[str, Any]) -> str:
+        with self._resource_lock:
+            return self._run_locked(request)
+
+    def _run_locked(self, request: Mapping[str, Any]) -> str:
         event = request.get("event")
         if not isinstance(event, Mapping):
             raise DogfoodReconciliationError("reconciliation Event is missing")
@@ -183,7 +574,12 @@ class DogfoodWorkflowRunner:
         if workflow is None:
             raise DogfoodReconciliationError("resolved Workflow is unavailable")
         event_resource = self._event_resource(workflow)
-        execution_id = _workflow_execution_id(str(event["id"]), workflow)
+        replay_execution = bool(request.get("isReplay"))
+        execution_id = str(
+            request.get("workflowExecutionId")
+            if replay_execution
+            else _workflow_execution_id(str(event["id"]), workflow)
+        )
         revision = _reconciliation_revision(
             self._store,
             execution_id,
@@ -191,16 +587,7 @@ class DogfoodWorkflowRunner:
         )
         if revision is None:
             return execution_id
-        checkout_manager = ExecutionCheckoutManager(
-            source=GitRepositorySource(
-                "https://github.com/yijiazho/agent-engineering-platform.git"
-            ),
-            source_cache_root=self._state_root / "repository-cache",
-            worktree_root=self._state_root / "execution-worktrees",
-            registry=local_checkout_registry(self._state_root),
-            credential_provider=self._github.credentials,
-        )
-        checkout, orchestration = checkout_manager.provision_orchestration(
+        checkout, orchestration = self._checkout_manager().provision_orchestration(
             CheckoutRequest(
                 execution_id=execution_id,
                 repository=RepositoryIdentity(
@@ -214,16 +601,60 @@ class DogfoodWorkflowRunner:
             )
         )
         snapshot, knowledge = orchestration.repository_context(MvpRepositoryScanner())
-        execution = WorkflowExecutionCreator(self._store).create(
-            event=event,
-            workflow=workflow,
-            event_resource=event_resource,
-            repository_revision=revision,
-            knowledge_graph_version=snapshot.snapshot_version,
-            timestamp=_timestamp(),
-        )
-        if str(execution["id"]) != execution_id:
-            raise DogfoodReconciliationError("WorkflowExecution identity drifted")
+        if replay_execution:
+            execution = self._store.get(execution_id)
+            if (
+                execution is None
+                or execution.get("sourceExecutionId") != request.get("sourceExecutionId")
+                or execution.get("eventId") != event.get("id")
+                or execution.get("workflowRef") != {
+                    "kind": workflow.kind,
+                    "name": workflow.name,
+                    "version": workflow.version,
+                }
+                or execution.get("eventRef") != {
+                    "kind": event_resource.kind,
+                    "name": event_resource.name,
+                    "version": event_resource.version,
+                }
+            ):
+                raise DogfoodReconciliationError(
+                    "replay root does not match its pinned Event and Workflow"
+                )
+            if (
+                snapshot.repository_revision != revision
+                or snapshot.snapshot_version != execution.get("knowledgeGraphVersion")
+            ):
+                raise ReplayError(
+                    "pinned repository knowledge identity differs from the source execution"
+                )
+            if execution.get("status") == "PENDING":
+                try:
+                    execution = self._commit_workflow_transition(
+                        execution,
+                        "RUNNING",
+                        expected_status="PENDING",
+                        event_type="WorkflowExecutionStarted",
+                        changes={"startedAt": _timestamp()},
+                        payload={"sourceExecutionId": request.get("sourceExecutionId")},
+                    )
+                except StatusConflictError:
+                    execution = self._store.get(execution_id)
+                    if execution is None or execution.get("status") not in {"RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"}:
+                        raise
+            elif execution.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+                return execution_id
+        else:
+            execution = WorkflowExecutionCreator(self._store).create(
+                event=event,
+                workflow=workflow,
+                event_resource=event_resource,
+                repository_revision=revision,
+                knowledge_graph_version=snapshot.snapshot_version,
+                timestamp=_timestamp(),
+            )
+            if str(execution["id"]) != execution_id:
+                raise DogfoodReconciliationError("WorkflowExecution identity drifted")
         if execution.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
             return execution_id
         context_builder = ContextBuilder(
@@ -232,6 +663,12 @@ class DogfoodWorkflowRunner:
             runtime_store=self._store,
             repository_file_reader=_pinned_workspace_reader(
                 checkout.workspace_path, revision
+            ),
+            reused_contexts=request.get("reusedContexts"),
+            expected_context_identities=request.get("expectedContextIdentities"),
+            require_reused_context=bool(request.get("requireReusedContext")),
+            require_expected_context_identity=bool(
+                request.get("requireExpectedContextIdentity")
             ),
         )
         git_logs = FilesystemGitCommandLogStore(self._state_root / "git-logs")
@@ -321,6 +758,16 @@ class DogfoodWorkflowRunner:
                 if event_id == event.get("id")
                 else None,
                 clock=_timestamp,
+                publication_guard=(
+                    (lambda: False)
+                    if replay_execution and not request.get("publicationEnabled")
+                    else None
+                ),
+                publication_disabled_message=(
+                    "publication is disabled for replay"
+                    if replay_execution and not request.get("publicationEnabled")
+                    else "publication is emergency-disabled by the operator"
+                ),
             ),
         }
         plan = resolve_task_dag(workflow, self._resources)
@@ -352,10 +799,27 @@ class DogfoodWorkflowRunner:
         failed = successful_names != expected_names
         current = self._store.get(execution_id) or execution
         if current.get("status") == "RUNNING":
-            self._store.update_status(
-                execution_id,
-                "FAILED" if failed else "SUCCEEDED",
+            changes: dict[str, Any] = {}
+            if replay_execution:
+                changes["replayProvenance"] = {
+                    **dict(current.get("replayProvenance", {})),
+                    "newRuntimeEvidence": _new_runtime_evidence(
+                        self._store.list_by_workflow_execution(execution_id)
+                    ),
+                }
+            if failed:
+                changes["failure"] = _workflow_failure(
+                    self._store.list_by_workflow_execution(execution_id)
+                )
+            terminal_status = "FAILED" if failed else "SUCCEEDED"
+            self._commit_workflow_transition(
+                current,
+                terminal_status,
                 expected_status="RUNNING",
+                event_type=(
+                    "WorkflowExecutionFailed" if failed else "WorkflowExecutionCompleted"
+                ),
+                changes=changes,
             )
         return execution_id
 

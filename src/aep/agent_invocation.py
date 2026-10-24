@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
+from aep.context_identity import context_identity
 from aep.model_invocation import (
     ModelAdapter,
     ModelConfiguration,
@@ -67,7 +68,15 @@ def invoke_agent(
     agent = _plain_mapping(resolved_agent, "resolved_agent")
     package = _plain_mapping(context_package, "context_package")
     prompt_resource = _plain_mapping(prompt, "prompt")
-    _validate_inputs(agent, package, prompt_resource, model_configuration)
+    _validate_inputs(
+        agent,
+        package,
+        prompt_resource,
+        model_configuration,
+        allow_reused_replay_context=_lineage_verified_replay_context(
+            store, agent, package
+        ),
+    )
     assembled_input = _assemble_input(prompt_resource, package, agent["outputSchema"])
 
     correlation = CorrelationContext.from_runtime_object(agent)
@@ -381,6 +390,8 @@ def _validate_inputs(
     package: dict[str, Any],
     prompt: dict[str, Any],
     configuration: ModelConfiguration,
+    *,
+    allow_reused_replay_context: bool = False,
 ) -> None:
     _validate_runtime(agent, "ResolvedAgent")
     _validate_runtime(package, "ContextPackage")
@@ -391,7 +402,7 @@ def _validate_inputs(
         raise AgentInvocationContractError(
             f"invalid invocation correlation: {error}"
         ) from error
-    if agent_context != package_context:
+    if agent_context != package_context and not allow_reused_replay_context:
         raise AgentInvocationContractError(
             "ResolvedAgent and ContextPackage must share trace, WorkflowExecution, "
             "and TaskExecution identities"
@@ -418,6 +429,90 @@ def _validate_inputs(
         raise AgentInvocationContractError(
             f"ResolvedAgent.outputSchema is invalid: {error}"
         ) from error
+
+
+def _lineage_verified_replay_context(
+    store: RuntimeObjectStore,
+    agent: Mapping[str, Any],
+    package: Mapping[str, Any],
+) -> bool:
+    """Allow source-owned context only for a replay's exact inherited package."""
+    try:
+        current = CorrelationContext.from_runtime_object(agent)
+        historical = CorrelationContext.from_runtime_object(package)
+    except ObservabilityContractError:
+        return False
+    if (
+        current.workflow_execution_id == historical.workflow_execution_id
+        or current.task_execution_id is None
+        or historical.task_execution_id is None
+    ):
+        return False
+
+    replay = store.get(current.workflow_execution_id)
+    if not isinstance(replay, Mapping) or replay.get("kind") != "WorkflowExecution":
+        return False
+    source_id = replay.get("sourceExecutionId")
+    replay_provenance = replay.get("replayProvenance")
+    if (
+        not isinstance(source_id, str)
+        or historical.workflow_execution_id != source_id
+        or not isinstance(replay_provenance, Mapping)
+        or replay_provenance.get("sourceExecutionId") != source_id
+    ):
+        return False
+
+    context_id = package.get("id")
+    task_ref = package.get("taskRef")
+    identities = replay_provenance.get("contextIdentities")
+    if (
+        not isinstance(context_id, str)
+        or not isinstance(task_ref, Mapping)
+        or not isinstance(identities, (list, tuple))
+    ):
+        return False
+    expected = next((
+        entry for entry in identities
+        if isinstance(entry, Mapping)
+        and entry.get("sourceContextPackageId") == context_id
+        and entry.get("mode") == "reuse"
+    ), None)
+    if not isinstance(expected, Mapping):
+        return False
+    try:
+        if expected.get("identity") != context_identity(package):
+            return False
+    except (TypeError, ValueError):
+        return False
+
+    source = store.get(source_id)
+    source_task = store.get(historical.task_execution_id)
+    current_task = store.get(current.task_execution_id)
+    if (
+        not isinstance(source, Mapping)
+        or not isinstance(source_task, Mapping)
+        or not isinstance(current_task, Mapping)
+    ):
+        return False
+    source_task_ids = source.get("taskExecutionIds")
+    if (
+        not isinstance(source_task_ids, (list, tuple))
+        or historical.task_execution_id not in source_task_ids
+        or source_task.get("kind") != "TaskExecution"
+        or source_task.get("workflowExecutionId") != source_id
+        or source.get("traceId") != historical.trace_id
+        or source_task.get("traceId") != historical.trace_id
+        or source_task.get("contextPackageId") != context_id
+        or source_task.get("taskRef") != dict(task_ref)
+        or current_task.get("kind") != "TaskExecution"
+        or current_task.get("workflowExecutionId") != current.workflow_execution_id
+        or replay.get("traceId") != current.trace_id
+        or current_task.get("traceId") != current.trace_id
+        or current_task.get("taskRef") != dict(task_ref)
+        or current_task.get("contextPackageId") != context_id
+    ):
+        return False
+    return True
 
 
 def _validate_existing_agent(
