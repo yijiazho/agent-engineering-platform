@@ -70,9 +70,11 @@ def test_historical_case_records_replay_artifacts_usage_and_resource_provenance(
     store = InMemoryRuntimeObjectStore()
     store.create({"id": "replay", "kind": "WorkflowExecution", "status": "SUCCEEDED", "repositoryRevision": "c" * 40,
                   "provenance": {"resourceRefs": []}}, deterministic_key="replay")
-    store.create({"id": "model", "kind": "ModelInvocation", "tokenUsage": {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}, "cost": 0.2}, deterministic_key="model")
-    store.create({"id": "artifact", "kind": "GeneratedArtifact"}, deterministic_key="artifact")
-    store.create({"id": "eval", "kind": "EvaluationResult", "evaluationRef": {"kind": "Evaluation", "name": "acceptance", "version": "1.0.0"}}, deterministic_key="eval")
+    store.create({"id": "model", "kind": "ModelInvocation", "workflowExecutionId": "replay",
+                  "tokenUsage": {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}, "cost": 0.2}, deterministic_key="model")
+    store.create({"id": "artifact", "kind": "GeneratedArtifact", "workflowExecutionId": "replay"}, deterministic_key="artifact")
+    store.create({"id": "eval", "kind": "EvaluationResult", "workflowExecutionId": "replay",
+                  "evaluationRef": {"kind": "Evaluation", "name": "acceptance", "version": "1.0.0"}}, deterministic_key="eval")
     result = run_suite(suite, store, historical_runner=lambda _: "replay")
     evidence = result["caseResults"][0]["evidence"]
     assert evidence["sourceRevision"] == "c" * 40

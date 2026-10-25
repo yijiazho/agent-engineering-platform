@@ -157,7 +157,10 @@ def aggregate_results(results: Sequence[Mapping[str, Any]], configured_metrics: 
     totals["passRate"] = sum(item.get("outcome") == "PASS" for item in results) / count if count else 0.0
     totals["buildSuccessRate"] = _success_rate(evidence, "buildSuccess")
     totals["testSuccessRate"] = _success_rate(evidence, "testSuccess")
-    totals["metrics"] = {key: {"mean": sum(values) / len(values), "count": len(values)} for key, values in metrics.items()}
+    totals["metrics"] = {
+        key: {"mean": sum(values) / len(values) if values else None, "count": len(values)}
+        for key, values in metrics.items()
+    }
     return totals
 
 
