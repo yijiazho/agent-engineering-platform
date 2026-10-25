@@ -563,7 +563,7 @@ class DogfoodWorkflowRunner:
         with self._resource_lock:
             return self._run_locked(request)
 
-    def is_approval_pending(self, request: Mapping[str, Any]) -> bool:
+    def is_reconciliation_complete(self, request: Mapping[str, Any]) -> bool:
         event = request.get("event")
         if not isinstance(event, Mapping):
             return False
@@ -578,11 +578,10 @@ class DogfoodWorkflowRunner:
             if request.get("isReplay")
             else _workflow_execution_id(str(event["id"]), workflow)
         )
-        return any(
-            item.get("kind") == "TaskExecution"
-            and item.get("status") == "AWAITING_APPROVAL"
-            for item in self._store.list_by_workflow_execution(execution_id)
-        )
+        execution = self._store.get(execution_id)
+        return isinstance(execution, Mapping) and execution.get("status") in {
+            "SUCCEEDED", "FAILED", "CANCELLED",
+        }
 
     def _run_locked(self, request: Mapping[str, Any]) -> str:
         event = request.get("event")
@@ -1031,8 +1030,8 @@ class DogfoodReconciliationConsumer:
                         message="dogfood reconciliation failed configuration checks",
                     )
                 continue
-            pending_check = getattr(self._runner, "is_approval_pending", None)
-            if callable(pending_check) and pending_check(request):
+            completion_check = getattr(self._runner, "is_reconciliation_complete", None)
+            if callable(completion_check) and not completion_check(request):
                 self._reported_failures.pop(event_id, None)
                 continue
             self._dispatcher.mark_completed(event_id)

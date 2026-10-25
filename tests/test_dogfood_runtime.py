@@ -27,7 +27,7 @@ from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 class RecordingRunner:
     def __init__(self, failure: Exception | None = None, *, approval_pending: bool = False) -> None:
         self.failure = failure
-        self.approval_pending = approval_pending
+        self.workflow_terminal = not approval_pending
         self.requests = []
 
     def run(self, request):
@@ -36,8 +36,8 @@ class RecordingRunner:
             raise self.failure
         return "workflowexecution-test"
 
-    def is_approval_pending(self, request):
-        return self.approval_pending
+    def is_reconciliation_complete(self, request):
+        return self.workflow_terminal
 
 
 def test_workflow_runner_preserves_resource_checkout_crlf_policy(
@@ -355,7 +355,9 @@ def test_consumer_retains_outbox_until_approval_wait_resumes(tmp_path: Path) -> 
 
     assert consumer.run_once() == 0
     assert len(dispatcher.pending_requests()) == 1
-    runner.approval_pending = False
+    assert consumer.run_once() == 0
+    assert len(dispatcher.pending_requests()) == 1
+    runner.workflow_terminal = True
     assert consumer.run_once() == 1
     assert dispatcher.pending_requests() == ()
 
