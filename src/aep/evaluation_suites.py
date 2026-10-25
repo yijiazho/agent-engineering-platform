@@ -23,9 +23,24 @@ class EvaluationSuiteError(ValueError):
     """Invalid suite definition or case evidence."""
 
 
-def _validate_suite(suite: Mapping[str, Any]) -> None:
-    schema_path = Path(__file__).parents[2] / "schemas" / "resources" / "v1" / "evaluationsuite.schema.json"
+def _suite_schema_path(schema_root: Path | str | None = None) -> Path:
+    if schema_root is not None:
+        root = Path(schema_root)
+        candidate = root if root.is_file() else root / "evaluationsuite.schema.json"
+        if candidate.is_file():
+            return candidate
+        raise EvaluationSuiteError("evaluation suite schema could not be loaded")
+    packaged_schema = Path(__file__).parent / "schemas" / "resources" / "v1" / "evaluationsuite.schema.json"
+    source_schema = Path(__file__).parents[2] / "schemas" / "resources" / "v1" / "evaluationsuite.schema.json"
+    for candidate in (packaged_schema, source_schema):
+        if candidate.is_file():
+            return candidate
+    raise EvaluationSuiteError("evaluation suite schema could not be loaded")
+
+
+def _validate_suite(suite: Mapping[str, Any], schema_root: Path | str | None = None) -> None:
     try:
+        schema_path = _suite_schema_path(schema_root)
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
         Draft202012Validator(schema).validate(suite)
     except Exception as error:
@@ -42,7 +57,7 @@ def _validate_suite(suite: Mapping[str, Any]) -> None:
         raise EvaluationSuiteError("cases require unique non-empty ids")
 
 
-def load_suite(path: Path | str) -> dict[str, Any]:
+def load_suite(path: Path | str, *, schema_root: Path | str | None = None) -> dict[str, Any]:
     try:
         value = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
@@ -50,7 +65,7 @@ def load_suite(path: Path | str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise EvaluationSuiteError("evaluation suite must be an object")
     suite = deepcopy(dict(value))
-    _validate_suite(suite)
+    _validate_suite(suite, schema_root)
     if suite.get("apiVersion") != "aep.dev/v1alpha1" or suite.get("kind") != "EvaluationSuite":
         raise EvaluationSuiteError("suite must declare aep.dev/v1alpha1 EvaluationSuite")
     metadata, spec = suite.get("metadata"), suite.get("spec")
@@ -87,9 +102,10 @@ def run_suite(
     suite: Mapping[str, Any], store: RuntimeObjectStore, *,
     historical_runner: Callable[[str, Sequence[str]], str] | None = None,
     now: Callable[[], str] | None = None,
+    schema_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Run cases independently; persist each terminal case before continuing."""
-    _validate_suite(suite)
+    _validate_suite(suite, schema_root)
     canonical = json.dumps(suite, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
     suite_id = "evaluationsuite-" + digest[:24]

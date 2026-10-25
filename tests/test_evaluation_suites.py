@@ -354,6 +354,16 @@ def test_suite_requires_immutable_versioned_references():
         _validate_ref(suite["spec"]["workflowRef"], "Workflow")
 
 
+def test_suite_schema_is_packaged_and_matches_repository_contract():
+    from pathlib import Path
+    packaged = Path(__file__).parents[1] / "src" / "aep" / "schemas" / "resources" / "v1" / "evaluationsuite.schema.json"
+    repository = Path(__file__).parents[1] / "schemas" / "resources" / "v1" / "evaluationsuite.schema.json"
+    assert packaged.read_bytes() == repository.read_bytes()
+    suite = _suite()
+    from aep.evaluation_suites import _validate_suite
+    _validate_suite(suite, packaged.parent)
+
+
 def test_aggregate_latency_and_cost_availability():
     result = aggregate_results([{"outcome": "PASS", "startedAt": "2026-01-01T00:00:00Z", "completedAt": "2026-01-01T00:00:02Z",
                                  "evidence": {"cost": 1.5, "metrics": {"quality": 0.8}}}])
