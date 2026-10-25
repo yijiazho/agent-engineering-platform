@@ -1,5 +1,5 @@
 import pytest
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 
 from aep.evaluation_suites import EvaluationSuiteError, aggregate_results, load_suite, run_suite
 from aep.runtime_store import DurableJsonRuntimeObjectStore, InMemoryRuntimeObjectStore
@@ -222,6 +222,72 @@ def test_concurrent_suite_invocation_does_not_dispatch_duplicate_case(tmp_path):
     release.set()
     worker.join(3)
     assert not worker.is_alive()
+    assert len(calls) == 1
+
+
+def test_suite_reloads_checkpoint_after_waiting_to_acquire_lease(tmp_path):
+    suite = _suite()
+    suite["spec"]["cases"] = [{"id": "history", "kind": "historical", "workflowExecutionId": "source"}]
+    store = DurableJsonRuntimeObjectStore(tmp_path / "runtime.json")
+    workflow, evaluations = suite["spec"]["workflowRef"], suite["spec"]["evaluationRefs"]
+    store.create({"id": "source", "kind": "WorkflowExecution", "workflowRef": workflow,
+                  "provenance": {"resourceRefs": [workflow, *evaluations]}}, deterministic_key="source")
+    replay_entered, finish_first = Event(), Event()
+    second_waiting, allow_second = Event(), Event()
+    original_acquire = store.acquire_lease
+    acquire_count = 0
+    acquire_lock = Lock()
+
+    def delayed_second_acquire(key, owner_id, *, now, expires_at):
+        nonlocal acquire_count
+        with acquire_lock:
+            acquire_count += 1
+            call_number = acquire_count
+        if call_number == 2:
+            second_waiting.set()
+            assert allow_second.wait(3)
+        return original_acquire(key, owner_id, now=now, expires_at=expires_at)
+
+    store.acquire_lease = delayed_second_acquire
+    calls = []
+
+    def runner(_, __):
+        calls.append(1)
+        replay_entered.set()
+        if len(calls) == 1:
+            assert finish_first.wait(3)
+        store.create({"id": "replay", "kind": "WorkflowExecution", "status": "SUCCEEDED",
+                      "repositoryRevision": "e" * 40, "provenance": {"resourceRefs": []}},
+                     deterministic_key="replay")
+        store.create({"id": "replay-evaluation", "kind": "EvaluationResult", "workflowExecutionId": "replay",
+                      "status": "SUCCEEDED", "outcome": "PASS", "evaluationRef": evaluations[0]},
+                     deterministic_key="replay-evaluation")
+        return "replay"
+
+    outcomes = []
+    failures = []
+
+    def invoke():
+        try:
+            outcomes.append(run_suite(suite, store, historical_runner=runner))
+        except Exception as error:
+            failures.append(error)
+
+    first = Thread(target=invoke)
+    first.start()
+    assert replay_entered.wait(3)
+    second = Thread(target=invoke)
+    second.start()
+    assert second_waiting.wait(3)
+    finish_first.set()
+    first.join(3)
+    assert not first.is_alive()
+    allow_second.set()
+    second.join(3)
+    assert not second.is_alive()
+    assert not failures
+    assert len(outcomes) == 2
+    assert all(result["status"] == "SUCCEEDED" for result in outcomes)
     assert len(calls) == 1
 
 

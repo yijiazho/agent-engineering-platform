@@ -114,6 +114,16 @@ def run_suite(
     expiry = (now_dt + timedelta(seconds=45)).isoformat().replace("+00:00", "Z")
     if not store.acquire_lease(lease_key, owner_id, now=started, expires_at=expiry):
         raise EvaluationSuiteError("evaluation suite is already running")
+    try:
+        latest_record = store.get(suite_id)
+        if latest_record is None:
+            raise EvaluationSuiteError("evaluation suite run disappeared after acquiring its lease")
+        record = dict(latest_record)
+        if record.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+            return record
+    except BaseException:
+        store.release_lease(lease_key, owner_id)
+        raise
     heartbeat_stop, lease_lost = Event(), Event()
 
     def heartbeat() -> None:
