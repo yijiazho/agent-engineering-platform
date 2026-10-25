@@ -137,6 +137,15 @@ successful prerequisites and schedules the next wave; configuration,
 evaluation, policy, permanent, and exhausted recoverable failures leave
 dependents blocked.
 
+When a Task handler returns an approval request for a persisted
+`REQUIRE_APPROVAL` PolicyDecision, reconciliation atomically records the
+`AWAITING_APPROVAL` TaskExecution state and event, then creates the Approval
+request bound to that task. A valid approval wakes only the task's current
+request; after restart, reconciliation repairs an interrupted wake-up and
+re-dispatches the same attempt once. The handler re-evaluates publication and
+pre-execution capability policies before executing the action. Rejection leaves
+the task blocked from that action.
+
 The durable JSON runtime store uses a cross-process single-writer fence rather
 than a process-local lock. Each checkpoint uses a collision-safe sibling
 temporary file, file and directory sync where supported, and an atomic replace.

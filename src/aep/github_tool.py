@@ -23,6 +23,7 @@ from aep.tool_runtime import (
     invoke_tool,
 )
 from aep.execution_checkout import repository_identities_match
+from aep.approval import approval_digest
 
 
 JsonObject = Mapping[str, Any]
@@ -290,8 +291,13 @@ class PublicationPolicyVerifier(Protocol):
 class PersistedPublicationPolicyVerifier:
     """Verify a publication decision and its complete persisted evidence graph."""
 
-    def __init__(self, resolve: Callable[[str], JsonObject | None]) -> None:
+    def __init__(
+        self,
+        resolve: Callable[[str], JsonObject | None],
+        list_by_workflow_execution: Callable[[str], Sequence[JsonObject]] | None = None,
+    ) -> None:
         self._resolve = resolve
+        self._list_by_workflow_execution = list_by_workflow_execution
 
     def verify(self, request: ToolRequest) -> PublicationVerification:
         evidence = request.input["publicationEvidence"]
@@ -507,7 +513,6 @@ class PersistedPublicationPolicyVerifier:
             "taskExecutionId": evidence["taskExecutionId"],
             "gate": "PRE_EXECUTION_CAPABILITY",
             "action": "git.push",
-            "decision": "ALLOW",
         }
         if any(
             push_policy.get(key) != value
@@ -532,6 +537,10 @@ class PersistedPublicationPolicyVerifier:
             for key, value in expected_push_scope.items()
         ):
             return PublicationVerification(False, "Git push policy target mismatch")
+        if not self._policy_allowed_with_approval(
+            push_policy, expected_push_scope, revision, artifacts, workflow_id
+        ):
+            return PublicationVerification(False, "Git push policy approval mismatch")
 
         expected_policy = {
             "kind": "PolicyDecision",
@@ -540,7 +549,6 @@ class PersistedPublicationPolicyVerifier:
             "taskExecutionId": evidence["taskExecutionId"],
             "gate": "PUBLICATION",
             "action": CREATE_PR_CAPABILITY,
-            "decision": "ALLOW",
             "repositoryRevision": revision,
         }
         if any(policy.get(key) != value for key, value in expected_policy.items()):
@@ -566,7 +574,47 @@ class PersistedPublicationPolicyVerifier:
         }
         if any(target.get(key) != value for key, value in expected_target.items()):
             return PublicationVerification(False, "Publication target mismatch")
+        if not self._policy_allowed_with_approval(
+            policy, target, revision, artifacts, workflow_id
+        ):
+            return PublicationVerification(False, "Publication approval mismatch")
         return PublicationVerification(True, policy.get("reason", "Publication allowed"))
+
+    def _policy_allowed_with_approval(
+        self,
+        policy: JsonObject,
+        target: Mapping[str, Any],
+        revision: str,
+        artifacts: Sequence[JsonObject],
+        workflow_id: str,
+    ) -> bool:
+        if policy.get("decision") == "ALLOW":
+            return True
+        if (
+            policy.get("decision") != "REQUIRE_APPROVAL"
+            or self._list_by_workflow_execution is None
+        ):
+            return False
+        artifact_digests = {
+            str(item["id"]): str(item["contentAddress"])
+            for item in artifacts
+        }
+        digest = approval_digest(
+            action=str(policy.get("action")), target=target,
+            repository_revision=revision, artifact_digests=artifact_digests,
+        )
+        for approval in self._list_by_workflow_execution(workflow_id):
+            if (
+                approval.get("kind") == "Approval"
+                and approval.get("status") == "APPROVED"
+                and approval.get("policyDecisionId") == policy.get("id")
+                and approval.get("target") == dict(target)
+                and approval.get("artifactDigests") == artifact_digests
+                and approval.get("artifactRequestDigest") == digest
+                and approval.get("approver") in approval.get("authorizedReviewers", ())
+            ):
+                return True
+        return False
 
     def _resolve_many(self, ids: Sequence[str]) -> list[JsonObject]:
         values: list[JsonObject] = []

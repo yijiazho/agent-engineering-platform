@@ -385,7 +385,10 @@ An approval request is bound to one action, publication target, repository
 revision, and immutable artifact/request digest. Operators must review those
 identifiers together; changing any bound input requires a new request. The
 resolved Policy declares authorized reviewer identities (and optional groups)
-under `spec.approval`; group membership is resolved outside Task handlers.
+under `spec.approval`; group membership is resolved through the injected
+provider-neutral reviewer resolver. The Approval runtime record includes the
+resolved reviewer identities, governing policy versions, target, artifact
+digests, and canonical request digest.
 Unauthorized decisions do not change task eligibility. An approved request
 returns its awaiting TaskExecution to `PENDING`, where normal scheduler dispatch
 and capability/publication policy checks run again. Rejection leaves durable

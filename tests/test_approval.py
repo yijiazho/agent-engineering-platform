@@ -45,6 +45,10 @@ def test_approval_rejects_unauthorized_and_changed_artifact():
     with pytest.raises(PermissionError):
         gate.decide("approval-1", actor="mallory", decision="APPROVED",
                     timestamp="2026-01-01T00:01:00Z", reason="No", current_digest=digest)
+    attempts = [event for event in store.list_by_workflow_execution("workflowexecution-000000000001")
+                if event.get("eventType") == "ApprovalAuthorizationDenied"]
+    assert len(attempts) == 1
+    assert attempts[0]["payload"]["reasonCode"] == "UNAUTHORIZED_REVIEWER"
     with pytest.raises(ValueError, match="stale"):
         gate.decide("approval-1", actor="alice", decision="APPROVED",
                     timestamp="2026-01-01T00:01:00Z", reason="Yes", current_digest="sha256:" + "d" * 64)

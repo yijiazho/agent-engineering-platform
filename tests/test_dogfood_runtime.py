@@ -17,6 +17,7 @@ from aep.dogfood_runtime import (
     _historical_replay_inputs,
     _replay_resource_collection,
     _reconciliation_revision,
+    _has_in_flight_tasks,
 )
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
 from aep.runtime_store import InMemoryRuntimeObjectStore
@@ -25,8 +26,9 @@ from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 
 
 class RecordingRunner:
-    def __init__(self, failure: Exception | None = None) -> None:
+    def __init__(self, failure: Exception | None = None, *, approval_pending: bool = False) -> None:
         self.failure = failure
+        self.workflow_terminal = not approval_pending
         self.requests = []
 
     def run(self, request):
@@ -34,6 +36,9 @@ class RecordingRunner:
         if self.failure is not None:
             raise self.failure
         return "workflowexecution-test"
+
+    def is_reconciliation_complete(self, request):
+        return self.workflow_terminal
 
 
 def test_workflow_runner_preserves_resource_checkout_crlf_policy(
@@ -341,6 +346,27 @@ def test_consumer_retires_outbox_only_after_runner_completes(tmp_path: Path) -> 
     assert len(runner.requests) == 1
     assert dispatcher.pending_requests() == ()
     assert dispatcher.failure("event-dogfood") is None
+
+
+def test_consumer_retains_outbox_until_approval_wait_resumes(tmp_path: Path) -> None:
+    dispatcher = SQLiteReconciliationDispatcher(tmp_path / "webhook.sqlite3")
+    dispatcher.submit(event(), trace_id="trace-dogfood")
+    runner = RecordingRunner(approval_pending=True)
+    consumer = DogfoodReconciliationConsumer(dispatcher, runner)
+
+    assert consumer.run_once() == 0
+    assert len(dispatcher.pending_requests()) == 1
+    assert consumer.run_once() == 0
+    assert len(dispatcher.pending_requests()) == 1
+    runner.workflow_terminal = True
+    assert consumer.run_once() == 1
+    assert dispatcher.pending_requests() == ()
+
+
+@pytest.mark.parametrize("status", ["AWAITING_APPROVAL", "PENDING", "RUNNING"])
+def test_runner_treats_approval_and_resumed_tasks_as_in_flight(status: str) -> None:
+    assert _has_in_flight_tasks([{"kind": "TaskExecution", "status": status}]) is True
+    assert _has_in_flight_tasks([{"kind": "TaskExecution", "status": "SUCCEEDED"}]) is False
 
 
 def test_configuration_failure_is_persisted_and_not_hot_retried(tmp_path: Path) -> None:

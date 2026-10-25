@@ -12,6 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 from aep.analyze_issue import _correlation, _ref_record, _spec
+from aep.approval import approval_digest
 from aep.capability_policy import (
     ApplicablePolicy,
     CapabilityPolicyContractError,
@@ -53,6 +54,7 @@ from aep.workflow_scheduler import TaskExecutionResult
 JsonMapping = Mapping[str, Any]
 Clock = Callable[[], str]
 EventResolver = Callable[[str], JsonMapping | None]
+ApprovalReviewerResolver = Callable[[tuple[str, ...]], Sequence[str]]
 
 GIT_PUSH_CAPABILITY = "git.push"
 EXPECTED_ARTIFACT_TYPES = (
@@ -93,6 +95,7 @@ class CreatePullRequestTaskHandler:
         clock: Clock,
         publication_guard: Callable[[], bool] | None = None,
         publication_disabled_message: str = "publication is emergency-disabled by the operator",
+        approval_reviewer_resolver: ApprovalReviewerResolver | None = None,
     ) -> None:
         if not isinstance(resources, ResourceCollection):
             raise TypeError("resources must be a ResourceCollection")
@@ -111,6 +114,9 @@ class CreatePullRequestTaskHandler:
         self._github_adapter = github_adapter
         self._event_resolver = event_resolver
         self._clock = clock
+        if approval_reviewer_resolver is not None and not callable(approval_reviewer_resolver):
+            raise TypeError("approval_reviewer_resolver must be callable")
+        self._approval_reviewer_resolver = approval_reviewer_resolver
         if publication_guard is not None and not callable(publication_guard):
             raise TypeError("publication_guard must be callable")
         if not isinstance(publication_disabled_message, str) or not publication_disabled_message:
@@ -163,7 +169,58 @@ class CreatePullRequestTaskHandler:
                 task_execution["id"],
                 {"policyDecisionIds": [publication["id"]]},
             )
-            if publication["decision"] != "ALLOW":
+            if publication["decision"] == "REQUIRE_APPROVAL":
+                target = publication["publicationTarget"]
+                artifact_digests = {
+                    str(item["id"]): str(item["contentAddress"])
+                    for item in evidence["artifacts"]
+                }
+                digest = approval_digest(
+                    action=str(publication["action"]), target=target,
+                    repository_revision=str(publication["repositoryRevision"]),
+                    artifact_digests=artifact_digests,
+                )
+                existing = self._runtime_store.list_by_workflow_execution(str(workflow["id"]))
+                rejected = any(
+                    item.get("kind") == "Approval"
+                    and item.get("policyDecisionId") == publication.get("id")
+                    and item.get("artifactRequestDigest") == digest
+                    and item.get("status") == "REJECTED"
+                    for item in existing
+                )
+                if rejected:
+                    return TaskExecutionResult.failure(
+                        FailureClass.POLICY,
+                        "Publication approval was rejected; the gated action remains blocked",
+                    )
+                approved = any(
+                    item.get("kind") == "Approval"
+                    and item.get("policyDecisionId") == publication.get("id")
+                    and item.get("artifactRequestDigest") == digest
+                    and item.get("status") == "APPROVED"
+                    for item in existing
+                )
+                if approved:
+                    publication = dict(publication)
+                    publication["decision"] = "ALLOW"
+                else:
+                    reviewers = self._resolve_approval_reviewers(configuration)
+                    if not reviewers:
+                        return TaskExecutionResult.failure(
+                            FailureClass.POLICY,
+                            "REQUIRE_APPROVAL has no resolved authorized reviewers",
+                        )
+                    return TaskExecutionResult.awaiting_approval({
+                        "approvalId": self._runtime_id("approval", f"{publication['id']}:{digest}"),
+                        "policyDecisionId": str(publication["id"]),
+                        "requester": str(publication.get("subject", "policy-engine")),
+                        "digest": digest,
+                        "target": dict(target),
+                        "artifactDigests": artifact_digests,
+                        "approvalPolicyRefs": tuple({"kind": "Policy", "name": binding.resource["metadata"]["name"], "version": binding.resource["metadata"]["version"]} for binding in configuration["approvalPolicies"]),
+                        "authorizedReviewers": reviewers,
+                    })
+            elif publication["decision"] != "ALLOW":
                 return TaskExecutionResult.failure(
                     FailureClass.POLICY,
                     f"Publication Policy {publication['decision']}: {publication['reason']}",
@@ -187,6 +244,14 @@ class CreatePullRequestTaskHandler:
                 task_execution["id"],
                 {"policyDecisionIds": [push_policy["id"]]},
             )
+            if push_policy["decision"] == "REQUIRE_APPROVAL":
+                approval_result = self._approval_result(
+                    push_policy, task_execution, workflow, configuration,
+                    target=push_policy["resourceScope"], evidence=evidence,
+                )
+                if approval_result is not None:
+                    return approval_result
+                push_policy = dict(push_policy) | {"decision": "ALLOW"}
             if push_policy["decision"] != "ALLOW":
                 return TaskExecutionResult.failure(
                     FailureClass.POLICY,
@@ -308,6 +373,14 @@ class CreatePullRequestTaskHandler:
                 task_execution["id"],
                 {"policyDecisionIds": [github_policy["id"]]},
             )
+            if github_policy["decision"] == "REQUIRE_APPROVAL":
+                approval_result = self._approval_result(
+                    github_policy, task_execution, workflow, configuration,
+                    target=github_policy["resourceScope"], evidence=evidence,
+                )
+                if approval_result is not None:
+                    return approval_result
+                github_policy = dict(github_policy) | {"decision": "ALLOW"}
             if github_policy["decision"] != "ALLOW":
                 return TaskExecutionResult.failure(
                     FailureClass.POLICY,
@@ -489,6 +562,7 @@ class CreatePullRequestTaskHandler:
 
         publication_policies: list[ApplicablePolicy] = []
         capability_policies: list[ApplicablePolicy] = []
+        approval_policies: list[ApplicablePolicy] = []
         policy_values = _spec(task).get("policies", ())
         if isinstance(policy_values, (str, bytes)) or not isinstance(
             policy_values, Sequence
@@ -502,6 +576,8 @@ class CreatePullRequestTaskHandler:
                 publication_policies.append(binding)
             elif policy_type == "pre-execution-capability":
                 capability_policies.append(binding)
+            elif policy_type == "approval":
+                approval_policies.append(binding)
             else:
                 raise CreatePullRequestContractError(
                     f"unsupported CreatePullRequest Policy type {policy_type!r}"
@@ -519,6 +595,7 @@ class CreatePullRequestTaskHandler:
             "githubTool": github_tool,
             "publicationPolicies": tuple(publication_policies),
             "capabilityPolicies": tuple(capability_policies),
+            "approvalPolicies": tuple(approval_policies),
         }
 
     def _accepted_evidence(
@@ -762,6 +839,74 @@ class CreatePullRequestTaskHandler:
             timestamp=self._timestamp(),
         )
 
+    def _approval_result(
+        self,
+        decision: JsonMapping,
+        task_execution: JsonMapping,
+        workflow: JsonMapping,
+        configuration: JsonMapping,
+        *,
+        target: Mapping[str, Any],
+        evidence: JsonMapping,
+    ) -> TaskExecutionResult | None:
+        artifact_digests = {
+            str(item["id"]): str(item["contentAddress"])
+            for item in evidence["artifacts"]
+        }
+        digest = approval_digest(
+            action=str(decision["action"]), target=target,
+            repository_revision=str(workflow["repositoryRevision"]),
+            artifact_digests=artifact_digests,
+        )
+        approvals = self._runtime_store.list_by_workflow_execution(str(workflow["id"]))
+        matching = [
+            item for item in approvals
+            if item.get("kind") == "Approval"
+            and item.get("policyDecisionId") == decision.get("id")
+            and item.get("artifactRequestDigest") == digest
+        ]
+        if any(item.get("status") == "APPROVED" for item in matching):
+            return None
+        if any(item.get("status") == "REJECTED" for item in matching):
+            return TaskExecutionResult.failure(
+                FailureClass.POLICY,
+                "Capability approval was rejected; the gated action remains blocked",
+            )
+        reviewers = self._resolve_approval_reviewers(configuration)
+        if not reviewers:
+            return TaskExecutionResult.failure(
+                FailureClass.POLICY,
+                "REQUIRE_APPROVAL has no resolved authorized reviewers",
+            )
+        return TaskExecutionResult.awaiting_approval({
+            "approvalId": self._runtime_id("approval", f"{decision['id']}:{digest}"),
+            "policyDecisionId": str(decision["id"]),
+            "requester": str(decision.get("subject", "policy-engine")),
+            "digest": digest,
+            "target": dict(target),
+            "artifactDigests": artifact_digests,
+            "approvalPolicyRefs": tuple({"kind": "Policy", "name": binding.resource["metadata"]["name"], "version": binding.resource["metadata"]["version"]} for binding in configuration["approvalPolicies"]),
+            "authorizedReviewers": reviewers,
+        })
+
+    def _resolve_approval_reviewers(self, configuration: JsonMapping) -> tuple[str, ...]:
+        reviewers: set[str] = set()
+        groups: set[str] = set()
+        for binding in configuration["approvalPolicies"]:
+            approval = binding.resource["spec"]["approval"]
+            reviewers.update(approval.get("reviewers", ()))
+            groups.update(approval.get("groups", ()))
+        if groups:
+            if self._approval_reviewer_resolver is None:
+                return ()
+            resolved = self._approval_reviewer_resolver(tuple(sorted(groups)))
+            if not isinstance(resolved, Sequence) or isinstance(resolved, (str, bytes)):
+                raise CreatePullRequestContractError("approval reviewer resolver must return a sequence")
+            if not all(isinstance(value, str) and value for value in resolved):
+                raise CreatePullRequestContractError("approval reviewer resolver returned an invalid identity")
+            reviewers.update(resolved)
+        return tuple(sorted(reviewers))
+
     def _evaluate_capability(
         self,
         task_execution: JsonMapping,
@@ -831,7 +976,8 @@ class CreatePullRequestTaskHandler:
                 )
             if previous.get("status") in {"SUCCEEDED", "FAILED"}:
                 verification = PersistedPublicationPolicyVerifier(
-                    self._runtime_store.get
+                    self._runtime_store.get,
+                    self._runtime_store.list_by_workflow_execution,
                 ).verify(request)
                 if not verification.allowed:
                     raise CreatePullRequestContractError(
@@ -902,7 +1048,8 @@ class CreatePullRequestTaskHandler:
             request,
             pre_execute_authorize=authorize,
             publication_verifier=PersistedPublicationPolicyVerifier(
-                self._runtime_store.get
+                self._runtime_store.get,
+                self._runtime_store.list_by_workflow_execution,
             ),
             adapter=self._github_adapter,
         )

@@ -399,6 +399,26 @@ def test_publication_gate_blocks_all_remote_mutations(effect: str) -> None:
     assert artifacts.list_by_task_execution(CREATE_ID) == ()
 
 
+@pytest.mark.parametrize("gate", ["publication", "git.push", "github.create_pr"])
+def test_require_approval_returns_durable_scheduler_request(gate: str) -> None:
+    publication_effect = "require-approval" if gate == "publication" else "allow"
+    capability_effects = {
+        "git.push": "require-approval" if gate == "git.push" else "allow",
+        "github.create_pr": "require-approval" if gate == "github.create_pr" else "allow",
+    }
+    store, handler, task, _artifacts, _git, _github = setup_handler(
+        publication_effect=publication_effect,
+        capability_effects=capability_effects,
+        approval_reviewers=("alice",),
+    )
+
+    result = handler.execute(task, store.get(CREATE_ID))
+
+    assert result.approval is not None
+    assert result.approval["authorizedReviewers"] == ("alice",)
+    assert result.approval["digest"].startswith("sha256:")
+
+
 @pytest.mark.parametrize("effect", ["deny", "require-approval"])
 def test_git_capability_gate_blocks_push(effect: str) -> None:
     store, handler, task, _artifacts, git, github = setup_handler(
@@ -635,6 +655,7 @@ def setup_handler(
     publication_guard=None,
     publication_disabled_message: str = "publication is emergency-disabled by the operator",
     repository_resources: bool = False,
+    approval_reviewers: tuple[str, ...] = (),
 ):
     store, acceptance_handler, acceptance_task, base_artifacts = setup_acceptance()
     acceptance_result = acceptance_handler.execute(
@@ -712,6 +733,11 @@ def setup_handler(
             ],
         },
     )
+    approval_policy = resource(
+        "Policy", "approval-reviewers",
+        {"type": "approval", "approval": {"reviewers": list(approval_reviewers)},
+         "rules": [{"effect": "allow"}]},
+    ) if approval_reviewers else None
     task = resource(
         "Task",
         "create-pull-request",
@@ -721,6 +747,7 @@ def setup_handler(
             "policies": [
                 ref("Policy", "publication"),
                 ref("Policy", "publication-capabilities"),
+                *([ref("Policy", "approval-reviewers")] if approval_policy is not None else []),
             ],
             "publication": {
                 "gitToolRef": ref("Tool", "git"),
@@ -738,6 +765,7 @@ def setup_handler(
             github_resource,
             publication_policy,
             capability_policy,
+            *([approval_policy] if approval_policy is not None else []),
         ),
     )
     if repository_resources:

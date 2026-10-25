@@ -148,9 +148,13 @@ class TaskExecutionLifecycle:
     def cancel(self, execution_id: str, *, timestamp: str) -> RuntimeObject:
         return self._transition(execution_id, TaskStatus.CANCELLED, timestamp=timestamp)
 
-    def await_approval(self, execution_id: str, *, timestamp: str) -> RuntimeObject:
+    def await_approval(
+        self, execution_id: str, *, timestamp: str,
+        changes: Mapping[str, Any] | None = None,
+    ) -> RuntimeObject:
         return self._transition(
-            execution_id, TaskStatus.AWAITING_APPROVAL, timestamp=timestamp
+            execution_id, TaskStatus.AWAITING_APPROVAL, timestamp=timestamp,
+            changes=changes,
         )
 
     def resume(self, execution_id: str, *, timestamp: str) -> RuntimeObject:

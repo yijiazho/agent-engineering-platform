@@ -125,10 +125,15 @@ class TaskExecutionResult:
     message: str | None = None
     retry_not_before: str | None = None
     details: Mapping[str, Any] | None = None
+    approval: Mapping[str, Any] | None = None
 
     @classmethod
     def success(cls) -> TaskExecutionResult:
         return cls(succeeded=True)
+
+    @classmethod
+    def awaiting_approval(cls, request: Mapping[str, Any]) -> TaskExecutionResult:
+        return cls(succeeded=False, approval=dict(request))
 
     @classmethod
     def failure(
@@ -160,6 +165,10 @@ class TaskExecutionResult:
                 or self.details is not None
             ):
                 raise ValueError("successful Task result cannot contain failure details")
+            return
+        if self.approval is not None:
+            if self.failure_class is not None or self.message is not None:
+                raise ValueError("approval wait cannot also be a failure")
             return
         if self.failure_class is None or not self.message:
             raise ValueError("failed Task result requires classification and message")
@@ -234,7 +243,9 @@ class WorkflowScheduler:
         ) = _validate_inputs(
             plan, workflow_execution, self._store
         )
+        self._recover_pending_approval_requests(workflow_id, timestamp)
         self._recover_approved_task_wakeups(workflow_id, timestamp)
+        self._fail_rejected_approval_waits(workflow_id, timestamp)
         self._ensure_resolved_task_plan(workflow_id, plan, timestamp)
         self._repair_attempt_evidence(workflow_id, timestamp)
         attempts_by_ref = _attempts_by_task(
@@ -384,6 +395,35 @@ class WorkflowScheduler:
             if result.succeeded:
                 terminal_changes: dict[str, Any] = {}
                 event_type = "TaskExecutionSucceeded"
+            elif result.approval is not None:
+                policy = self._store.get(str(result.approval.get("policyDecisionId")))
+                if not isinstance(policy, Mapping):
+                    raise InvalidSchedulerInputError("approval PolicyDecision was not persisted")
+                running = self._transition_and_emit(
+                    running, TaskStatus.AWAITING_APPROVAL,
+                    event_type="TaskExecutionAwaitingApproval", timestamp=timestamp,
+                    changes={
+                        "pendingApprovalRequest": {
+                            **dict(result.approval),
+                            "expectedCurrentApprovalId": running.get("approvalId"),
+                        }
+                    },
+                )
+                from aep.approval import ApprovalGate
+                request = running.get("pendingApprovalRequest", result.approval)
+                ApprovalGate(self._store).request(
+                    approval_id=str(request["approvalId"]),
+                    policy_decision=policy,
+                    requester=str(request["requester"]),
+                    timestamp=timestamp,
+                    digest=str(request["digest"]),
+                    authorized_reviewers=tuple(request["authorizedReviewers"]),
+                    target=request.get("target"),
+                    artifact_digests=request.get("artifactDigests"),
+                    approval_policy_refs=tuple(request.get("approvalPolicyRefs", ())),
+                    expected_current_approval_id=request.get("expectedCurrentApprovalId"),
+                )
+                continue
             else:
                 failure: dict[str, Any] = {
                     "class": result.failure_class.value,  # type: ignore[union-attr]
@@ -451,6 +491,58 @@ class WorkflowScheduler:
                 self._store.wake_approved_task(
                     str(task_id), str(approval["id"]), updated_at=timestamp
                 )
+
+    def _recover_pending_approval_requests(self, workflow_id: str, timestamp: str) -> None:
+        """Recreate approval requests from the intent committed with the wait state."""
+        from aep.approval import ApprovalGate
+
+        for task in self._store.list_by_workflow_execution(workflow_id):
+            if task.get("kind") != "TaskExecution" or task.get("status") != "AWAITING_APPROVAL":
+                continue
+            intent = task.get("pendingApprovalRequest")
+            if not isinstance(intent, Mapping):
+                continue
+            approval_id = intent.get("approvalId")
+            decision = self._store.get(str(intent.get("policyDecisionId", "")))
+            if not isinstance(approval_id, str) or not isinstance(decision, Mapping):
+                continue
+            ApprovalGate(self._store).request(
+                approval_id=approval_id,
+                policy_decision=decision,
+                requester=str(intent["requester"]),
+                timestamp=timestamp,
+                digest=str(intent["digest"]),
+                authorized_reviewers=tuple(intent["authorizedReviewers"]),
+                target=intent.get("target"),
+                artifact_digests=intent.get("artifactDigests"),
+                approval_policy_refs=tuple(intent.get("approvalPolicyRefs", ())),
+                expected_current_approval_id=intent.get("expectedCurrentApprovalId"),
+            )
+
+    def _fail_rejected_approval_waits(self, workflow_id: str, timestamp: str) -> None:
+        """Make rejection/expiry terminal for the task's current approval wait."""
+        records = self._store.list_by_workflow_execution(workflow_id)
+        decisions = {
+            str(record.get("id")): record
+            for record in records if record.get("kind") == "Approval"
+        }
+        for task in records:
+            if task.get("kind") != "TaskExecution" or task.get("status") != "AWAITING_APPROVAL":
+                continue
+            approval_id = task.get("approvalId")
+            approval = decisions.get(str(approval_id)) if approval_id else None
+            if not isinstance(approval, Mapping) or approval.get("status") not in {"REJECTED", "EXPIRED"}:
+                continue
+            changes = {"failure": {
+                "class": FailureClass.POLICY.value,
+                "message": "Approval was rejected or expired; the gated action remains blocked.",
+                "retryable": False,
+            }}
+            self._transition_and_emit(
+                task, TaskStatus.FAILED,
+                event_type="TaskExecutionFailed", timestamp=timestamp,
+                changes=changes,
+            )
 
     def _recover_durable_start(
         self,
@@ -708,6 +800,7 @@ class WorkflowScheduler:
                     "TaskExecutionStarted": "RUNNING",
                     "TaskExecutionSucceeded": "SUCCEEDED",
                     "TaskExecutionFailed": "FAILED",
+                    "TaskExecutionAwaitingApproval": "AWAITING_APPROVAL",
                 }[event_type],
                 "attempt": task_execution["attempt"],
             },
@@ -731,6 +824,13 @@ class WorkflowScheduler:
         if not getattr(self._store, "supports_atomic_task_transitions", False):
             if status is TaskStatus.RUNNING:
                 updated = self._lifecycle.start(str(task_execution["id"]), timestamp=timestamp)
+                return updated
+            if status is TaskStatus.AWAITING_APPROVAL:
+                updated = self._lifecycle.await_approval(
+                    str(task_execution["id"]), timestamp=timestamp,
+                    changes=changes,
+                )
+                self._emit(updated, event_type, sequence=3, timestamp=timestamp)
                 return updated
             if status is TaskStatus.SUCCEEDED:
                 updated = self._complete_success(task_execution, timestamp)

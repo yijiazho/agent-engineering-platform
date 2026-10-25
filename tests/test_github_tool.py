@@ -24,6 +24,7 @@ from aep.github_tool import (
     PublicationVerification,
     invoke_github_tool,
 )
+from aep.approval import approval_digest
 from aep.tool_runtime import (
     ToolCaller,
     ToolFailureClass,
@@ -453,6 +454,56 @@ def trusted_verifier(
     return PersistedPublicationPolicyVerifier(
         lambda runtime_id: deepcopy(records.get(runtime_id))
     )
+
+
+def test_persisted_verifier_accepts_only_exact_approved_policy_decisions() -> None:
+    records = persisted_evidence()
+    records[PUSH_POLICY_ID]["decision"] = "REQUIRE_APPROVAL"
+    records[POLICY_ID]["decision"] = "REQUIRE_APPROVAL"
+    artifact_digests = {ARTIFACT_ID: records[ARTIFACT_ID]["contentAddress"]}
+    approvals = []
+    for decision_id, action, target in (
+        (PUSH_POLICY_ID, "git.push", records[PUSH_POLICY_ID]["resourceScope"]),
+        (POLICY_ID, CREATE_PR_CAPABILITY, records[POLICY_ID]["publicationTarget"]),
+    ):
+        approvals.append({
+            "kind": "Approval", "status": "APPROVED", "policyDecisionId": decision_id,
+            "target": target, "artifactDigests": artifact_digests,
+            "artifactRequestDigest": approval_digest(
+                action=action, target=target, repository_revision=REVISION,
+                artifact_digests=artifact_digests,
+            ),
+            "approver": "alice", "authorizedReviewers": ["alice"],
+        })
+    verifier = PersistedPublicationPolicyVerifier(
+        lambda runtime_id: deepcopy(records.get(runtime_id)),
+        lambda workflow_id: approvals if workflow_id == WORKFLOW_ID else [],
+    )
+
+    result = verifier.verify(request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)))
+
+    assert result.allowed is True
+
+
+def test_persisted_verifier_rejects_stale_approval_digest() -> None:
+    records = persisted_evidence()
+    records[POLICY_ID]["decision"] = "REQUIRE_APPROVAL"
+    artifact_digests = {ARTIFACT_ID: records[ARTIFACT_ID]["contentAddress"]}
+    target = records[POLICY_ID]["publicationTarget"]
+    approval = {
+        "kind": "Approval", "status": "APPROVED", "policyDecisionId": POLICY_ID,
+        "target": target, "artifactDigests": artifact_digests,
+        "artifactRequestDigest": "sha256:" + "0" * 64,
+        "approver": "alice", "authorizedReviewers": ["alice"],
+    }
+    verifier = PersistedPublicationPolicyVerifier(
+        lambda runtime_id: deepcopy(records.get(runtime_id)), lambda _: [approval]
+    )
+
+    result = verifier.verify(request(create_input(), capabilities=(CREATE_PR_CAPABILITY,)))
+
+    assert result.allowed is False
+    assert result.reason == "Publication approval mismatch"
 
 
 def issue_response(request_id: str = "github-request-read-1") -> dict[str, Any]:
