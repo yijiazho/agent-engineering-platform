@@ -4,20 +4,35 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
+from threading import Event, Thread
 from typing import Any, Callable
+from uuid import uuid4
 
 import yaml
+from jsonschema import Draft202012Validator
 
 from aep.runtime_store import RuntimeObjectStore
 
 
 class EvaluationSuiteError(ValueError):
     """Invalid suite definition or case evidence."""
+
+
+def _validate_suite(suite: Mapping[str, Any]) -> None:
+    schema_path = Path(__file__).parents[2] / "schemas" / "resources" / "v1" / "evaluationsuite.schema.json"
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        Draft202012Validator(schema).validate(suite)
+    except Exception as error:
+        from jsonschema import ValidationError
+        if isinstance(error, ValidationError):
+            raise EvaluationSuiteError(f"invalid EvaluationSuite: {error.message}") from None
+        raise EvaluationSuiteError("evaluation suite schema could not be loaded") from None
 
 
 def load_suite(path: Path | str) -> dict[str, Any]:
@@ -28,6 +43,7 @@ def load_suite(path: Path | str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise EvaluationSuiteError("evaluation suite must be an object")
     suite = deepcopy(dict(value))
+    _validate_suite(suite)
     if suite.get("apiVersion") != "aep.dev/v1alpha1" or suite.get("kind") != "EvaluationSuite":
         raise EvaluationSuiteError("suite must declare aep.dev/v1alpha1 EvaluationSuite")
     metadata, spec = suite.get("metadata"), suite.get("spec")
@@ -62,10 +78,11 @@ def load_suite(path: Path | str) -> dict[str, Any]:
 
 def run_suite(
     suite: Mapping[str, Any], store: RuntimeObjectStore, *,
-    historical_runner: Callable[[str], str] | None = None,
+    historical_runner: Callable[[str, Sequence[str]], str] | None = None,
     now: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
     """Run cases independently; persist each terminal case before continuing."""
+    _validate_suite(suite)
     canonical = json.dumps(suite, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
     suite_id = "evaluationsuite-" + digest[:24]
@@ -82,17 +99,57 @@ def run_suite(
         "provenance": {"actor": "evaluation-suite-runner", "sideEffects": "disabled"},
     }
     record = dict(store.create(record, deterministic_key=f"evaluation-suite:{digest}"))
+    if record.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+        return record
+    lease_key = f"evaluation-suite-run:{suite_id}"
+    owner_id = str(uuid4())
+    now_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+    expiry = (now_dt + timedelta(seconds=45)).isoformat().replace("+00:00", "Z")
+    if not store.acquire_lease(lease_key, owner_id, now=started, expires_at=expiry):
+        raise EvaluationSuiteError("evaluation suite is already running")
+    heartbeat_stop, lease_lost = Event(), Event()
+
+    def heartbeat() -> None:
+        while not heartbeat_stop.wait(10):
+            current = clock()
+            current_dt = datetime.fromisoformat(current.replace("Z", "+00:00"))
+            next_expiry = (current_dt + timedelta(seconds=45)).isoformat().replace("+00:00", "Z")
+            if not store.renew_lease(lease_key, owner_id, now=current, expires_at=next_expiry):
+                lease_lost.set()
+                return
+
+    heartbeat_thread = Thread(target=heartbeat, name=f"{suite_id}-lease", daemon=True)
+    heartbeat_thread.start()
+    try:
+        return _run_claimed_suite(suite, store, historical_runner, clock, suite_id, record, lease_lost)
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=2)
+        store.release_lease(lease_key, owner_id)
+
+
+def _run_claimed_suite(suite: Mapping[str, Any], store: RuntimeObjectStore,
+                       historical_runner: Callable[[str, Sequence[str]], str] | None,
+                       clock: Callable[[], str], suite_id: str,
+                       record: dict[str, Any], lease_lost: Event) -> dict[str, Any]:
+    spec = suite["spec"]
+    cases = sorted(spec["cases"], key=lambda item: item["id"])
     results = list(record.get("caseResults", []))
     completed_ids = {item["caseId"] for item in results}
     for case in cases:
         if case["id"] in completed_ids:
             continue
+        if lease_lost.is_set():
+            raise EvaluationSuiteError("evaluation suite execution lease was lost")
         case_started = clock()
         try:
             if case["kind"] == "fixture":
                 outcome = case["expectedOutcome"]
                 evidence = {"sourceRevision": case["sourceRevision"], "inputIdentity": case["inputIdentity"],
-                            "evaluationSchemaVersion": case.get("evaluationSchemaVersion", "1.0.0"),
+                            "evaluationSchemaVersions": {
+                                f"{ref['name']}:{ref['version']}": ref["version"]
+                                for ref in spec["evaluationRefs"]
+                            },
                             "resourceRefs": [deepcopy(spec["workflowRef"]), *deepcopy(spec["evaluationRefs"])],
                             "metrics": deepcopy(case.get("metrics", {})), "buildSuccess": case.get("buildSuccess"),
                             "testSuccess": case.get("testSuccess"), "modelInvocationCount": 0,
@@ -100,7 +157,11 @@ def run_suite(
             else:
                 if historical_runner is None:
                     raise EvaluationSuiteError("historical case execution requires the workflow runtime")
-                execution_id = historical_runner(case["workflowExecutionId"])
+                source = store.get(case["workflowExecutionId"])
+                if source is None or source.get("kind") != "WorkflowExecution":
+                    raise EvaluationSuiteError("historical WorkflowExecution was not found")
+                overrides = _historical_overrides(source, store.list_by_workflow_execution(case["workflowExecutionId"]), spec)
+                execution_id = historical_runner(case["workflowExecutionId"], overrides)
                 execution = store.get(execution_id)
                 if execution is None:
                     raise EvaluationSuiteError("replayed execution evidence is missing")
@@ -164,23 +225,51 @@ def aggregate_results(results: Sequence[Mapping[str, Any]], configured_metrics: 
     return totals
 
 
-def _execution_evidence(execution: Mapping[str, Any], related: Sequence[Mapping[str, Any]], source_id: str) -> dict[str, Any]:
+def _execution_evidence(
+    execution: Mapping[str, Any], related: Sequence[Mapping[str, Any]], source_id: str
+) -> dict[str, Any]:
     models = [item for item in related if item.get("kind") == "ModelInvocation"]
-    token = {key: sum((item.get("tokenUsage") or {}).get(key, 0) for item in models)
-             for key in ("inputTokens", "outputTokens", "totalTokens")}
+    input_tokens = sum(_usage(item).get("inputTokens", 0) for item in models)
+    output_tokens = sum(_usage(item).get("outputTokens", 0) for item in models)
+    token = {"inputTokens": input_tokens, "outputTokens": output_tokens,
+             "totalTokens": input_tokens + output_tokens}
     costs = [item["cost"] for item in models if isinstance(item.get("cost"), (int, float))]
-    return {"sourceExecutionId": source_id, "repositoryRevision": execution.get("repositoryRevision"),
+    evaluations = [item for item in related if item.get("kind") == "EvaluationResult"]
+    build_results = [item for item in evaluations if _evaluation_type(item) == "build"]
+    test_results = [item for item in evaluations if _evaluation_type(item) == "test"]
+    return {"sourceExecutionId": source_id, "executionId": execution.get("id"),
+            "repositoryRevision": execution.get("repositoryRevision"),
             "resourceRefs": deepcopy(execution.get("provenance", {}).get("resourceRefs", [])),
             "generatedArtifactIds": [item.get("id") for item in related if item.get("kind") == "GeneratedArtifact"],
         "evaluationResults": [{"id": item.get("id"), "outcome": item.get("outcome"),
                                    "evaluationRef": deepcopy(item.get("evaluationRef")),
                                    "evaluationSchemaVersion": (item.get("evaluationRef") or {}).get("version"),
                                    "metrics": deepcopy(item.get("metrics", {}))}
-                                  for item in related if item.get("kind") == "EvaluationResult"],
-            "metrics": _evaluation_metrics(related),
+                                  for item in evaluations],
+            "metrics": _evaluation_metrics(evaluations),
             "modelInvocationCount": len(models), "tokenUsage": token,
-            "cost": sum(costs) if costs else None, "buildSuccess": execution.get("buildSuccess"),
-            "testSuccess": execution.get("testSuccess")}
+            "cost": sum(costs) if costs else None,
+            "buildSuccess": _all_pass(build_results), "testSuccess": _all_pass(test_results)}
+
+
+def _usage(invocation: Mapping[str, Any]) -> dict[str, int]:
+    value = invocation.get("tokenUsage")
+    if not isinstance(value, Mapping):
+        return {"inputTokens": 0, "outputTokens": 0}
+    return {"inputTokens": value.get("inputTokens", value.get("input", 0)),
+            "outputTokens": value.get("outputTokens", value.get("output", 0))}
+
+
+def _evaluation_type(result: Mapping[str, Any]) -> str | None:
+    evidence = result.get("evidence")
+    value = evidence.get("evaluationType") if isinstance(evidence, Mapping) else None
+    return value.lower() if isinstance(value, str) else None
+
+
+def _all_pass(results: Sequence[Mapping[str, Any]]) -> bool | None:
+    if not results:
+        return None
+    return all(item.get("outcome") == "PASS" for item in results)
 
 
 def _success_rate(items: Sequence[Mapping[str, Any]], field: str) -> float | None:
@@ -191,12 +280,50 @@ def _success_rate(items: Sequence[Mapping[str, Any]], field: str) -> float | Non
 def _evaluation_metrics(related: Sequence[Mapping[str, Any]]) -> dict[str, float]:
     totals: dict[str, float] = {}
     for item in related:
+        if item.get("kind") != "EvaluationResult":
+            continue
         metrics = item.get("metrics")
         if isinstance(metrics, Mapping):
             for key, value in metrics.items():
                 if isinstance(key, str) and isinstance(value, (int, float)) and not isinstance(value, bool):
                     totals[key] = totals.get(key, 0) + value
     return totals
+
+
+def _historical_overrides(
+    source: Mapping[str, Any], related: Sequence[Mapping[str, Any]], spec: Mapping[str, Any]
+) -> list[str]:
+    selected_workflow = spec["workflowRef"]
+    source_workflow = source.get("workflowRef")
+    if not isinstance(source_workflow, Mapping) or any(
+        selected_workflow.get(key) != source_workflow.get(key)
+        for key in ("kind", "name", "version")
+    ):
+        raise EvaluationSuiteError("suite Workflow does not match the historical execution; Workflow overrides are unsupported")
+    historical_refs: list[Any] = []
+    root = source.get("provenance")
+    if isinstance(root, Mapping) and isinstance(root.get("resourceRefs"), list):
+        historical_refs.extend(root["resourceRefs"])
+    for item in related:
+        provenance = item.get("provenance")
+        if isinstance(provenance, Mapping) and isinstance(provenance.get("resourceRefs"), list):
+            historical_refs.extend(provenance["resourceRefs"])
+        for field in ("evaluationRef",):
+            if item.get(field) is not None:
+                historical_refs.append(item[field])
+    selected = spec["evaluationRefs"]
+    available = {
+        (ref.get("kind"), ref.get("name")): ref
+        for ref in historical_refs if isinstance(ref, Mapping)
+    }
+    overrides: list[str] = []
+    for ref in selected:
+        prior = available.get((ref["kind"], ref["name"]))
+        if prior is None:
+            raise EvaluationSuiteError(f"selected Evaluation {ref['name']!r} is absent from historical Resource provenance")
+        if prior.get("version") != ref["version"]:
+            overrides.append(f"Evaluation:{ref['name']}:{ref['version']}")
+    return overrides
 
 
 def _validate_ref(ref: Any, kind: str) -> None:

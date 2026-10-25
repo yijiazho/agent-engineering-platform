@@ -13,7 +13,7 @@
       "evaluationRefs": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/evaluationRef"}},
       "metrics": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
       "cases": {"type": "array", "minItems": 1, "items": {"oneOf": [
-        {"type": "object", "required": ["id", "kind", "sourceRevision", "inputIdentity", "expectedOutcome"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"const": "fixture"}, "sourceRevision": {"type": "string", "minLength": 1}, "inputIdentity": {"type": "string", "minLength": 1}, "expectedOutcome": {"enum": ["PASS", "FAIL"]}, "evaluationSchemaVersion": {"type": "string"}, "metrics": {"type": "object"}, "buildSuccess": {"type": "boolean"}, "testSuccess": {"type": "boolean"}}, "additionalProperties": false},
+        {"type": "object", "required": ["id", "kind", "sourceRevision", "inputIdentity", "expectedOutcome"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"const": "fixture"}, "sourceRevision": {"type": "string", "minLength": 1}, "inputIdentity": {"type": "string", "minLength": 1}, "expectedOutcome": {"enum": ["PASS", "FAIL"]}, "metrics": {"type": "object"}, "buildSuccess": {"type": "boolean"}, "testSuccess": {"type": "boolean"}}, "additionalProperties": false},
         {"type": "object", "required": ["id", "kind", "workflowExecutionId"], "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"const": "historical"}, "workflowExecutionId": {"type": "string", "minLength": 1}}, "additionalProperties": false}
       ]}}
     }, "additionalProperties": false}

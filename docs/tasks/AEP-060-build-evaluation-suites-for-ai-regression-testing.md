@@ -45,12 +45,16 @@ EvaluationSuite is a versioned Resource contract in
 Evaluation references in each run, sorts cases by ID, hashes the suite
 definition for stable run identity, and persists case evidence incrementally in
 the RuntimeObjectStore. Fixture cases need no model credentials. Historical
-cases execute through the normal exact replay runtime with publication disabled
-and preserve replay artifacts, EvaluationResults, invocation token usage, cost,
-revision, and Resource provenance. Aggregates report pass rate, configured
-metric means, build/test success rates, model calls, token totals, available
-cost, and summed case latency. Re-running the same definition resumes the same
-case selection and does not reinterpret prior evidence under a newer schema.
+cases execute through the normal exact replay runtime with publication disabled.
+The selected Workflow must match the historical Workflow; a differing Workflow
+is rejected. Selected Evaluation versions are applied as replay overrides and
+must exist in historical provenance. Results preserve artifacts,
+EvaluationResults, schema/resource versions, invocation token usage, cost,
+revision, and build/test outcomes. Aggregates report pass rate, configured
+EvaluationResult metric means, build/test success rates, model calls, token
+totals, available cost, and summed case latency. Durable renewable execution
+leases prevent concurrent invocations from dispatching duplicate work, and
+terminal runs return their existing result on repeat invocation.
 
 The repository example is `fixtures/resources/evaluation-suite-issue-to-pr.yaml`;
 invoke it with `aep eval fixtures/resources/evaluation-suite-issue-to-pr.yaml`.

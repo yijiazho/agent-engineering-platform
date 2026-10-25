@@ -1,7 +1,8 @@
 import pytest
+from threading import Event, Thread
 
 from aep.evaluation_suites import EvaluationSuiteError, aggregate_results, load_suite, run_suite
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import DurableJsonRuntimeObjectStore, InMemoryRuntimeObjectStore
 
 
 def _suite():
@@ -68,21 +69,112 @@ def test_historical_case_records_replay_artifacts_usage_and_resource_provenance(
     suite = _suite()
     suite["spec"]["cases"] = [{"id": "history", "kind": "historical", "workflowExecutionId": "source"}]
     store = InMemoryRuntimeObjectStore()
+    store.create({"id": "source", "kind": "WorkflowExecution", "status": "SUCCEEDED", "repositoryRevision": "c" * 40,
+                  "workflowRef": suite["spec"]["workflowRef"],
+                  "provenance": {"resourceRefs": [suite["spec"]["workflowRef"],
+                                                    {"kind": "Evaluation", "name": "acceptance", "version": "1.0.0"}]}},
+                 deterministic_key="source")
     store.create({"id": "replay", "kind": "WorkflowExecution", "status": "SUCCEEDED", "repositoryRevision": "c" * 40,
                   "provenance": {"resourceRefs": []}}, deterministic_key="replay")
     store.create({"id": "model", "kind": "ModelInvocation", "workflowExecutionId": "replay",
-                  "tokenUsage": {"inputTokens": 3, "outputTokens": 4, "totalTokens": 7}, "cost": 0.2}, deterministic_key="model")
+                  "tokenUsage": {"input": 3, "output": 4}, "cost": 0.2}, deterministic_key="model")
     store.create({"id": "artifact", "kind": "GeneratedArtifact", "workflowExecutionId": "replay"}, deterministic_key="artifact")
     store.create({"id": "eval", "kind": "EvaluationResult", "workflowExecutionId": "replay",
                   "evaluationRef": {"kind": "Evaluation", "name": "acceptance", "version": "1.0.0"}}, deterministic_key="eval")
-    result = run_suite(suite, store, historical_runner=lambda _: "replay")
+    received = []
+    result = run_suite(suite, store, historical_runner=lambda _, overrides: (received.extend(overrides) or "replay"))
     evidence = result["caseResults"][0]["evidence"]
     assert evidence["sourceRevision"] == "c" * 40
     assert evidence["modelInvocationCount"] == 1
     assert evidence["tokenUsage"]["totalTokens"] == 7
+    assert received == ["Evaluation:acceptance:2.0.0"]
     assert evidence["cost"] == 0.2
     assert evidence["generatedArtifactIds"] == ["artifact"]
     assert len(evidence["evaluationResults"]) == 1
+
+
+def test_historical_workflow_mismatch_is_rejected_before_replay():
+    suite = _suite()
+    suite["spec"]["cases"] = [{"id": "history", "kind": "historical", "workflowExecutionId": "source"}]
+    store = InMemoryRuntimeObjectStore()
+    store.create({"id": "source", "kind": "WorkflowExecution", "workflowRef": {"kind": "Workflow", "name": "other", "version": "1.0.0"},
+                  "provenance": {"resourceRefs": []}}, deterministic_key="source")
+    called = False
+
+    def runner(_, __):
+        nonlocal called
+        called = True
+        return "replay"
+
+    result = run_suite(suite, store, historical_runner=runner)
+    assert result["caseResults"][0]["outcome"] == "FAIL"
+    assert "Workflow does not match" in result["caseResults"][0]["failure"]
+    assert not called
+
+
+def test_completed_suite_rerun_returns_existing_terminal_evidence():
+    store, suite = InMemoryRuntimeObjectStore(), _suite()
+    first = run_suite(suite, store)
+    again = run_suite(suite, store)
+    assert again == first
+
+
+def test_concurrent_suite_invocation_does_not_dispatch_duplicate_case(tmp_path):
+    suite = _suite()
+    suite["spec"]["cases"] = [{"id": "history", "kind": "historical", "workflowExecutionId": "source"}]
+    checkpoint = tmp_path / "runtime.json"
+    store = DurableJsonRuntimeObjectStore(checkpoint)
+    workflow = suite["spec"]["workflowRef"]
+    evaluations = suite["spec"]["evaluationRefs"]
+    store.create({"id": "source", "kind": "WorkflowExecution", "workflowRef": workflow,
+                  "provenance": {"resourceRefs": [workflow, *evaluations]}}, deterministic_key="source")
+    entered, release = Event(), Event()
+    calls = []
+
+    def runner(_, __):
+        calls.append(1)
+        entered.set()
+        assert release.wait(3)
+        store.create({"id": "replay", "kind": "WorkflowExecution", "status": "SUCCEEDED", "repositoryRevision": "d" * 40,
+                      "provenance": {"resourceRefs": []}}, deterministic_key="replay")
+        return "replay"
+
+    failure = []
+    worker = Thread(target=lambda: run_suite(suite, store, historical_runner=runner))
+    worker.start()
+    assert entered.wait(3)
+    with pytest.raises(EvaluationSuiteError, match="already running"):
+        run_suite(suite, DurableJsonRuntimeObjectStore(checkpoint), historical_runner=runner)
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert len(calls) == 1
+
+
+def test_suite_optional_fields_are_validated_before_runtime_creation(tmp_path):
+    suite = _suite()
+    suite["spec"]["cases"][0]["metrics"] = None
+    path = tmp_path / "invalid-suite.yaml"
+    import yaml
+    path.write_text(yaml.safe_dump(suite), encoding="utf-8")
+    with pytest.raises(EvaluationSuiteError):
+        load_suite(path)
+
+
+def test_build_test_and_evaluation_metrics_use_evaluation_results_only():
+    from aep.evaluation_suites import _evaluation_metrics, _execution_evidence
+    records = [
+        {"kind": "EvaluationResult", "outcome": "PASS", "metrics": {"durationMs": 20},
+         "evidence": {"evaluationType": "build"}},
+        {"kind": "EvaluationResult", "outcome": "FAIL", "metrics": {"durationMs": 30},
+         "evidence": {"evaluationType": "test"}},
+        {"kind": "ToolInvocation", "metrics": {"durationMs": 999}},
+    ]
+    assert _evaluation_metrics(records) == {"durationMs": 50}
+    evidence = _execution_evidence({"repositoryRevision": "x", "provenance": {}}, records, "source")
+    assert evidence["buildSuccess"] is True
+    assert evidence["testSuccess"] is False
+    assert evidence["metrics"] == {"durationMs": 50}
 
 
 def test_suite_requires_immutable_versioned_references():

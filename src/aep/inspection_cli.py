@@ -538,7 +538,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     from aep.dogfood_runtime import DogfoodWorkflowRunner
                     runtime = DogfoodWorkflowRunner(os.environ, state_file=args.state_file)
                 result = run_suite(suite, store, historical_runner=(
-                    lambda source: runtime.replay(source, publication=False)  # type: ignore[union-attr]
+                    lambda source, overrides: runtime.replay(
+                        source, overrides=tuple(overrides), publication=False
+                    )  # type: ignore[union-attr]
                 ) if runtime is not None else None)
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))

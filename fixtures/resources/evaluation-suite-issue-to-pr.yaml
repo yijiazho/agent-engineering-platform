@@ -14,7 +14,6 @@ spec:
       sourceRevision: 0123456789abcdef0123456789abcdef01234567
       inputIdentity: sha256:issue-101-input
       expectedOutcome: PASS
-      evaluationSchemaVersion: 1.0.0
       metrics: {acceptanceScore: 1.0}
       buildSuccess: true
       testSuccess: true
