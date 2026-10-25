@@ -14,6 +14,7 @@ from typing import Any
 from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.context_identity import context_identity
 from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
+from aep.evaluation_suites import EvaluationSuiteError, load_suite, run_suite
 
 
 KIND_COMMANDS = {
@@ -488,6 +489,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     replay.add_argument("--context", choices=("reuse", "rebuild"), default="reuse")
     replay.add_argument("--publication", action="store_true")
     replay.add_argument("--plan-only", action="store_true", help="record a pending replay without dispatching Tasks")
+    evaluate = sub.add_parser("eval", help="run or inspect a versioned evaluation suite")
+    evaluate.add_argument("suite", type=Path, help="suite definition, or persisted EvaluationSuiteRun id")
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
@@ -522,6 +525,24 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0
+        if args.command == "eval":
+            store = DurableJsonRuntimeObjectStore(args.state_file)
+            if str(args.suite).startswith("evaluationsuite-"):
+                result = store.get(str(args.suite))
+                if result is None:
+                    raise InspectionError("SUITE_NOT_FOUND", "evaluation suite run was not found")
+            else:
+                suite = load_suite(args.suite)
+                runtime = None
+                if any(case.get("kind") == "historical" for case in suite["spec"]["cases"]):
+                    from aep.dogfood_runtime import DogfoodWorkflowRunner
+                    runtime = DogfoodWorkflowRunner(os.environ, state_file=args.state_file)
+                result = run_suite(suite, store, historical_runner=(
+                    lambda source: runtime.replay(source, publication=False)  # type: ignore[union-attr]
+                ) if runtime is not None else None)
+            if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
+            else: print(_human(result))
+            return 0 if result.get("status") == "SUCCEEDED" else 1
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
         elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
@@ -531,6 +552,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except ReplayError as error:
         print(json.dumps({"error": {"code": "REPLAY_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except EvaluationSuiteError as error:
+        print(json.dumps({"error": {"code": "EVALUATION_SUITE_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
     except RuntimeError as error:
         print(json.dumps({"error": {"code": "REPLAY_RUNTIME_ERROR", "message": str(error)}}, sort_keys=True), file=sys.stderr)

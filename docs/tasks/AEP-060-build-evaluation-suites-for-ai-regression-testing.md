@@ -1,6 +1,6 @@
 # AEP-060: Build Evaluation Suites for AI Regression Testing
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -37,3 +37,20 @@ Provide CLI support to run a suite and inspect case-level failures and aggregate
 * Evaluation schema/version changes are reflected explicitly in result provenance and never silently reinterpret historical scores.
 * Tests cover mixed pass/fail suites, aggregation, interrupted suite execution, side-effect suppression, deterministic case ordering, and historical execution references.
 * Documentation includes a repository regression-suite example for issue-to-PR behavior.
+
+## Implementation Notes
+
+EvaluationSuite is a versioned Resource contract in
+`schemas/resources/v1/evaluationsuite.schema.json`. The runner pins Workflow and
+Evaluation references in each run, sorts cases by ID, hashes the suite
+definition for stable run identity, and persists case evidence incrementally in
+the RuntimeObjectStore. Fixture cases need no model credentials. Historical
+cases execute through the normal exact replay runtime with publication disabled
+and preserve replay artifacts, EvaluationResults, invocation token usage, cost,
+revision, and Resource provenance. Aggregates report pass rate, configured
+metric means, build/test success rates, model calls, token totals, available
+cost, and summed case latency. Re-running the same definition resumes the same
+case selection and does not reinterpret prior evidence under a newer schema.
+
+The repository example is `fixtures/resources/evaluation-suite-issue-to-pr.yaml`;
+invoke it with `aep eval fixtures/resources/evaluation-suite-issue-to-pr.yaml`.

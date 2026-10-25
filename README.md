@@ -103,6 +103,18 @@ explicitly binds Resource validation to `/opt/aep/schemas/resources/v1`,
 independently of the read-only repository mount and the installed Python
 package location.
 
+### Evaluation Regression Suites
+
+Versioned EvaluationSuite definitions live alongside Resources and can mix
+credential-free fixture cases with historical WorkflowExecution references.
+Run a suite with `aep eval <suite-file> --state-file <checkpoint>`; inspect a
+persisted partial or terminal result with `aep eval <evaluationsuite-run-id>`.
+Case order is sorted by case ID, each case is checkpointed before the next
+starts, and replay publication is disabled. Fixture cases record pinned source
+and input identities, expected outcome, evaluation schema version, and optional
+normalized metrics. See
+[`fixtures/resources/evaluation-suite-issue-to-pr.yaml`](fixtures/resources/evaluation-suite-issue-to-pr.yaml).
+
 `docker compose ... down` keeps the local state volume. To intentionally reset
 that recoverable local state, run the same command with `--volumes`.
 
@@ -799,7 +811,7 @@ Implemented foundations currently include:
 
 The repository now aligns `publication-evidence:1.1.0` with the canonical
 runtime evidence contract through `create-pull-request:1.2.0` and
-`issue-to-pr:1.15.0`. Credential-free local and source/published exact-image
+`issue-to-pr:1.39.0`. Credential-free local and source/published exact-image
 verification pass. The subsequent live run passed validation, acceptance, and
 Publication Policy but exposed AEP-049 at authenticated push. The corrected
 helper now uses the running service's verified absolute interpreter, private
