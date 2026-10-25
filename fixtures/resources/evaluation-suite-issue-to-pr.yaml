@@ -1,0 +1,22 @@
+apiVersion: aep.dev/v1alpha1
+kind: EvaluationSuite
+metadata:
+  name: issue-to-pr-regression
+  version: 1.0.0
+spec:
+  workflowRef: {kind: Workflow, name: issue-to-pr, version: 1.39.0}
+  evaluationRefs:
+    - {kind: Evaluation, name: workflow-acceptance, version: 1.0.0}
+  metrics: [acceptanceScore]
+  cases:
+    - id: fixture-issue-analysis-pass
+      kind: fixture
+      sourceRevision: 0123456789abcdef0123456789abcdef01234567
+      inputIdentity: sha256:issue-101-input
+      expectedOutcome: PASS
+      metrics: {acceptanceScore: 1.0}
+      buildSuccess: true
+      testSuccess: true
+    - id: historical-issue-102
+      kind: historical
+      workflowExecutionId: workflowexecution-issue-102

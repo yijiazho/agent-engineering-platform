@@ -26,6 +26,7 @@ RESOURCE_DIRECTORIES: dict[str, tuple[str, ...]] = {
     "Policy": ("policies",),
     "Evaluation": ("evaluations",),
     "Event": ("events",),
+    "EvaluationSuite": ("evaluation-suites",),
 }
 
 KIND_ORDER = {
@@ -40,6 +41,7 @@ KIND_ORDER = {
     "Policy": 8,
     "Evaluation": 9,
     "Event": 10,
+    "EvaluationSuite": 11,
 }
 
 

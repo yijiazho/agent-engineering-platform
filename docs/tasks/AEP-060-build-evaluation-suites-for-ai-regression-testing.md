@@ -1,6 +1,6 @@
 # AEP-060: Build Evaluation Suites for AI Regression Testing
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -37,3 +37,32 @@ Provide CLI support to run a suite and inspect case-level failures and aggregate
 * Evaluation schema/version changes are reflected explicitly in result provenance and never silently reinterpret historical scores.
 * Tests cover mixed pass/fail suites, aggregation, interrupted suite execution, side-effect suppression, deterministic case ordering, and historical execution references.
 * Documentation includes a repository regression-suite example for issue-to-PR behavior.
+
+## Implementation Notes
+
+EvaluationSuite is a versioned Resource contract in
+`schemas/resources/v1/evaluationsuite.schema.json`. The runner pins Workflow and
+Evaluation references in each run, sorts cases by ID, hashes the suite
+definition for stable run identity, and persists case evidence incrementally in
+the RuntimeObjectStore. Fixture cases need no model credentials. Historical
+cases execute through the normal exact replay runtime with publication disabled.
+The selected Workflow must match the historical Workflow; a differing Workflow
+is rejected. Selected Evaluation versions are applied as replay overrides and
+must exist in historical provenance. Results preserve artifacts,
+EvaluationResults, schema/resource versions, invocation token usage, cost,
+revision, and build/test outcomes. Aggregates report pass rate, configured
+EvaluationResult metric means, build/test success rates, model calls, token
+totals, available cost, and summed case latency. Durable renewable execution
+leases prevent concurrent invocations from dispatching duplicate work, and
+terminal runs return their existing result on repeat invocation. Checkpoint and
+final status writes atomically verify active lease ownership, so a worker that
+loses its lease cannot overwrite its replacement. Normal CLI output preserves
+numeric token counters while redacting token credentials. Case scoring
+uses the effective (latest) attempt for each Task while retaining all attempts
+in evidence. It requires selected EvaluationResults to pass and permits only
+the explicit publication-disabled policy denial on CreatePullRequest; other
+failed or blocked Tasks fail the case. Direct runner calls enforce the same
+semantic immutable-reference checks as file-loaded definitions.
+
+The repository example is `fixtures/resources/evaluation-suite-issue-to-pr.yaml`;
+invoke it with `aep --state-file <checkpoint> eval fixtures/resources/evaluation-suite-issue-to-pr.yaml`.

@@ -81,6 +81,33 @@ class RuntimeObjectStore(ABC):
         """Atomically store a value for a key, or return the prior value."""
 
     @abstractmethod
+    def acquire_lease(self, key: str, owner_id: str, *, now: str, expires_at: str) -> bool:
+        """Acquire an exclusive durable lease, reclaiming an expired lease."""
+
+    @abstractmethod
+    def renew_lease(self, key: str, owner_id: str, *, now: str, expires_at: str) -> bool:
+        """Renew a lease still owned by this caller."""
+
+    @abstractmethod
+    def release_lease(self, key: str, owner_id: str) -> bool:
+        """Release a lease only when the caller still owns it."""
+
+    @abstractmethod
+    def update_status_with_lease(
+        self,
+        object_id: str,
+        status: str,
+        *,
+        lease_key: str,
+        owner_id: str,
+        now: str,
+        expected_status: str | None = None,
+        updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        """Atomically update an object only while the caller owns an active lease."""
+
+    @abstractmethod
     def update_status(
         self,
         object_id: str,
@@ -190,6 +217,7 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
         self._objects: dict[str, dict[str, Any]] = {}
         self._deterministic_keys: dict[str, str] = {}
         self._claims: dict[str, dict[str, Any]] = {}
+        self._leases: dict[str, dict[str, str]] = {}
         self._workflow_index: dict[str, list[str]] = {}
         self._task_execution_index: dict[str, list[str]] = {}
 
@@ -272,6 +300,44 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
             claimed = deepcopy(dict(value))
             self._claims[deterministic_key] = claimed
             return True, _snapshot(claimed)
+
+    def acquire_lease(self, key: str, owner_id: str, *, now: str, expires_at: str) -> bool:
+        with self._lock:
+            current = self._leases.get(key)
+            if current is not None and current["ownerId"] != owner_id and current["expiresAt"] > now:
+                return False
+            self._leases[key] = {"ownerId": owner_id, "expiresAt": expires_at}
+            return True
+
+    def renew_lease(self, key: str, owner_id: str, *, now: str, expires_at: str) -> bool:
+        with self._lock:
+            current = self._leases.get(key)
+            if current is None or current["ownerId"] != owner_id or current["expiresAt"] <= now:
+                return False
+            current["expiresAt"] = expires_at
+            return True
+
+    def release_lease(self, key: str, owner_id: str) -> bool:
+        with self._lock:
+            current = self._leases.get(key)
+            if current is None or current["ownerId"] != owner_id:
+                return False
+            del self._leases[key]
+            return True
+
+    def update_status_with_lease(
+        self, object_id: str, status: str, *, lease_key: str, owner_id: str, now: str,
+        expected_status: str | None = None, updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        with self._lock:
+            lease = self._leases.get(lease_key)
+            if lease is None or lease["ownerId"] != owner_id or lease["expiresAt"] <= now:
+                raise StatusConflictError("execution lease ownership was lost")
+            return InMemoryRuntimeObjectStore.update_status(
+                self, object_id, status, expected_status=expected_status,
+                updated_at=updated_at, changes=changes,
+            )
 
     def claim_task_dispatch(
         self,
@@ -520,13 +586,13 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     def _memory_snapshot(self) -> tuple[Any, ...]:
         return (
             deepcopy(self._objects), deepcopy(self._deterministic_keys),
-            deepcopy(self._claims), deepcopy(self._workflow_index),
+            deepcopy(self._claims), deepcopy(self._leases), deepcopy(self._workflow_index),
             deepcopy(self._task_execution_index),
         )
 
     def _restore_memory_snapshot(self, snapshot: tuple[Any, ...]) -> None:
         (
-            self._objects, self._deterministic_keys, self._claims,
+            self._objects, self._deterministic_keys, self._claims, self._leases,
             self._workflow_index, self._task_execution_index,
         ) = snapshot
 
@@ -573,6 +639,29 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
         self, deterministic_key: str, value: RuntimeObject
     ) -> tuple[bool, RuntimeObject]:
         return self._mutate(lambda: InMemoryRuntimeObjectStore.claim(self, deterministic_key, value))
+
+    def acquire_lease(self, key: str, owner_id: str, *, now: str, expires_at: str) -> bool:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.acquire_lease(
+            self, key, owner_id, now=now, expires_at=expires_at
+        ))
+
+    def renew_lease(self, key: str, owner_id: str, *, now: str, expires_at: str) -> bool:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.renew_lease(
+            self, key, owner_id, now=now, expires_at=expires_at
+        ))
+
+    def release_lease(self, key: str, owner_id: str) -> bool:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.release_lease(self, key, owner_id))
+
+    def update_status_with_lease(
+        self, object_id: str, status: str, *, lease_key: str, owner_id: str, now: str,
+        expected_status: str | None = None, updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.update_status_with_lease(
+            self, object_id, status, lease_key=lease_key, owner_id=owner_id, now=now,
+            expected_status=expected_status, updated_at=updated_at, changes=changes,
+        ))
 
     def claim_task_dispatch(
         self,
@@ -719,6 +808,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             objects = payload["objects"]
             deterministic_keys = payload["deterministicKeys"]
             claims = payload["claims"]
+            leases = payload.get("leases", {})
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise RuntimeStoreError(
                 "durable runtime checkpoint is invalid",
@@ -729,7 +819,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             "operation": "restore", "phase": "read",
             "category": "invalid_checkpoint",
         }
-        if not all(isinstance(item, dict) for item in (objects, deterministic_keys, claims)):
+        if not all(isinstance(item, dict) for item in (objects, deterministic_keys, claims, leases)):
             raise RuntimeStoreError(
                 "durable runtime checkpoint is invalid",
                 diagnostic=invalid_checkpoint,
@@ -755,6 +845,11 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
         self._claims = {
             str(key): deepcopy(value) for key, value in claims.items()
         }
+        self._leases = {
+            str(key): {"ownerId": str(value["ownerId"]), "expiresAt": str(value["expiresAt"])}
+            for key, value in leases.items()
+            if isinstance(value, Mapping) and "ownerId" in value and "expiresAt" in value
+        }
         self._workflow_index.clear()
         self._task_execution_index.clear()
         for value in self._objects.values():
@@ -766,6 +861,7 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             "objectOrder": list(self._objects),
             "deterministicKeys": self._deterministic_keys,
             "claims": self._claims,
+            "leases": self._leases,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         temporary: Path | None = None
