@@ -17,6 +17,7 @@ from aep.dogfood_runtime import (
     _historical_replay_inputs,
     _replay_resource_collection,
     _reconciliation_revision,
+    _has_in_flight_tasks,
 )
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
 from aep.runtime_store import InMemoryRuntimeObjectStore
@@ -360,6 +361,12 @@ def test_consumer_retains_outbox_until_approval_wait_resumes(tmp_path: Path) -> 
     runner.workflow_terminal = True
     assert consumer.run_once() == 1
     assert dispatcher.pending_requests() == ()
+
+
+@pytest.mark.parametrize("status", ["AWAITING_APPROVAL", "PENDING", "RUNNING"])
+def test_runner_treats_approval_and_resumed_tasks_as_in_flight(status: str) -> None:
+    assert _has_in_flight_tasks([{"kind": "TaskExecution", "status": status}]) is True
+    assert _has_in_flight_tasks([{"kind": "TaskExecution", "status": "SUCCEEDED"}]) is False
 
 
 def test_configuration_failure_is_persisted_and_not_hot_retried(tmp_path: Path) -> None:

@@ -245,6 +245,7 @@ class WorkflowScheduler:
         )
         self._recover_pending_approval_requests(workflow_id, timestamp)
         self._recover_approved_task_wakeups(workflow_id, timestamp)
+        self._fail_rejected_approval_waits(workflow_id, timestamp)
         self._ensure_resolved_task_plan(workflow_id, plan, timestamp)
         self._repair_attempt_evidence(workflow_id, timestamp)
         attempts_by_ref = _attempts_by_task(
@@ -516,6 +517,31 @@ class WorkflowScheduler:
                 artifact_digests=intent.get("artifactDigests"),
                 approval_policy_refs=tuple(intent.get("approvalPolicyRefs", ())),
                 expected_current_approval_id=intent.get("expectedCurrentApprovalId"),
+            )
+
+    def _fail_rejected_approval_waits(self, workflow_id: str, timestamp: str) -> None:
+        """Make rejection/expiry terminal for the task's current approval wait."""
+        records = self._store.list_by_workflow_execution(workflow_id)
+        decisions = {
+            str(record.get("id")): record
+            for record in records if record.get("kind") == "Approval"
+        }
+        for task in records:
+            if task.get("kind") != "TaskExecution" or task.get("status") != "AWAITING_APPROVAL":
+                continue
+            approval_id = task.get("approvalId")
+            approval = decisions.get(str(approval_id)) if approval_id else None
+            if not isinstance(approval, Mapping) or approval.get("status") not in {"REJECTED", "EXPIRED"}:
+                continue
+            changes = {"failure": {
+                "class": FailureClass.POLICY.value,
+                "message": "Approval was rejected or expired; the gated action remains blocked.",
+                "retryable": False,
+            }}
+            self._transition_and_emit(
+                task, TaskStatus.FAILED,
+                event_type="TaskExecutionFailed", timestamp=timestamp,
+                changes=changes,
             )
 
     def _recover_durable_start(

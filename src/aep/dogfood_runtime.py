@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 import codecs
 from copy import deepcopy
 from dataclasses import replace
@@ -816,12 +816,10 @@ class DogfoodWorkflowRunner:
             if item.get("status") == "SUCCEEDED"
         }
         expected_names = {node.task_ref.name for node in plan.nodes}
-        awaiting_approval = any(
-            item.get("status") == "AWAITING_APPROVAL" for item in tasks
-        )
-        failed = successful_names != expected_names and not awaiting_approval
+        in_flight = _has_in_flight_tasks(tasks)
+        failed = successful_names != expected_names and not in_flight
         current = self._store.get(execution_id) or execution
-        if current.get("status") == "RUNNING" and not awaiting_approval:
+        if current.get("status") == "RUNNING" and not in_flight:
             changes: dict[str, Any] = {}
             if replay_execution:
                 changes["replayProvenance"] = {
@@ -1110,6 +1108,13 @@ def _reconciliation_revision(
             "existing WorkflowExecution has no repositoryRevision"
         )
     return revision
+
+
+def _has_in_flight_tasks(tasks: Sequence[Mapping[str, Any]]) -> bool:
+    return any(
+        item.get("status") in {"PENDING", "RUNNING", "AWAITING_APPROVAL"}
+        for item in tasks
+    )
 
 
 def _pinned_workspace_reader(

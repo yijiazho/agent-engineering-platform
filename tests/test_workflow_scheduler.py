@@ -244,6 +244,47 @@ def test_wait_intent_recovers_if_approval_persistence_fails(monkeypatch) -> None
     assert store.get("approval-recover-request")["status"] == "PENDING"
 
 
+def test_rejected_approval_fails_waiting_task_without_reexecution() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    digest = "sha256:" + "d" * 64
+
+    class RejectableExecutor:
+        calls = 0
+
+        def execute(self, task, task_execution):
+            self.calls += 1
+            policy = {
+                "apiVersion": "aep.dev/v1alpha1", "kind": "PolicyDecision",
+                "id": "policydecision-rejected-wait", "traceId": TRACE_ID,
+                "createdAt": TIMESTAMP, "updatedAt": TIMESTAMP,
+                "provenance": {"actor": "policy-engine", "workflowExecutionId": WORKFLOW_ID,
+                               "taskExecutionId": task_execution["id"], "repositoryRevision": "abcdef0"},
+                "taskExecutionId": task_execution["id"], "policyRefs": [{"kind": "Policy", "name": "review", "version": "1.0.0"}],
+                "action": "github.create_pr", "decision": "REQUIRE_APPROVAL", "repositoryRevision": "abcdef0",
+            }
+            store.create(policy, deterministic_key=policy["id"])
+            return TaskExecutionResult.awaiting_approval({
+                "approvalId": "approval-rejected-wait", "policyDecisionId": policy["id"],
+                "requester": "scheduler-test", "digest": digest,
+                "authorizedReviewers": ("alice",),
+            })
+
+    executor = RejectableExecutor()
+    runtime = scheduler(store, executor)
+    runtime.reconcile(plan, execution)
+    ApprovalGate(store).decide(
+        "approval-rejected-wait", actor="alice", decision="REJECTED",
+        timestamp=TIMESTAMP, reason="Changes requested", current_digest=digest,
+    )
+
+    runtime.reconcile(plan, execution)
+    failed = task_executions(store)[0]
+
+    assert failed["status"] == "FAILED"
+    assert failed["failure"]["class"] == "POLICY"
+    assert executor.calls == 1
+
+
 def test_recoverable_failure_retries_with_next_attempt_number() -> None:
     store, plan, execution = scheduler_inputs([node("analyze")])
     executor = FakeExecutor(
