@@ -37,6 +37,9 @@ def _validate_suite(suite: Mapping[str, Any]) -> None:
     _validate_ref(spec["workflowRef"], "Workflow")
     for reference in spec["evaluationRefs"]:
         _validate_ref(reference, "Evaluation")
+    case_ids = [case["id"] for case in spec["cases"]]
+    if len(case_ids) != len(set(case_ids)):
+        raise EvaluationSuiteError("cases require unique non-empty ids")
 
 
 def load_suite(path: Path | str) -> dict[str, Any]:
@@ -244,8 +247,9 @@ def _execution_evidence(
              "totalTokens": input_tokens + output_tokens}
     costs = [item["cost"] for item in models if isinstance(item.get("cost"), (int, float))]
     evaluations = [item for item in related if item.get("kind") == "EvaluationResult"]
-    build_results = [item for item in evaluations if _evaluation_type(item) == "build"]
-    test_results = [item for item in evaluations if _evaluation_type(item) == "test"]
+    effective_evaluations = _effective_evaluations(related)
+    build_results = [item for item in effective_evaluations if _evaluation_type(item) == "build"]
+    test_results = [item for item in effective_evaluations if _evaluation_type(item) == "test"]
     return {"sourceExecutionId": source_id, "executionId": execution.get("id"),
             "repositoryRevision": execution.get("repositoryRevision"),
             "resourceRefs": deepcopy(execution.get("provenance", {}).get("resourceRefs", [])),
@@ -262,7 +266,7 @@ def _execution_evidence(
                     key=lambda value: (str(value.get("taskRef")), int(value.get("attempt", 0)), str(value.get("id", ""))),
                 )
             ],
-            "metrics": _evaluation_metrics(evaluations),
+            "metrics": _evaluation_metrics(effective_evaluations),
             "modelInvocationCount": len(models), "tokenUsage": token,
             "cost": sum(costs) if costs else None,
             "buildSuccess": _all_pass(build_results), "testSuccess": _all_pass(test_results)}
@@ -288,15 +292,34 @@ def _all_pass(results: Sequence[Mapping[str, Any]]) -> bool | None:
     return all(item.get("outcome") == "PASS" for item in results)
 
 
+def _effective_evaluations(related: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    tasks = [item for item in related if item.get("kind") == "TaskExecution"]
+    effective_ids: set[str] = set()
+    all_task_ids = {item.get("id") for item in tasks}
+    latest: dict[str, Mapping[str, Any]] = {}
+    for task in tasks:
+        reference = task.get("taskRef")
+        key = json.dumps(reference, sort_keys=True) if isinstance(reference, Mapping) else str(task.get("id"))
+        previous = latest.get(key)
+        rank = (int(task.get("attempt", 0)), str(task.get("id", "")))
+        if previous is None or rank > (int(previous.get("attempt", 0)), str(previous.get("id", ""))):
+            latest[key] = task
+    effective_ids.update(str(item.get("id")) for item in latest.values() if item.get("id") is not None)
+    return [item for item in related if item.get("kind") == "EvaluationResult" and (
+        item.get("taskExecutionId") is None
+        or item.get("taskExecutionId") not in all_task_ids
+        or str(item.get("taskExecutionId")) in effective_ids
+    )]
+
+
 def _historical_case_passed(
     execution: Mapping[str, Any], related: Sequence[Mapping[str, Any]],
     evaluation_refs: Sequence[Mapping[str, Any]],
 ) -> tuple[bool, str | None]:
+    scoring_evaluations = _effective_evaluations(related)
     for reference in evaluation_refs:
         matching = [
-            result for result in related
-            if result.get("kind") == "EvaluationResult"
-            and result.get("evaluationRef") == reference
+            result for result in scoring_evaluations if result.get("evaluationRef") == reference
         ]
         if not matching:
             return False, f"selected Evaluation {reference['name']!r} produced no result"

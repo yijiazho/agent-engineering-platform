@@ -310,3 +310,35 @@ def test_runtime_checkpoint_fixture_is_schema_valid():
     for value in json.loads(fixture.read_text(encoding="utf-8"))["objects"].values():
         validator = _runtime_validator(f"{str(value['kind']).lower()}.schema.json")
         assert not list(validator.iter_errors(value))
+
+
+def test_eval_loads_existing_suite_file_whose_name_looks_like_a_run_id(tmp_path, capsys, monkeypatch):
+    suite = {
+        "apiVersion": "aep.dev/v1alpha1", "kind": "EvaluationSuite",
+        "metadata": {"name": "regression", "version": "1.0.0"},
+        "spec": {
+            "workflowRef": {"kind": "Workflow", "name": "demo", "version": "1.0.0"},
+            "evaluationRefs": [{"kind": "Evaluation", "name": "acceptance", "version": "1.0.0"}],
+            "cases": [{"id": "fixture", "kind": "fixture", "sourceRevision": "a" * 40,
+                       "inputIdentity": "sha256:fixture", "expectedOutcome": "PASS"}],
+        },
+    }
+    (tmp_path / "evaluationsuite-regression.yaml").write_text(json.dumps(suite), encoding="utf-8")
+    state = tmp_path / "state.json"
+    monkeypatch.chdir(tmp_path)
+    assert main(["--state-file", str(state), "--output", "json", "eval", "evaluationsuite-regression.yaml"]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "SUCCEEDED"
+
+
+def test_eval_redacts_sensitive_suite_failure_unless_unsafe_debug(tmp_path, capsys):
+    run_id = "evaluationsuite-" + "a" * 24
+    state = _checkpoint(tmp_path, [{
+        "id": run_id, "kind": "EvaluationSuiteRun", "status": "FAILED",
+        "caseResults": [{"caseId": "history", "failure": {"message": "private repository content"}, "outcome": "FAIL"}],
+    }])
+    assert main(["--state-file", str(state), "--output", "json", "eval", run_id]) == 1
+    safe = capsys.readouterr().out
+    assert "private repository content" not in safe
+    assert "[REDACTED]" in safe
+    assert main(["--state-file", str(state), "--unsafe-debug", "--output", "json", "eval", run_id]) == 1
+    assert "private repository content" in capsys.readouterr().out

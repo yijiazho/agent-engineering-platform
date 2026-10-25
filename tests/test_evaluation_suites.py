@@ -150,10 +150,38 @@ def test_publication_suppression_does_not_fail_a_passing_regression_case():
     ]
 
 
+def test_superseded_evaluation_failure_is_excluded_from_scoring_and_success_rates():
+    from aep.evaluation_suites import _execution_evidence, _historical_case_passed
+    evaluation = {"kind": "Evaluation", "name": "acceptance", "version": "2.0.0"}
+    related = [
+        {"id": "run-1", "kind": "TaskExecution", "taskRef": {"name": "run-validation"}, "attempt": 1},
+        {"id": "run-2", "kind": "TaskExecution", "taskRef": {"name": "run-validation"}, "attempt": 2},
+        {"id": "failed-test", "kind": "EvaluationResult", "taskExecutionId": "run-1",
+         "evaluationRef": evaluation, "status": "FAILED", "outcome": "FAIL",
+         "evidence": {"evaluationType": "test"}, "metrics": {"durationMs": 100}},
+        {"id": "passed-test", "kind": "EvaluationResult", "taskExecutionId": "run-2",
+         "evaluationRef": evaluation, "status": "SUCCEEDED", "outcome": "PASS",
+         "evidence": {"evaluationType": "test"}, "metrics": {"durationMs": 20}},
+    ]
+    assert _historical_case_passed({"status": "SUCCEEDED"}, related, [evaluation]) == (True, None)
+    evidence = _execution_evidence({"status": "SUCCEEDED"}, related, "source")
+    assert evidence["testSuccess"] is True
+    assert evidence["metrics"] == {"durationMs": 20}
+    assert [item["id"] for item in evidence["evaluationResults"]] == ["failed-test", "passed-test"]
+
+
 def test_direct_suite_runner_rejects_floating_resource_versions_before_persisting():
     suite, store = _suite(), InMemoryRuntimeObjectStore()
     suite["spec"]["workflowRef"]["version"] = "latest"
     with pytest.raises(EvaluationSuiteError, match="immutable Workflow"):
+        run_suite(suite, store)
+    assert not store._objects
+
+
+def test_direct_suite_runner_rejects_duplicate_case_ids_before_persisting():
+    suite, store = _suite(), InMemoryRuntimeObjectStore()
+    suite["spec"]["cases"][1]["id"] = suite["spec"]["cases"][0]["id"]
+    with pytest.raises(EvaluationSuiteError, match="unique"):
         run_suite(suite, store)
     assert not store._objects
 

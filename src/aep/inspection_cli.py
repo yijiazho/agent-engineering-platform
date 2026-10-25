@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -350,16 +351,16 @@ class ExecutionInspector:
         )
 
     def _safe(self, value: Any, *, unsafe: bool) -> Any:
-        if unsafe:
-            return deepcopy(value)
         if isinstance(value, Mapping):
+            if unsafe:
+                return {str(key): self._safe(item, unsafe=True) for key, item in value.items()}
             safe = {str(key): ("[REDACTED]" if _is_sensitive_key(str(key)) else self._safe(item, unsafe=False)) for key, item in value.items()}
             reasons = _context_selection_reasons(value)
             if reasons is not None:
                 safe["selectionReasons"] = reasons
             return safe
         if isinstance(value, list):
-            return [self._safe(item, unsafe=False) for item in value]
+            return [self._safe(item, unsafe=unsafe) for item in value]
         return deepcopy(value)
 
     def safe_output(self, value: Any, *, unsafe: bool = False) -> Any:
@@ -527,7 +528,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "eval":
             store = DurableJsonRuntimeObjectStore(args.state_file)
-            if str(args.suite).startswith("evaluationsuite-"):
+            suite_argument = str(args.suite)
+            if re.fullmatch(r"evaluationsuite-[0-9a-f]{24}", suite_argument) and not args.suite.is_file():
                 result = store.get(str(args.suite))
                 if result is None:
                     raise InspectionError("SUITE_NOT_FOUND", "evaluation suite run was not found")
@@ -542,6 +544,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         source, overrides=tuple(overrides), publication=False
                     )  # type: ignore[union-attr]
                 ) if runtime is not None else None)
+            result = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects()).safe_output(
+                result, unsafe=args.unsafe_debug
+            )
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0 if result.get("status") == "SUCCEEDED" else 1
