@@ -291,6 +291,34 @@ def test_suite_reloads_checkpoint_after_waiting_to_acquire_lease(tmp_path):
     assert len(calls) == 1
 
 
+def test_expired_suite_lease_owner_cannot_checkpoint_or_finalize():
+    suite = _suite()
+    suite["spec"]["cases"] = [{"id": "history", "kind": "historical", "workflowExecutionId": "source"}]
+    store = InMemoryRuntimeObjectStore()
+    workflow, evaluations = suite["spec"]["workflowRef"], suite["spec"]["evaluationRefs"]
+    store.create({"id": "source", "kind": "WorkflowExecution", "workflowRef": workflow,
+                  "provenance": {"resourceRefs": [workflow, *evaluations]}}, deterministic_key="source")
+
+    def runner(_, __):
+        store.create({"id": "replay", "kind": "WorkflowExecution", "status": "SUCCEEDED",
+                      "provenance": {"resourceRefs": []}}, deterministic_key="replay")
+        store.create({"id": "replay-evaluation", "kind": "EvaluationResult", "workflowExecutionId": "replay",
+                      "status": "SUCCEEDED", "outcome": "PASS", "evaluationRef": evaluations[0]},
+                     deterministic_key="replay-evaluation")
+        suite_id = next(key for key in store._objects if key.startswith("evaluationsuite-"))
+        assert store.acquire_lease(
+            f"evaluation-suite-run:{suite_id}", "replacement-owner",
+            now="2099-01-01T00:00:00Z", expires_at="2100-01-01T00:00:00Z",
+        )
+        return "replay"
+
+    with pytest.raises(EvaluationSuiteError, match="lease was lost before checkpoint"):
+        run_suite(suite, store, historical_runner=runner)
+    suite_run = next(value for value in store._objects.values() if value.get("kind") == "EvaluationSuiteRun")
+    assert suite_run["status"] == "RUNNING"
+    assert suite_run["caseResults"] == []
+
+
 def test_suite_optional_fields_are_validated_before_runtime_creation(tmp_path):
     suite = _suite()
     suite["spec"]["cases"][0]["metrics"] = None

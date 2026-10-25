@@ -44,6 +44,10 @@ reconcilers from losing or duplicating `taskExecutionIds` membership.
 The durable implementation extends this contract with a cross-process writer
 fence and `commit_task_execution_transition`, which checkpoints a TaskExecution
 status change, WorkflowExecution attachment, and its ExecutionEvent together.
+Lease-owned workers can call `update_status_with_lease`, which verifies an
+active owner token and updates the runtime object in the same store transaction.
+This prevents a worker whose lease expired or was reclaimed from overwriting a
+replacement worker's checkpoint.
 Its JSON adapter refreshes state while holding the fence, writes a uniquely
 named sibling checkpoint, flushes and syncs it, replaces the configured file,
 and syncs the directory where supported. Failures expose only bounded

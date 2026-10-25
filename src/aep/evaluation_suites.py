@@ -16,7 +16,7 @@ from uuid import uuid4
 import yaml
 from jsonschema import Draft202012Validator
 
-from aep.runtime_store import RuntimeObjectStore
+from aep.runtime_store import RuntimeObjectStore, StatusConflictError
 
 
 class EvaluationSuiteError(ValueError):
@@ -138,7 +138,9 @@ def run_suite(
     heartbeat_thread = Thread(target=heartbeat, name=f"{suite_id}-lease", daemon=True)
     heartbeat_thread.start()
     try:
-        return _run_claimed_suite(suite, store, historical_runner, clock, suite_id, record, lease_lost)
+        return _run_claimed_suite(
+            suite, store, historical_runner, clock, suite_id, lease_key, owner_id, record, lease_lost
+        )
     finally:
         heartbeat_stop.set()
         heartbeat_thread.join(timeout=2)
@@ -147,7 +149,7 @@ def run_suite(
 
 def _run_claimed_suite(suite: Mapping[str, Any], store: RuntimeObjectStore,
                        historical_runner: Callable[[str, Sequence[str]], str] | None,
-                       clock: Callable[[], str], suite_id: str,
+                       clock: Callable[[], str], suite_id: str, lease_key: str, owner_id: str,
                        record: dict[str, Any], lease_lost: Event) -> dict[str, Any]:
     spec = suite["spec"]
     cases = sorted(spec["cases"], key=lambda item: item["id"])
@@ -201,12 +203,24 @@ def _run_claimed_suite(suite: Mapping[str, Any], store: RuntimeObjectStore,
             case_record["failure"] = failure
         results.append(case_record)
         record.update({"caseResults": deepcopy(results), "updatedAt": case_record["completedAt"]})
-        record = dict(store.update_status(suite_id, "RUNNING", expected_status="RUNNING",
-                                          updated_at=case_record["completedAt"], changes={"caseResults": results}))
+        try:
+            record = dict(store.update_status_with_lease(
+                suite_id, "RUNNING", lease_key=lease_key, owner_id=owner_id,
+                now=case_record["completedAt"], expected_status="RUNNING",
+                updated_at=case_record["completedAt"], changes={"caseResults": results},
+            ))
+        except StatusConflictError as error:
+            raise EvaluationSuiteError("evaluation suite execution lease was lost before checkpoint") from error
     aggregate = aggregate_results(results, spec.get("metrics", []))
     final_status = "SUCCEEDED" if all(item["outcome"] == "PASS" for item in results) else "FAILED"
-    return dict(store.update_status(suite_id, final_status, expected_status="RUNNING", updated_at=clock(),
-                                    changes={"aggregate": aggregate}))
+    finalized_at = clock()
+    try:
+        return dict(store.update_status_with_lease(
+            suite_id, final_status, lease_key=lease_key, owner_id=owner_id, now=finalized_at,
+            expected_status="RUNNING", updated_at=finalized_at, changes={"aggregate": aggregate},
+        ))
+    except StatusConflictError as error:
+        raise EvaluationSuiteError("evaluation suite execution lease was lost before finalization") from error
 
 
 def aggregate_results(results: Sequence[Mapping[str, Any]], configured_metrics: Sequence[str] = ()) -> dict[str, Any]:

@@ -382,7 +382,7 @@ def _belongs_to_workflow(value: Mapping[str, Any], workflow_execution_id: str) -
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("_", "").replace("-", "")
-    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "promptref"}:
+    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "inputtokens", "outputtokens", "totaltokens", "promptref"}:
         return False
     return normalized in SENSITIVE_FIELDS or normalized in {"logs", "message"} or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")

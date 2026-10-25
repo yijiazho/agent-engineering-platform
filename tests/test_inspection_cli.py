@@ -342,3 +342,20 @@ def test_eval_redacts_sensitive_suite_failure_unless_unsafe_debug(tmp_path, caps
     assert "[REDACTED]" in safe
     assert main(["--state-file", str(state), "--unsafe-debug", "--output", "json", "eval", run_id]) == 1
     assert "private repository content" in capsys.readouterr().out
+
+
+def test_eval_safe_output_keeps_numeric_token_counters_but_redacts_credentials(tmp_path, capsys):
+    run_id = "evaluationsuite-" + "b" * 24
+    state = _checkpoint(tmp_path, [{
+        "id": run_id, "kind": "EvaluationSuiteRun", "status": "SUCCEEDED",
+        "aggregate": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19},
+        "caseResults": [{"caseId": "history", "outcome": "PASS", "evidence": {
+            "tokenUsage": {"inputTokens": 12, "outputTokens": 7, "totalTokens": 19},
+            "accessToken": "credential-value",
+        }}],
+    }])
+    assert main(["--state-file", str(state), "--output", "json", "eval", run_id]) == 0
+    output = capsys.readouterr().out
+    for field, value in (("inputTokens", 12), ("outputTokens", 7), ("totalTokens", 19)):
+        assert f'"{field}": {value}' in output
+    assert "credential-value" not in output

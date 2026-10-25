@@ -54,7 +54,10 @@ revision, and build/test outcomes. Aggregates report pass rate, configured
 EvaluationResult metric means, build/test success rates, model calls, token
 totals, available cost, and summed case latency. Durable renewable execution
 leases prevent concurrent invocations from dispatching duplicate work, and
-terminal runs return their existing result on repeat invocation. Case scoring
+terminal runs return their existing result on repeat invocation. Checkpoint and
+final status writes atomically verify active lease ownership, so a worker that
+loses its lease cannot overwrite its replacement. Normal CLI output preserves
+numeric token counters while redacting token credentials. Case scoring
 uses the effective (latest) attempt for each Task while retaining all attempts
 in evidence. It requires selected EvaluationResults to pass and permits only
 the explicit publication-disabled policy denial on CreatePullRequest; other

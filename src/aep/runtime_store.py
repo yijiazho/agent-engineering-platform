@@ -93,6 +93,21 @@ class RuntimeObjectStore(ABC):
         """Release a lease only when the caller still owns it."""
 
     @abstractmethod
+    def update_status_with_lease(
+        self,
+        object_id: str,
+        status: str,
+        *,
+        lease_key: str,
+        owner_id: str,
+        now: str,
+        expected_status: str | None = None,
+        updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        """Atomically update an object only while the caller owns an active lease."""
+
+    @abstractmethod
     def update_status(
         self,
         object_id: str,
@@ -309,6 +324,20 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
                 return False
             del self._leases[key]
             return True
+
+    def update_status_with_lease(
+        self, object_id: str, status: str, *, lease_key: str, owner_id: str, now: str,
+        expected_status: str | None = None, updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        with self._lock:
+            lease = self._leases.get(lease_key)
+            if lease is None or lease["ownerId"] != owner_id or lease["expiresAt"] <= now:
+                raise StatusConflictError("execution lease ownership was lost")
+            return InMemoryRuntimeObjectStore.update_status(
+                self, object_id, status, expected_status=expected_status,
+                updated_at=updated_at, changes=changes,
+            )
 
     def claim_task_dispatch(
         self,
@@ -623,6 +652,16 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
 
     def release_lease(self, key: str, owner_id: str) -> bool:
         return self._mutate(lambda: InMemoryRuntimeObjectStore.release_lease(self, key, owner_id))
+
+    def update_status_with_lease(
+        self, object_id: str, status: str, *, lease_key: str, owner_id: str, now: str,
+        expected_status: str | None = None, updated_at: str | None = None,
+        changes: RuntimeObject | None = None,
+    ) -> RuntimeObject:
+        return self._mutate(lambda: InMemoryRuntimeObjectStore.update_status_with_lease(
+            self, object_id, status, lease_key=lease_key, owner_id=owner_id, now=now,
+            expected_status=expected_status, updated_at=updated_at, changes=changes,
+        ))
 
     def claim_task_dispatch(
         self,
