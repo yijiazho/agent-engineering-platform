@@ -128,6 +128,13 @@ def test_publication_suppression_does_not_fail_a_passing_regression_case():
         store.create({"id": "evaluation-result", "kind": "EvaluationResult",
                       "workflowExecutionId": "replay", "status": "SUCCEEDED", "outcome": "PASS",
                       "evaluationRef": evaluation, "metrics": {"passed": 1}}, deterministic_key="evaluation-result")
+        store.create({"id": "analysis-attempt-1", "kind": "TaskExecution", "workflowExecutionId": "replay",
+                      "taskRef": {"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
+                      "attempt": 1, "status": "FAILED", "failure": {"class": "RECOVERABLE", "message": "retry"}},
+                     deterministic_key="analysis-attempt-1")
+        store.create({"id": "analysis-attempt-2", "kind": "TaskExecution", "workflowExecutionId": "replay",
+                      "taskRef": {"kind": "Task", "name": "analyze-issue", "version": "1.0.0"},
+                      "attempt": 2, "status": "SUCCEEDED"}, deterministic_key="analysis-attempt-2")
         store.create({"id": "publication-task", "kind": "TaskExecution", "workflowExecutionId": "replay",
                       "taskRef": {"kind": "Task", "name": "create-pull-request", "version": "1.0.0"},
                       "status": "FAILED", "failure": {"class": "POLICY", "message": "publication is disabled for replay"}},
@@ -137,6 +144,18 @@ def test_publication_suppression_does_not_fail_a_passing_regression_case():
     result = run_suite(suite, store, historical_runner=runner)
     assert result["status"] == "SUCCEEDED"
     assert result["caseResults"][0]["outcome"] == "PASS"
+    attempts = result["caseResults"][0]["evidence"]["taskExecutions"]
+    assert [item["id"] for item in attempts if item["id"].startswith("analysis-")] == [
+        "analysis-attempt-1", "analysis-attempt-2"
+    ]
+
+
+def test_direct_suite_runner_rejects_floating_resource_versions_before_persisting():
+    suite, store = _suite(), InMemoryRuntimeObjectStore()
+    suite["spec"]["workflowRef"]["version"] = "latest"
+    with pytest.raises(EvaluationSuiteError, match="immutable Workflow"):
+        run_suite(suite, store)
+    assert not store._objects
 
 
 def test_completed_suite_rerun_returns_existing_terminal_evidence():

@@ -33,6 +33,10 @@ def _validate_suite(suite: Mapping[str, Any]) -> None:
         if isinstance(error, ValidationError):
             raise EvaluationSuiteError(f"invalid EvaluationSuite: {error.message}") from None
         raise EvaluationSuiteError("evaluation suite schema could not be loaded") from None
+    spec = suite["spec"]
+    _validate_ref(spec["workflowRef"], "Workflow")
+    for reference in spec["evaluationRefs"]:
+        _validate_ref(reference, "Evaluation")
 
 
 def load_suite(path: Path | str) -> dict[str, Any]:
@@ -251,6 +255,13 @@ def _execution_evidence(
                                    "evaluationSchemaVersion": (item.get("evaluationRef") or {}).get("version"),
                                    "metrics": deepcopy(item.get("metrics", {}))}
                                   for item in evaluations],
+            "taskExecutions": [
+                {key: deepcopy(item[key]) for key in ("id", "taskRef", "attempt", "status", "failure") if key in item}
+                for item in sorted(
+                    (value for value in related if value.get("kind") == "TaskExecution"),
+                    key=lambda value: (str(value.get("taskRef")), int(value.get("attempt", 0)), str(value.get("id", ""))),
+                )
+            ],
             "metrics": _evaluation_metrics(evaluations),
             "modelInvocationCount": len(models), "tokenUsage": token,
             "cost": sum(costs) if costs else None,
@@ -295,8 +306,20 @@ def _historical_case_passed(
         execution.get("replayProvenance", {}).get("publicationMode") == "disabled"
         if isinstance(execution.get("replayProvenance"), Mapping) else False
     )
+    effective_tasks: dict[str, Mapping[str, Any]] = {}
     for task in related:
-        if task.get("kind") != "TaskExecution" or task.get("status") not in {"FAILED", "BLOCKED"}:
+        if task.get("kind") != "TaskExecution":
+            continue
+        reference = task.get("taskRef")
+        key = json.dumps(reference, sort_keys=True) if isinstance(reference, Mapping) else str(task.get("id"))
+        previous = effective_tasks.get(key)
+        if previous is None or (int(task.get("attempt", 0)), str(task.get("id", ""))) > (
+            int(previous.get("attempt", 0)), str(previous.get("id", ""))
+        ):
+            effective_tasks[key] = task
+    publication_denial_seen = False
+    for task in effective_tasks.values():
+        if task.get("status") not in {"FAILED", "BLOCKED"}:
             continue
         task_ref = task.get("taskRef")
         failure = task.get("failure")
@@ -306,8 +329,14 @@ def _historical_case_passed(
             and isinstance(failure, Mapping) and failure.get("class") == "POLICY"
             and failure.get("message") == "publication is disabled for replay"
         )
-        if not publication_denial:
+        if publication_denial:
+            publication_denial_seen = True
+        else:
             return False, "historical replay contains a failed or blocked Task"
+    if execution.get("status") != "SUCCEEDED" and not (
+        execution.get("status") == "FAILED" and publication_denial_seen
+    ):
+        return False, "historical replay did not complete successfully"
     return True, None
 
 

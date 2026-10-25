@@ -54,7 +54,12 @@ revision, and build/test outcomes. Aggregates report pass rate, configured
 EvaluationResult metric means, build/test success rates, model calls, token
 totals, available cost, and summed case latency. Durable renewable execution
 leases prevent concurrent invocations from dispatching duplicate work, and
-terminal runs return their existing result on repeat invocation.
+terminal runs return their existing result on repeat invocation. Case scoring
+uses the effective (latest) attempt for each Task while retaining all attempts
+in evidence. It requires selected EvaluationResults to pass and permits only
+the explicit publication-disabled policy denial on CreatePullRequest; other
+failed or blocked Tasks fail the case. Direct runner calls enforce the same
+semantic immutable-reference checks as file-loaded definitions.
 
 The repository example is `fixtures/resources/evaluation-suite-issue-to-pr.yaml`;
 invoke it with `aep --state-file <checkpoint> eval fixtures/resources/evaluation-suite-issue-to-pr.yaml`.
