@@ -6,6 +6,7 @@ from threading import Event
 
 import pytest
 
+from aep.approval import ApprovalGate
 import aep.runtime_store as runtime_store_module
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
 from aep.runtime_store import (
@@ -98,6 +99,54 @@ def test_dependent_waits_for_success_and_records_dependency_attempts() -> None:
         first.task_executions[0]["id"]
     ]
     assert executor.calls == [("analyze", 1), ("plan", 1)]
+
+
+def test_approval_wait_survives_restart_and_resumes_once_after_approval() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    digest = "sha256:" + "a" * 64
+
+    class ApprovalExecutor:
+        calls = 0
+
+        def execute(self, task, task_execution):
+            self.calls += 1
+            if self.calls > 1:
+                return TaskExecutionResult.success()
+            decision = {
+                "apiVersion": "aep.dev/v1alpha1", "kind": "PolicyDecision",
+                "id": "policydecision-approval-test", "traceId": TRACE_ID,
+                "createdAt": TIMESTAMP, "updatedAt": TIMESTAMP,
+                "provenance": {"actor": "policy-engine", "workflowExecutionId": WORKFLOW_ID,
+                               "taskExecutionId": task_execution["id"], "repositoryRevision": "abcdef0"},
+                "taskExecutionId": task_execution["id"], "policyRefs": [{"kind": "Policy", "name": "review", "version": "1.0.0"}],
+                "action": "github.create_pr", "decision": "REQUIRE_APPROVAL", "repositoryRevision": "abcdef0",
+            }
+            store.create(decision, deterministic_key="policy-decision-approval-test")
+            return TaskExecutionResult.awaiting_approval({
+                "approvalId": "approval-scheduler-test", "policyDecisionId": decision["id"],
+                "requester": "scheduler-test", "digest": digest,
+                "authorizedReviewers": ("alice",),
+                "target": {"repository": "example/repo", "branch": "main"},
+                "artifactDigests": {"patch": digest},
+            })
+
+    executor = ApprovalExecutor()
+    first = scheduler(store, executor).reconcile(plan, execution)
+    task = first.task_executions[0]
+    assert task["status"] == "AWAITING_APPROVAL", task.get("failure")
+    assert store.get("approval-scheduler-test")["target"]["repository"] == "example/repo"
+
+    restarted = scheduler(store, executor)
+    assert restarted.reconcile(plan, execution).task_executions == ()
+    ApprovalGate(store).decide(
+        "approval-scheduler-test", actor="alice", decision="APPROVED",
+        timestamp=TIMESTAMP, reason="Reviewed", current_digest=digest,
+    )
+    resumed = restarted.reconcile(plan, execution)
+    assert resumed.task_executions[0]["status"] == "SUCCEEDED"
+    assert executor.calls == 2
+    assert restarted.reconcile(plan, execution).task_executions == ()
+    assert executor.calls == 2
 
 
 def test_recoverable_failure_retries_with_next_attempt_number() -> None:

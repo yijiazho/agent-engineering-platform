@@ -30,6 +30,9 @@ class ApprovalGate:
     def request(self, *, approval_id: str, policy_decision: Mapping[str, Any],
                 requester: str, timestamp: str, digest: str,
                 authorized_reviewers: tuple[str, ...], expires_at: str | None = None,
+                target: Mapping[str, Any] | None = None,
+                artifact_digests: Mapping[str, str] | None = None,
+                approval_policy_refs: tuple[Mapping[str, Any], ...] = (),
                 expected_current_approval_id: str | None = None) -> RuntimeObject:
         if policy_decision.get("decision") != "REQUIRE_APPROVAL":
             raise ValueError("approval requires a REQUIRE_APPROVAL PolicyDecision")
@@ -44,7 +47,9 @@ class ApprovalGate:
             "taskExecutionId": policy_decision["taskExecutionId"],
             "policyDecisionId": policy_decision["id"], "requester": requester,
             "status": "PENDING", "requestedAt": timestamp,
-            "governingPolicyRefs": list(policy_decision["policyRefs"]),
+            "governingPolicyRefs": _unique_refs(
+                (*policy_decision["policyRefs"], *approval_policy_refs)
+            ),
             "targetAction": policy_decision["action"],
             "repositoryRevision": policy_decision.get("repositoryRevision", policy_decision["provenance"].get("repositoryRevision")),
             "artifactRequestDigest": digest,
@@ -52,6 +57,10 @@ class ApprovalGate:
         }
         if expires_at is not None:
             record["expiresAt"] = expires_at
+        if target is not None:
+            record["target"] = dict(target)
+        if artifact_digests is not None:
+            record["artifactDigests"] = dict(artifact_digests)
         return self.store.create_approval_request(
             record,
             deterministic_key=f"approval:{policy_decision['id']}:{digest}",
@@ -65,6 +74,7 @@ class ApprovalGate:
         if approval is None or approval.get("kind") != "Approval":
             raise ValueError("approval request was not found")
         if actor not in approval.get("authorizedReviewers", ()):
+            self._record_unauthorized_attempt(approval, actor, decision, timestamp)
             raise PermissionError("identity is not authorized by the resolved approval policy")
         if current_digest != approval.get("artifactRequestDigest"):
             raise ValueError("approval is stale because its bound artifact or action changed")
@@ -100,6 +110,25 @@ class ApprovalGate:
             if task is not None and task.get("status") in {"AWAITING_APPROVAL", "PENDING"}:
                 self.store.wake_approved_task(task_id, approval_id, updated_at=timestamp)
 
+    def _record_unauthorized_attempt(
+        self, approval: Mapping[str, Any], actor: str, decision: str, timestamp: str
+    ) -> None:
+        attempt_key = f"{approval['id']}:{actor}:{decision}:{timestamp}"
+        event_id = "executionevent-" + sha256(attempt_key.encode("utf-8")).hexdigest()[:24]
+        event = {
+            "apiVersion": "aep.dev/v1alpha1", "kind": "ExecutionEvent", "id": event_id,
+            "traceId": approval["traceId"], "createdAt": timestamp, "updatedAt": timestamp,
+            "provenance": {
+                "actor": "approval-gate", "workflowExecutionId": approval["workflowExecutionId"],
+                "taskExecutionId": approval["taskExecutionId"], "resourceRefs": approval.get("governingPolicyRefs", []),
+            },
+            "eventType": "ApprovalAuthorizationDenied",
+            "subject": {"kind": "Approval", "id": approval["id"]},
+            "sequence": 1, "emittedAt": timestamp,
+            "payload": {"actorIdentity": actor, "requestedDecision": decision, "reasonCode": "UNAUTHORIZED_REVIEWER"},
+        }
+        self.store.append_event(event)
+
 
 def _timestamp(value: str) -> datetime:
     try:
@@ -109,3 +138,12 @@ def _timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("approval timestamps must include a timezone")
     return parsed
+
+
+def _unique_refs(values: Any) -> list[dict[str, Any]]:
+    result: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for value in values:
+        ref = dict(value)
+        key = (str(ref.get("kind")), str(ref.get("name")), str(ref.get("version")))
+        result[key] = ref
+    return [result[key] for key in sorted(result)]

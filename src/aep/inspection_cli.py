@@ -367,7 +367,7 @@ class ExecutionInspector:
 
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "sourceExecutionId", "replayProvenance", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance", "policyDecisionId", "requester", "approver", "requestedAt", "decidedAt", "expiresAt", "targetAction", "artifactRequestDigest", "governingPolicyRefs")
+    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "sourceExecutionId", "replayProvenance", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance", "policyDecisionId", "requester", "approver", "requestedAt", "decidedAt", "expiresAt", "targetAction", "artifactRequestDigest", "governingPolicyRefs", "target", "artifactDigests", "publicationTarget")
     return {field: deepcopy(value[field]) for field in fields if field in value}
 
 

@@ -125,10 +125,15 @@ class TaskExecutionResult:
     message: str | None = None
     retry_not_before: str | None = None
     details: Mapping[str, Any] | None = None
+    approval: Mapping[str, Any] | None = None
 
     @classmethod
     def success(cls) -> TaskExecutionResult:
         return cls(succeeded=True)
+
+    @classmethod
+    def awaiting_approval(cls, request: Mapping[str, Any]) -> TaskExecutionResult:
+        return cls(succeeded=False, approval=dict(request))
 
     @classmethod
     def failure(
@@ -160,6 +165,10 @@ class TaskExecutionResult:
                 or self.details is not None
             ):
                 raise ValueError("successful Task result cannot contain failure details")
+            return
+        if self.approval is not None:
+            if self.failure_class is not None or self.message is not None:
+                raise ValueError("approval wait cannot also be a failure")
             return
         if self.failure_class is None or not self.message:
             raise ValueError("failed Task result requires classification and message")
@@ -384,6 +393,28 @@ class WorkflowScheduler:
             if result.succeeded:
                 terminal_changes: dict[str, Any] = {}
                 event_type = "TaskExecutionSucceeded"
+            elif result.approval is not None:
+                policy = self._store.get(str(result.approval.get("policyDecisionId")))
+                if not isinstance(policy, Mapping):
+                    raise InvalidSchedulerInputError("approval PolicyDecision was not persisted")
+                running = self._transition_and_emit(
+                    running, TaskStatus.AWAITING_APPROVAL,
+                    event_type="TaskExecutionAwaitingApproval", timestamp=timestamp,
+                )
+                from aep.approval import ApprovalGate
+                request = result.approval
+                ApprovalGate(self._store).request(
+                    approval_id=str(request["approvalId"]),
+                    policy_decision=policy,
+                    requester=str(request["requester"]),
+                    timestamp=timestamp,
+                    digest=str(request["digest"]),
+                    authorized_reviewers=tuple(request["authorizedReviewers"]),
+                    target=request.get("target"),
+                    artifact_digests=request.get("artifactDigests"),
+                    approval_policy_refs=tuple(request.get("approvalPolicyRefs", ())),
+                )
+                continue
             else:
                 failure: dict[str, Any] = {
                     "class": result.failure_class.value,  # type: ignore[union-attr]
@@ -708,6 +739,7 @@ class WorkflowScheduler:
                     "TaskExecutionStarted": "RUNNING",
                     "TaskExecutionSucceeded": "SUCCEEDED",
                     "TaskExecutionFailed": "FAILED",
+                    "TaskExecutionAwaitingApproval": "AWAITING_APPROVAL",
                 }[event_type],
                 "attempt": task_execution["attempt"],
             },
@@ -731,6 +763,10 @@ class WorkflowScheduler:
         if not getattr(self._store, "supports_atomic_task_transitions", False):
             if status is TaskStatus.RUNNING:
                 updated = self._lifecycle.start(str(task_execution["id"]), timestamp=timestamp)
+                return updated
+            if status is TaskStatus.AWAITING_APPROVAL:
+                updated = self._lifecycle.await_approval(str(task_execution["id"]), timestamp=timestamp)
+                self._emit(updated, event_type, sequence=3, timestamp=timestamp)
                 return updated
             if status is TaskStatus.SUCCEEDED:
                 updated = self._complete_success(task_execution, timestamp)

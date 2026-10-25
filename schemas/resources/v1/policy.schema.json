@@ -18,9 +18,8 @@
         "approval": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["reviewers"],
           "properties": {
-            "reviewers": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "reviewers": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
             "groups": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
             "requireReason": { "type": "boolean", "default": true }
           }
@@ -48,7 +47,17 @@
       "allOf": [
         {
           "if": { "properties": { "type": { "const": "approval" } }, "required": ["type"] },
-          "then": { "required": ["approval"] }
+          "then": {
+            "required": ["approval"],
+            "properties": {
+              "approval": {
+                "anyOf": [
+                  { "required": ["reviewers"], "properties": { "reviewers": { "minItems": 1 } } },
+                  { "required": ["groups"], "properties": { "groups": { "minItems": 1 } } }
+                ]
+              }
+            }
+          }
         },
         {
           "if": {

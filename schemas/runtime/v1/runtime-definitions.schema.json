@@ -657,6 +657,8 @@
             ,"repositoryRevision": { "$ref": "#/$defs/repositoryRevision" }
             ,"artifactRequestDigest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
             ,"authorizedReviewers": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+            ,"target": { "$ref": "#/$defs/jsonObject" }
+            ,"artifactDigests": { "$ref": "#/$defs/jsonObject" }
           },
           "additionalProperties": true
         }
