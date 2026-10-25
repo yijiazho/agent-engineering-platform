@@ -243,6 +243,7 @@ class WorkflowScheduler:
         ) = _validate_inputs(
             plan, workflow_execution, self._store
         )
+        self._recover_pending_approval_requests(workflow_id, timestamp)
         self._recover_approved_task_wakeups(workflow_id, timestamp)
         self._ensure_resolved_task_plan(workflow_id, plan, timestamp)
         self._repair_attempt_evidence(workflow_id, timestamp)
@@ -400,9 +401,15 @@ class WorkflowScheduler:
                 running = self._transition_and_emit(
                     running, TaskStatus.AWAITING_APPROVAL,
                     event_type="TaskExecutionAwaitingApproval", timestamp=timestamp,
+                    changes={
+                        "pendingApprovalRequest": {
+                            **dict(result.approval),
+                            "expectedCurrentApprovalId": running.get("approvalId"),
+                        }
+                    },
                 )
                 from aep.approval import ApprovalGate
-                request = result.approval
+                request = running.get("pendingApprovalRequest", result.approval)
                 ApprovalGate(self._store).request(
                     approval_id=str(request["approvalId"]),
                     policy_decision=policy,
@@ -413,6 +420,7 @@ class WorkflowScheduler:
                     target=request.get("target"),
                     artifact_digests=request.get("artifactDigests"),
                     approval_policy_refs=tuple(request.get("approvalPolicyRefs", ())),
+                    expected_current_approval_id=request.get("expectedCurrentApprovalId"),
                 )
                 continue
             else:
@@ -482,6 +490,33 @@ class WorkflowScheduler:
                 self._store.wake_approved_task(
                     str(task_id), str(approval["id"]), updated_at=timestamp
                 )
+
+    def _recover_pending_approval_requests(self, workflow_id: str, timestamp: str) -> None:
+        """Recreate approval requests from the intent committed with the wait state."""
+        from aep.approval import ApprovalGate
+
+        for task in self._store.list_by_workflow_execution(workflow_id):
+            if task.get("kind") != "TaskExecution" or task.get("status") != "AWAITING_APPROVAL":
+                continue
+            intent = task.get("pendingApprovalRequest")
+            if not isinstance(intent, Mapping):
+                continue
+            approval_id = intent.get("approvalId")
+            decision = self._store.get(str(intent.get("policyDecisionId", "")))
+            if not isinstance(approval_id, str) or not isinstance(decision, Mapping):
+                continue
+            ApprovalGate(self._store).request(
+                approval_id=approval_id,
+                policy_decision=decision,
+                requester=str(intent["requester"]),
+                timestamp=timestamp,
+                digest=str(intent["digest"]),
+                authorized_reviewers=tuple(intent["authorizedReviewers"]),
+                target=intent.get("target"),
+                artifact_digests=intent.get("artifactDigests"),
+                approval_policy_refs=tuple(intent.get("approvalPolicyRefs", ())),
+                expected_current_approval_id=intent.get("expectedCurrentApprovalId"),
+            )
 
     def _recover_durable_start(
         self,
@@ -765,7 +800,10 @@ class WorkflowScheduler:
                 updated = self._lifecycle.start(str(task_execution["id"]), timestamp=timestamp)
                 return updated
             if status is TaskStatus.AWAITING_APPROVAL:
-                updated = self._lifecycle.await_approval(str(task_execution["id"]), timestamp=timestamp)
+                updated = self._lifecycle.await_approval(
+                    str(task_execution["id"]), timestamp=timestamp,
+                    changes=changes,
+                )
                 self._emit(updated, event_type, sequence=3, timestamp=timestamp)
                 return updated
             if status is TaskStatus.SUCCEEDED:

@@ -145,8 +145,103 @@ def test_approval_wait_survives_restart_and_resumes_once_after_approval() -> Non
     resumed = restarted.reconcile(plan, execution)
     assert resumed.task_executions[0]["status"] == "SUCCEEDED"
     assert executor.calls == 2
+
+
+def test_later_gate_replaces_current_approval_binding() -> None:
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    digest_a = "sha256:" + "a" * 64
+    digest_b = "sha256:" + "b" * 64
+
+    class TwoGateExecutor:
+        calls = 0
+
+        def execute(self, task, task_execution):
+            self.calls += 1
+            if self.calls == 3:
+                return TaskExecutionResult.success()
+            suffix = "a" if self.calls == 1 else "b"
+            decision_id = f"policydecision-gate-{suffix}"
+            policy = {
+                "apiVersion": "aep.dev/v1alpha1", "kind": "PolicyDecision",
+                "id": decision_id, "traceId": TRACE_ID,
+                "createdAt": TIMESTAMP, "updatedAt": TIMESTAMP,
+                "provenance": {"actor": "policy-engine", "workflowExecutionId": WORKFLOW_ID,
+                               "taskExecutionId": task_execution["id"], "repositoryRevision": "abcdef0"},
+                "taskExecutionId": task_execution["id"], "policyRefs": [{"kind": "Policy", "name": "review", "version": "1.0.0"}],
+                "action": f"capability.{suffix}", "decision": "REQUIRE_APPROVAL", "repositoryRevision": "abcdef0",
+            }
+            store.create(policy, deterministic_key=decision_id)
+            return TaskExecutionResult.awaiting_approval({
+                "approvalId": f"approval-gate-{suffix}", "policyDecisionId": decision_id,
+                "requester": "scheduler-test", "digest": digest_a if suffix == "a" else digest_b,
+                "authorizedReviewers": ("alice",), "target": {"action": suffix},
+                "artifactDigests": {"patch": digest_a if suffix == "a" else digest_b},
+            })
+
+    executor = TwoGateExecutor()
+    runtime = scheduler(store, executor)
+    first = runtime.reconcile(plan, execution).task_executions[0]
+    assert first["approvalId"] == "approval-gate-a"
+    ApprovalGate(store).decide(
+        "approval-gate-a", actor="alice", decision="APPROVED", timestamp=TIMESTAMP,
+        reason="First gate", current_digest=digest_a,
+    )
+    second = runtime.reconcile(plan, execution).task_executions[0]
+    assert second["status"] == "AWAITING_APPROVAL"
+    assert second["approvalId"] == "approval-gate-b"
+    ApprovalGate(store).decide(
+        "approval-gate-b", actor="alice", decision="APPROVED", timestamp=TIMESTAMP,
+        reason="Second gate", current_digest=digest_b,
+    )
+    third = runtime.reconcile(plan, execution).task_executions[0]
+    assert third["status"] == "SUCCEEDED"
+    assert executor.calls == 3
+
+
+def test_wait_intent_recovers_if_approval_persistence_fails(monkeypatch) -> None:
+    from aep.approval import ApprovalGate
+
+    store, plan, execution = scheduler_inputs([node("analyze")])
+    digest = "sha256:" + "c" * 64
+
+    class OneWaitExecutor:
+        calls = 0
+
+        def execute(self, task, task_execution):
+            self.calls += 1
+            if self.calls > 1:
+                return TaskExecutionResult.success()
+            policy = {
+                "apiVersion": "aep.dev/v1alpha1", "kind": "PolicyDecision",
+                "id": "policydecision-recover-request", "traceId": TRACE_ID,
+                "createdAt": TIMESTAMP, "updatedAt": TIMESTAMP,
+                "provenance": {"actor": "policy-engine", "workflowExecutionId": WORKFLOW_ID,
+                               "taskExecutionId": task_execution["id"], "repositoryRevision": "abcdef0"},
+                "taskExecutionId": task_execution["id"], "policyRefs": [{"kind": "Policy", "name": "review", "version": "1.0.0"}],
+                "action": "github.create_pr", "decision": "REQUIRE_APPROVAL", "repositoryRevision": "abcdef0",
+            }
+            store.create(policy, deterministic_key=policy["id"])
+            return TaskExecutionResult.awaiting_approval({
+                "approvalId": "approval-recover-request", "policyDecisionId": policy["id"],
+                "requester": "scheduler-test", "digest": digest,
+                "authorizedReviewers": ("alice",),
+            })
+
+    original_request = ApprovalGate.request
+    monkeypatch.setattr(ApprovalGate, "request", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("simulated persistence interruption")))
+    executor = OneWaitExecutor()
+    runtime = scheduler(store, executor)
+    with pytest.raises(OSError, match="simulated"):
+        runtime.reconcile(plan, execution)
+    task = task_executions(store)[0]
+    assert task["status"] == "AWAITING_APPROVAL"
+    assert task["pendingApprovalRequest"]["approvalId"] == "approval-recover-request"
+    assert store.get("approval-recover-request") is None
+
+    monkeypatch.setattr(ApprovalGate, "request", original_request)
+    restarted = scheduler(store, executor)
     assert restarted.reconcile(plan, execution).task_executions == ()
-    assert executor.calls == 2
+    assert store.get("approval-recover-request")["status"] == "PENDING"
 
 
 def test_recoverable_failure_retries_with_next_attempt_number() -> None:

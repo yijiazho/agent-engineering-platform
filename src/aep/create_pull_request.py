@@ -976,7 +976,8 @@ class CreatePullRequestTaskHandler:
                 )
             if previous.get("status") in {"SUCCEEDED", "FAILED"}:
                 verification = PersistedPublicationPolicyVerifier(
-                    self._runtime_store.get
+                    self._runtime_store.get,
+                    self._runtime_store.list_by_workflow_execution,
                 ).verify(request)
                 if not verification.allowed:
                     raise CreatePullRequestContractError(
@@ -1047,7 +1048,8 @@ class CreatePullRequestTaskHandler:
             request,
             pre_execute_authorize=authorize,
             publication_verifier=PersistedPublicationPolicyVerifier(
-                self._runtime_store.get
+                self._runtime_store.get,
+                self._runtime_store.list_by_workflow_execution,
             ),
             adapter=self._github_adapter,
         )

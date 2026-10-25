@@ -563,6 +563,27 @@ class DogfoodWorkflowRunner:
         with self._resource_lock:
             return self._run_locked(request)
 
+    def is_approval_pending(self, request: Mapping[str, Any]) -> bool:
+        event = request.get("event")
+        if not isinstance(event, Mapping):
+            return False
+        resolution = resolve_workflow_for_event(event, self._resources)
+        if resolution.workflow_ref is None:
+            return False
+        workflow = self._resources.get(resolution.workflow_ref)
+        if workflow is None:
+            return False
+        execution_id = str(
+            request.get("workflowExecutionId")
+            if request.get("isReplay")
+            else _workflow_execution_id(str(event["id"]), workflow)
+        )
+        return any(
+            item.get("kind") == "TaskExecution"
+            and item.get("status") == "AWAITING_APPROVAL"
+            for item in self._store.list_by_workflow_execution(execution_id)
+        )
+
     def _run_locked(self, request: Mapping[str, Any]) -> str:
         event = request.get("event")
         if not isinstance(event, Mapping):
@@ -796,9 +817,12 @@ class DogfoodWorkflowRunner:
             if item.get("status") == "SUCCEEDED"
         }
         expected_names = {node.task_ref.name for node in plan.nodes}
-        failed = successful_names != expected_names
+        awaiting_approval = any(
+            item.get("status") == "AWAITING_APPROVAL" for item in tasks
+        )
+        failed = successful_names != expected_names and not awaiting_approval
         current = self._store.get(execution_id) or execution
-        if current.get("status") == "RUNNING":
+        if current.get("status") == "RUNNING" and not awaiting_approval:
             changes: dict[str, Any] = {}
             if replay_execution:
                 changes["replayProvenance"] = {
@@ -1006,6 +1030,10 @@ class DogfoodReconciliationConsumer:
                         failure_class=classification,
                         message="dogfood reconciliation failed configuration checks",
                     )
+                continue
+            pending_check = getattr(self._runner, "is_approval_pending", None)
+            if callable(pending_check) and pending_check(request):
+                self._reported_failures.pop(event_id, None)
                 continue
             self._dispatcher.mark_completed(event_id)
             self._reported_failures.pop(event_id, None)

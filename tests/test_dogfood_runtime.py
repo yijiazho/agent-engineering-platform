@@ -25,8 +25,9 @@ from aep.webhook_dispatch import SQLiteReconciliationDispatcher
 
 
 class RecordingRunner:
-    def __init__(self, failure: Exception | None = None) -> None:
+    def __init__(self, failure: Exception | None = None, *, approval_pending: bool = False) -> None:
         self.failure = failure
+        self.approval_pending = approval_pending
         self.requests = []
 
     def run(self, request):
@@ -34,6 +35,9 @@ class RecordingRunner:
         if self.failure is not None:
             raise self.failure
         return "workflowexecution-test"
+
+    def is_approval_pending(self, request):
+        return self.approval_pending
 
 
 def test_workflow_runner_preserves_resource_checkout_crlf_policy(
@@ -341,6 +345,19 @@ def test_consumer_retires_outbox_only_after_runner_completes(tmp_path: Path) -> 
     assert len(runner.requests) == 1
     assert dispatcher.pending_requests() == ()
     assert dispatcher.failure("event-dogfood") is None
+
+
+def test_consumer_retains_outbox_until_approval_wait_resumes(tmp_path: Path) -> None:
+    dispatcher = SQLiteReconciliationDispatcher(tmp_path / "webhook.sqlite3")
+    dispatcher.submit(event(), trace_id="trace-dogfood")
+    runner = RecordingRunner(approval_pending=True)
+    consumer = DogfoodReconciliationConsumer(dispatcher, runner)
+
+    assert consumer.run_once() == 0
+    assert len(dispatcher.pending_requests()) == 1
+    runner.approval_pending = False
+    assert consumer.run_once() == 1
+    assert dispatcher.pending_requests() == ()
 
 
 def test_configuration_failure_is_persisted_and_not_hot_retried(tmp_path: Path) -> None:
