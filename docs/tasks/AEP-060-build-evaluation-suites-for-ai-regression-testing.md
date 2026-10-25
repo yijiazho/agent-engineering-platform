@@ -57,4 +57,4 @@ leases prevent concurrent invocations from dispatching duplicate work, and
 terminal runs return their existing result on repeat invocation.
 
 The repository example is `fixtures/resources/evaluation-suite-issue-to-pr.yaml`;
-invoke it with `aep eval fixtures/resources/evaluation-suite-issue-to-pr.yaml`.
+invoke it with `aep --state-file <checkpoint> eval fixtures/resources/evaluation-suite-issue-to-pr.yaml`.

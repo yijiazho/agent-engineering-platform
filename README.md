@@ -107,8 +107,9 @@ package location.
 
 Versioned EvaluationSuite definitions live alongside Resources and can mix
 credential-free fixture cases with historical WorkflowExecution references.
-Run a suite with `aep eval <suite-file> --state-file <checkpoint>`; inspect a
-persisted partial or terminal result with `aep eval <evaluationsuite-run-id>`.
+Run a suite with `aep --state-file <checkpoint> eval <suite-file>`; inspect a
+persisted partial or terminal result with
+`aep --state-file <checkpoint> eval <evaluationsuite-run-id>`.
 Case order is sorted by case ID, each case is checkpointed before the next
 starts, and replay publication is disabled. Fixture cases record pinned source
 and input identities, expected outcome, evaluation schema version, and optional

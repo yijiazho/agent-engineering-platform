@@ -112,6 +112,33 @@ def test_historical_workflow_mismatch_is_rejected_before_replay():
     assert not called
 
 
+def test_publication_suppression_does_not_fail_a_passing_regression_case():
+    suite = _suite()
+    suite["spec"]["cases"] = [{"id": "history", "kind": "historical", "workflowExecutionId": "source"}]
+    store = InMemoryRuntimeObjectStore()
+    workflow, evaluation = suite["spec"]["workflowRef"], suite["spec"]["evaluationRefs"][0]
+    store.create({"id": "source", "kind": "WorkflowExecution", "workflowRef": workflow,
+                  "provenance": {"resourceRefs": [workflow, evaluation]}}, deterministic_key="source")
+
+    def runner(_, __):
+        store.create({"id": "replay", "kind": "WorkflowExecution", "status": "FAILED",
+                      "repositoryRevision": "f" * 40,
+                      "replayProvenance": {"publicationMode": "disabled"},
+                      "provenance": {"resourceRefs": [workflow, evaluation]}}, deterministic_key="replay")
+        store.create({"id": "evaluation-result", "kind": "EvaluationResult",
+                      "workflowExecutionId": "replay", "status": "SUCCEEDED", "outcome": "PASS",
+                      "evaluationRef": evaluation, "metrics": {"passed": 1}}, deterministic_key="evaluation-result")
+        store.create({"id": "publication-task", "kind": "TaskExecution", "workflowExecutionId": "replay",
+                      "taskRef": {"kind": "Task", "name": "create-pull-request", "version": "1.0.0"},
+                      "status": "FAILED", "failure": {"class": "POLICY", "message": "publication is disabled for replay"}},
+                     deterministic_key="publication-task")
+        return "replay"
+
+    result = run_suite(suite, store, historical_runner=runner)
+    assert result["status"] == "SUCCEEDED"
+    assert result["caseResults"][0]["outcome"] == "PASS"
+
+
 def test_completed_suite_rerun_returns_existing_terminal_evidence():
     store, suite = InMemoryRuntimeObjectStore(), _suite()
     first = run_suite(suite, store)

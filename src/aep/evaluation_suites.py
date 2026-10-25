@@ -142,6 +142,7 @@ def _run_claimed_suite(suite: Mapping[str, Any], store: RuntimeObjectStore,
         if lease_lost.is_set():
             raise EvaluationSuiteError("evaluation suite execution lease was lost")
         case_started = clock()
+        failure = None
         try:
             if case["kind"] == "fixture":
                 outcome = case["expectedOutcome"]
@@ -167,10 +168,14 @@ def _run_claimed_suite(suite: Mapping[str, Any], store: RuntimeObjectStore,
                     raise EvaluationSuiteError("replayed execution evidence is missing")
                 related = store.list_by_workflow_execution(execution_id)
                 evidence = _execution_evidence(execution, related, case["workflowExecutionId"])
-                outcome = "PASS" if execution.get("status") == "SUCCEEDED" else "FAIL"
+                passed, evaluation_failure = _historical_case_passed(
+                    execution, related, spec["evaluationRefs"]
+                )
+                outcome = "PASS" if passed else "FAIL"
+                if not passed:
+                    failure = evaluation_failure
                 evidence["sourceRevision"] = execution.get("repositoryRevision")
                 evidence["inputIdentity"] = case["workflowExecutionId"]
-            failure = None
         except Exception as error:
             outcome, evidence, failure = "FAIL", {}, str(error)
         case_record = {"caseId": case["id"], "kind": case["kind"], "outcome": outcome,
@@ -270,6 +275,40 @@ def _all_pass(results: Sequence[Mapping[str, Any]]) -> bool | None:
     if not results:
         return None
     return all(item.get("outcome") == "PASS" for item in results)
+
+
+def _historical_case_passed(
+    execution: Mapping[str, Any], related: Sequence[Mapping[str, Any]],
+    evaluation_refs: Sequence[Mapping[str, Any]],
+) -> tuple[bool, str | None]:
+    for reference in evaluation_refs:
+        matching = [
+            result for result in related
+            if result.get("kind") == "EvaluationResult"
+            and result.get("evaluationRef") == reference
+        ]
+        if not matching:
+            return False, f"selected Evaluation {reference['name']!r} produced no result"
+        if any(result.get("status") != "SUCCEEDED" or result.get("outcome") != "PASS" for result in matching):
+            return False, f"selected Evaluation {reference['name']!r} did not pass"
+    publication_disabled = (
+        execution.get("replayProvenance", {}).get("publicationMode") == "disabled"
+        if isinstance(execution.get("replayProvenance"), Mapping) else False
+    )
+    for task in related:
+        if task.get("kind") != "TaskExecution" or task.get("status") not in {"FAILED", "BLOCKED"}:
+            continue
+        task_ref = task.get("taskRef")
+        failure = task.get("failure")
+        publication_denial = (
+            publication_disabled and task.get("status") == "FAILED"
+            and isinstance(task_ref, Mapping) and task_ref.get("name") == "create-pull-request"
+            and isinstance(failure, Mapping) and failure.get("class") == "POLICY"
+            and failure.get("message") == "publication is disabled for replay"
+        )
+        if not publication_denial:
+            return False, "historical replay contains a failed or blocked Task"
+    return True, None
 
 
 def _success_rate(items: Sequence[Mapping[str, Any]], field: str) -> float | None:
