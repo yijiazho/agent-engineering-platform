@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+from threading import Event, Thread
 from typing import Any
+from uuid import uuid4
 
 import yaml
 from jsonschema import Draft202012Validator, ValidationError
@@ -74,7 +77,13 @@ def run_experiment(
                 if (override["kind"], override["name"]) not in available:
                     raise ExperimentError(f"incompatible override {override['kind']}:{override['name']} for case {case['id']}")
 
-    canonical = json.dumps(experiment, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    if any(case["kind"] == "fixture" for case in suite["spec"]["cases"]):
+        if suite["spec"].get("resourceOverrides") or any(arm["resourceOverrides"] for arm in arms):
+            raise ExperimentError("fixture cases do not execute Resource overrides; use historical cases for configuration comparisons")
+    suite_canonical = json.dumps(suite, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    suite_digest = hashlib.sha256(suite_canonical.encode()).hexdigest()
+    canonical = json.dumps({"experiment": experiment, "suiteDigest": suite_digest}, sort_keys=True,
+                           separators=(",", ":"), ensure_ascii=True)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
     result_id = "experimentresult-" + digest[:24]
     existing = store.get(result_id)
@@ -85,33 +94,86 @@ def run_experiment(
         "apiVersion": "aep.dev/v1alpha1", "kind": "ExperimentResult", "id": result_id,
         "createdAt": stamp, "updatedAt": stamp, "status": "RUNNING",
         "experiment": {"name": experiment["metadata"]["name"], "version": experiment["metadata"]["version"], "digest": digest},
-        "evaluationSuiteRef": deepcopy(suite_ref), "caseOrder": sorted(case["id"] for case in suite["spec"]["cases"]),
+        "evaluationSuiteRef": deepcopy(suite_ref), "evaluationSuiteDigest": suite_digest,
+        "caseOrder": sorted(case["id"] for case in suite["spec"]["cases"]),
         "arms": [], "comparisons": {}, "provenance": {"sideEffects": "disabled", "publication": False},
     }
     record = dict(store.create(record, deterministic_key=f"experiment:{digest}"))
     if record.get("status") in {"SUCCEEDED", "FAILED"}:
+        if record.get("evaluationSuiteDigest") != suite_digest:
+            raise ExperimentError("persisted ExperimentResult is bound to different EvaluationSuite contents")
         return record
-    arm_results = []
-    for arm in arms:
-        arm_suite = deepcopy(dict(suite))
-        arm_suite["metadata"]["name"] = f"{suite['metadata']['name']}-{arm['name']}"
-        refs = arm_suite["spec"].setdefault("resourceOverrides", [])
-        refs.extend(deepcopy(arm["resourceOverrides"]))
-        try:
-            suite_result = run_suite(arm_suite, store, historical_runner=historical_runner, now=now)
-            arm_results.append({"name": arm["name"], "resourceOverrides": deepcopy(arm["resourceOverrides"]), "status": suite_result["status"],
-                                "evaluationSuiteRunId": suite_result["id"], "aggregate": deepcopy(suite_result.get("aggregate", {})),
-                                "caseResults": deepcopy(suite_result.get("caseResults", [])),
-                                "failure": deepcopy(suite_result.get("failure"))})
-        except Exception as error:
-            arm_results.append({"name": arm["name"], "resourceOverrides": deepcopy(arm["resourceOverrides"]), "status": "FAILED", "evaluationSuiteRunId": None,
-                                "aggregate": {}, "caseResults": [], "failure": {"message": str(error)}})
-    baseline = arm_results[0]
-    comparisons = {arm["name"]: _compare(baseline, arm, spec["metrics"]) for arm in arm_results[1:]}
-    status = "SUCCEEDED" if all(arm["status"] == "SUCCEEDED" for arm in arm_results) else "FAILED"
-    record.update({"arms": arm_results, "comparisons": comparisons, "status": status, "updatedAt": (now or _timestamp)()})
-    return dict(store.update_status(result_id, status, expected_status="RUNNING", updated_at=record["updatedAt"],
-                                   changes={"arms": arm_results, "comparisons": comparisons}))
+    owner_id = str(uuid4())
+    lease_key = f"experiment-run:{result_id}"
+    started = (now or _timestamp)()
+    expires_at = _lease_expiry(started)
+    if not store.acquire_lease(lease_key, owner_id, now=started, expires_at=expires_at):
+        raise ExperimentError("experiment is already running")
+    heartbeat_stop, lease_lost = Event(), Event()
+
+    def heartbeat() -> None:
+        while not heartbeat_stop.wait(10):
+            current = (now or _timestamp)()
+            if not store.renew_lease(lease_key, owner_id, now=current, expires_at=_lease_expiry(current)):
+                lease_lost.set()
+                return
+
+    heartbeat_thread = Thread(target=heartbeat, name=f"{result_id}-lease", daemon=True)
+    heartbeat_thread.start()
+    try:
+        current = store.get(result_id)
+        if current is None or current.get("status") != "RUNNING":
+            raise ExperimentError("ExperimentResult changed before its execution lease was acquired")
+        if current.get("evaluationSuiteDigest") != suite_digest:
+            raise ExperimentError("persisted ExperimentResult is bound to different EvaluationSuite contents")
+        arm_results = []
+        for arm in arms:
+            if lease_lost.is_set():
+                raise ExperimentError("experiment execution lease was lost")
+            arm_suite = _arm_suite(suite, arm)
+            try:
+                suite_result = run_suite(arm_suite, store, historical_runner=historical_runner, now=now)
+                arm_results.append({"name": arm["name"], "resourceOverrides": deepcopy(arm_suite["spec"].get("resourceOverrides", [])), "status": suite_result["status"],
+                                    "evaluationSuiteRunId": suite_result["id"], "aggregate": deepcopy(suite_result.get("aggregate", {})),
+                                    "caseResults": deepcopy(suite_result.get("caseResults", [])),
+                                    "failure": deepcopy(suite_result.get("failure"))})
+            except Exception as error:
+                arm_results.append({"name": arm["name"], "resourceOverrides": deepcopy(arm_suite["spec"].get("resourceOverrides", [])), "status": "FAILED", "evaluationSuiteRunId": None,
+                                    "aggregate": {}, "caseResults": [], "failure": {"message": str(error)}})
+        if lease_lost.is_set():
+            raise ExperimentError("experiment execution lease was lost before finalization")
+        baseline = arm_results[0]
+        comparisons = {arm["name"]: _compare(baseline, arm, spec["metrics"]) for arm in arm_results[1:]}
+        status = "SUCCEEDED" if all(arm["status"] == "SUCCEEDED" for arm in arm_results) else "FAILED"
+        finalized_at = (now or _timestamp)()
+        return dict(store.update_status_with_lease(
+            result_id, status, lease_key=lease_key, owner_id=owner_id, now=finalized_at,
+            expected_status="RUNNING", updated_at=finalized_at,
+            changes={"arms": arm_results, "comparisons": comparisons},
+        ))
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=2)
+        store.release_lease(lease_key, owner_id)
+
+
+def _arm_suite(suite: Mapping[str, Any], arm: Mapping[str, Any]) -> dict[str, Any]:
+    result = deepcopy(dict(suite))
+    result["metadata"]["name"] = f"{suite['metadata']['name']}-{arm['name']}"
+    selected: dict[tuple[str, str], dict[str, Any]] = {}
+    for ref in [*suite["spec"].get("resourceOverrides", []), *arm["resourceOverrides"]]:
+        selected[(ref["kind"], ref["name"])] = deepcopy(dict(ref))
+    result["spec"]["resourceOverrides"] = [selected[key] for key in sorted(selected)]
+    for evaluation in result["spec"]["evaluationRefs"]:
+        override = selected.get(("Evaluation", evaluation["name"]))
+        if override:
+            evaluation["version"] = override["version"]
+    return result
+
+
+def _lease_expiry(timestamp: str) -> str:
+    parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    return (parsed + timedelta(seconds=45)).isoformat().replace("+00:00", "Z")
 
 
 def _baseline_refs(suite: Mapping[str, Any]) -> set[tuple[str, str]]:
@@ -152,6 +214,11 @@ def _metric(aggregate: Mapping[str, Any], name: str) -> float | None:
     aliases = {"tokenUsage.totalTokens": "totalTokens", "tokenUsage.inputTokens": "inputTokens",
                "tokenUsage.outputTokens": "outputTokens"}
     name = aliases.get(name, name)
+    builtin_names = {"passRate", "buildSuccessRate", "testSuccessRate", "modelInvocationCount",
+                     "inputTokens", "outputTokens", "totalTokens", "cost", "latencyMilliseconds", "caseCount"}
+    if name in builtin_names:
+        value = aggregate.get(name)
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
     value: Any = aggregate
     for part in name.split("."):
         value = value.get(part) if isinstance(value, Mapping) else None

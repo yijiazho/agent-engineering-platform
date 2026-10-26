@@ -381,6 +381,7 @@ class DogfoodWorkflowRunner:
         *,
         overrides: tuple[str, ...] = (),
         context_mode: str = "reuse",
+        allow_context_change: bool = False,
         publication: bool = False,
     ) -> str:
         with self._resource_lock:
@@ -388,6 +389,7 @@ class DogfoodWorkflowRunner:
                 source_id,
                 overrides=overrides,
                 context_mode=context_mode,
+                allow_context_change=allow_context_change,
                 publication=publication,
             )
 
@@ -397,6 +399,7 @@ class DogfoodWorkflowRunner:
         *,
         overrides: tuple[str, ...] = (),
         context_mode: str = "reuse",
+        allow_context_change: bool = False,
         publication: bool = False,
     ) -> str:
         """Create and execute a replay using the source revision and Resources."""
@@ -464,7 +467,8 @@ class DogfoodWorkflowRunner:
                 if context_mode == "reuse":
                     reused_contexts[task_key] = package
                 else:
-                    expected_context_identities[task_key] = context_identity(package)
+                    if not allow_context_change:
+                        expected_context_identities[task_key] = context_identity(package)
             return self.run({
                 "event": event,
                 "workflowExecutionId": replay_id,
@@ -474,7 +478,7 @@ class DogfoodWorkflowRunner:
                 "reusedContexts": reused_contexts,
                 "expectedContextIdentities": expected_context_identities,
                 "requireReusedContext": context_mode == "reuse",
-                "requireExpectedContextIdentity": context_mode == "rebuild",
+                "requireExpectedContextIdentity": context_mode == "rebuild" and not allow_context_change,
             })
         except Exception as error:
             self._fail_replay(replay_id, error)

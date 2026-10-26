@@ -2,7 +2,8 @@ from copy import deepcopy
 
 import pytest
 
-from aep.experiments import ExperimentError, _compare, load_experiment, run_experiment
+from aep.evaluation_suites import _historical_overrides
+from aep.experiments import ExperimentError, _arm_suite, _compare, _metric, load_experiment, run_experiment
 from aep.runtime_store import InMemoryRuntimeObjectStore
 
 
@@ -76,3 +77,82 @@ def test_example_experiment_definition_validates():
     from pathlib import Path
     path = Path(__file__).parents[1] / "fixtures/resources/experiment-issue-to-pr.yaml"
     assert load_experiment(path)["kind"] == "Experiment"
+
+
+def test_evaluation_override_becomes_effective_suite_scoring_reference():
+    experiment, suite = _definitions()
+    experiment["spec"]["candidates"][0]["resourceOverrides"] = [
+        {"kind": "Evaluation", "name": "quality", "version": "2.0.0"}
+    ]
+    arm_suite = _arm_suite(suite, experiment["spec"]["candidates"][0])
+    assert arm_suite["spec"]["evaluationRefs"] == [
+        {"kind": "Evaluation", "name": "quality", "version": "2.0.0"}
+    ]
+
+
+def test_builtin_aggregate_metric_wins_over_empty_custom_metric_mean():
+    aggregate = {"passRate": 0.75, "cost": 1.2, "metrics": {"passRate": {"mean": None}, "cost": {"mean": None}}}
+    assert _metric(aggregate, "passRate") == 0.75
+    assert _metric(aggregate, "cost") == 1.2
+
+
+def test_historical_override_back_to_source_version_clears_prior_override():
+    source = {"workflowRef": {"kind": "Workflow", "name": "flow", "version": "1.0.0"},
+              "provenance": {"resourceRefs": [{"kind": "Workflow", "name": "flow", "version": "1.0.0"},
+                                               {"kind": "Prompt", "name": "planner", "version": "1.0.0"}]}}
+    spec = {"workflowRef": source["workflowRef"], "evaluationRefs": [{"kind": "Evaluation", "name": "quality", "version": "1.0.0"}],
+            "resourceOverrides": [{"kind": "Prompt", "name": "planner", "version": "2.0.0"},
+                                  {"kind": "Prompt", "name": "planner", "version": "1.0.0"}]}
+    related = [{"kind": "EvaluationResult", "evaluationRef": {"kind": "Evaluation", "name": "quality", "version": "1.0.0"}}]
+    assert _historical_overrides(source, related, spec) == []
+
+
+def test_fixture_resource_overrides_are_rejected_as_unexecuted():
+    experiment, suite = _definitions()
+    experiment["spec"]["candidates"][0]["resourceOverrides"] = [
+        {"kind": "Prompt", "name": "planner", "version": "2.0.0"}
+    ]
+    with pytest.raises(ExperimentError, match="fixture cases do not execute"):
+        run_experiment(experiment, suite, InMemoryRuntimeObjectStore())
+
+
+def test_suite_content_is_part_of_experiment_result_identity():
+    experiment, suite = _definitions()
+    store = InMemoryRuntimeObjectStore()
+    first = run_experiment(experiment, suite, store)
+    changed = deepcopy(suite)
+    changed["spec"]["cases"][0]["sourceRevision"] = "different-revision"
+    second = run_experiment(experiment, changed, store)
+    assert first["id"] != second["id"]
+    assert first["evaluationSuiteDigest"] != second["evaluationSuiteDigest"]
+
+
+def test_concurrent_experiment_caller_cannot_finalize_active_owner(monkeypatch):
+    from threading import Event, Thread
+    import aep.experiments as experiments_module
+
+    experiment, suite = _definitions()
+    store = InMemoryRuntimeObjectStore()
+    entered, release = Event(), Event()
+    actual_run_suite = experiments_module.run_suite
+
+    def blocked_run_suite(*args, **kwargs):
+        entered.set()
+        assert release.wait(3)
+        return actual_run_suite(*args, **kwargs)
+
+    monkeypatch.setattr(experiments_module, "run_suite", blocked_run_suite)
+    results = []
+
+    def first_caller():
+        results.append(run_experiment(experiment, suite, store))
+
+    worker = Thread(target=first_caller)
+    worker.start()
+    assert entered.wait(3)
+    with pytest.raises(ExperimentError, match="already running"):
+        run_experiment(experiment, suite, store)
+    release.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert results[0]["status"] == "SUCCEEDED"

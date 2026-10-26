@@ -561,7 +561,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 from aep.dogfood_runtime import DogfoodWorkflowRunner
                 runtime = DogfoodWorkflowRunner(os.environ, state_file=args.state_file)
             result = run_experiment(definition, suite, DurableJsonRuntimeObjectStore(args.state_file), historical_runner=(
-                lambda source, overrides: runtime.replay(source, overrides=tuple(overrides), publication=False)
+                lambda source, overrides: runtime.replay(
+                    source, overrides=tuple(overrides), publication=False,
+                    context_mode="rebuild" if any(item.startswith("KnowledgeBase:") for item in overrides) else "reuse",
+                    allow_context_change=any(item.startswith("KnowledgeBase:") for item in overrides),
+                )
             ) if runtime is not None else None)
             result = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects()).safe_output(result, unsafe=args.unsafe_debug)
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))

@@ -207,9 +207,12 @@ def test_replay_recovers_only_complete_historical_event_context() -> None:
         _historical_replay_inputs(source, (task, context))
 
 
-@pytest.mark.parametrize("context_mode", ["reuse", "rebuild"])
+@pytest.mark.parametrize(
+    ("context_mode", "allow_context_change"),
+    [("reuse", False), ("rebuild", False), ("rebuild", True)],
+)
 def test_replay_runner_resolves_pinned_inputs_before_dispatch(
-    tmp_path: Path, monkeypatch, context_mode: str,
+    tmp_path: Path, monkeypatch, context_mode: str, allow_context_change: bool,
 ) -> None:
     revision = "a" * 40
     refs = {
@@ -310,7 +313,7 @@ def test_replay_runner_resolves_pinned_inputs_before_dispatch(
     )
     runner.run = lambda request: captured.setdefault("dispatch", request) and str(request["workflowExecutionId"])
 
-    replay_id = runner.replay(source_id, context_mode=context_mode)
+    replay_id = runner.replay(source_id, context_mode=context_mode, allow_context_change=allow_context_change)
 
     assert replay_id != source_id
     assert captured["checkout_request"].base_revision == revision
@@ -320,8 +323,11 @@ def test_replay_runner_resolves_pinned_inputs_before_dispatch(
     key = ("Task", "analyze", "1.0.0")
     if context_mode == "reuse":
         assert dispatch["reusedContexts"][key]["id"] == "context-source"
-    else:
+    elif not allow_context_change:
         assert dispatch["expectedContextIdentities"][key] == context_identity(context)
+    else:
+        assert dispatch["expectedContextIdentities"] == {}
+        assert dispatch["requireExpectedContextIdentity"] is False
     assert store.get(source_id) == source
     assert store.get(task_execution["id"]) == task_execution
     assert store.get(context["id"]) == context

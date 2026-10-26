@@ -46,3 +46,8 @@ the absolute baseline value for relative differences (undefined when the
 baseline is zero or either metric is unavailable). Results never promote
 Resources. Operators may use the evidence to author and explicitly select a
 new immutable Resource version through the normal configuration process.
+Fixture cases remain credential-free, but Resource overrides are rejected
+when fixture cases are present because fixtures do not execute those
+configurations. Historical cases execute overrides through replay; a
+KnowledgeBase override rebuilds ContextPackages at the pinned repository
+revision and allows the resulting context identity to differ from the source.

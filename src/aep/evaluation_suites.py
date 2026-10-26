@@ -447,19 +447,18 @@ def _historical_overrides(
         (ref.get("kind"), ref.get("name")): ref
         for ref in historical_refs if isinstance(ref, Mapping)
     }
-    overrides_by_identity: dict[tuple[str, str], str] = {}
+    selected_by_identity: dict[tuple[str, str], Mapping[str, Any]] = {}
     for ref in selected:
-        prior = available.get((ref["kind"], ref["name"]))
-        if prior is None:
-            raise EvaluationSuiteError(f"selected Evaluation {ref['name']!r} is absent from historical Resource provenance")
-        if prior.get("version") != ref["version"]:
-            overrides_by_identity[("Evaluation", ref["name"])] = f"Evaluation:{ref['name']}:{ref['version']}"
+        selected_by_identity[(ref["kind"], ref["name"])] = ref
     for ref in spec.get("resourceOverrides", []):
-        prior = available.get((ref["kind"], ref["name"]))
+        selected_by_identity[(ref["kind"], ref["name"])] = ref
+    overrides_by_identity: dict[tuple[str, str], str] = {}
+    for identity, ref in selected_by_identity.items():
+        prior = available.get(identity)
         if prior is None:
             raise EvaluationSuiteError(f"selected {ref['kind']} {ref['name']!r} is absent from historical Resource provenance")
         if prior.get("version") != ref["version"]:
-            overrides_by_identity[(ref["kind"], ref["name"])] = f"{ref['kind']}:{ref['name']}:{ref['version']}"
+            overrides_by_identity[identity] = f"{ref['kind']}:{ref['name']}:{ref['version']}"
     return [overrides_by_identity[key] for key in sorted(overrides_by_identity)]
 
 

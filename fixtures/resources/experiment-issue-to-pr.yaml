@@ -6,7 +6,7 @@ metadata:
 spec:
   evaluationSuiteRef:
     kind: EvaluationSuite
-    name: issue-to-pr-regression
+    name: issue-to-pr-historical-regression
     version: 1.0.0
   baseline:
     name: current-planner
