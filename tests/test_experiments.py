@@ -40,6 +40,15 @@ def test_experiment_runs_baseline_and_multiple_candidates_deterministically():
     assert result["provenance"]["publication"] is False
 
 
+def test_display_arm_names_do_not_become_resource_names():
+    experiment, suite = _definitions()
+    experiment["spec"]["candidates"][0]["name"] = "Candidate A"
+    result = run_experiment(experiment, suite, InMemoryRuntimeObjectStore())
+    assert result["arms"][1]["name"] == "Candidate A"
+    assert result["arms"][1]["status"] == "SUCCEEDED"
+    assert _arm_suite(suite, experiment["spec"]["candidates"][0], 1)["metadata"]["name"] == "smoke-arm-2"
+
+
 def test_experiment_keeps_partial_failed_arm_and_does_not_drop_it():
     experiment, suite = _definitions()
     suite["spec"]["cases"][0]["expectedOutcome"] = "FAIL"
@@ -105,6 +114,19 @@ def test_historical_override_back_to_source_version_clears_prior_override():
                                   {"kind": "Prompt", "name": "planner", "version": "1.0.0"}]}
     related = [{"kind": "EvaluationResult", "evaluationRef": {"kind": "Evaluation", "name": "quality", "version": "1.0.0"}}]
     assert _historical_overrides(source, related, spec) == []
+
+
+def test_historical_override_can_resolve_context_element_resource_provenance():
+    source = {"workflowRef": {"kind": "Workflow", "name": "flow", "version": "1.0.0"},
+              "provenance": {"resourceRefs": [{"kind": "Workflow", "name": "flow", "version": "1.0.0"}]}}
+    related = [{"id": "context-1", "kind": "ContextPackage", "elements": [{
+        "type": "knowledge", "provenance": {"resourceRefs": [
+            {"kind": "KnowledgeBase", "name": "repo-knowledge", "version": "1.0.0"}
+        ]}
+    }]}]
+    spec = {"workflowRef": source["workflowRef"], "evaluationRefs": [],
+            "resourceOverrides": [{"kind": "KnowledgeBase", "name": "repo-knowledge", "version": "2.0.0"}]}
+    assert _historical_overrides(source, related, spec) == ["KnowledgeBase:repo-knowledge:2.0.0"]
 
 
 def test_fixture_resource_overrides_are_rejected_as_unexecuted():

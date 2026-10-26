@@ -16,6 +16,7 @@ from uuid import uuid4
 import yaml
 from jsonschema import Draft202012Validator
 
+from aep.execution_replay import ReplayError, _collect_resource_refs
 from aep.runtime_store import RuntimeObjectStore, StatusConflictError
 
 
@@ -431,21 +432,14 @@ def _historical_overrides(
         for key in ("kind", "name", "version")
     ):
         raise EvaluationSuiteError("suite Workflow does not match the historical execution; Workflow overrides are unsupported")
-    historical_refs: list[Any] = []
-    root = source.get("provenance")
-    if isinstance(root, Mapping) and isinstance(root.get("resourceRefs"), list):
-        historical_refs.extend(root["resourceRefs"])
-    for item in related:
-        provenance = item.get("provenance")
-        if isinstance(provenance, Mapping) and isinstance(provenance.get("resourceRefs"), list):
-            historical_refs.extend(provenance["resourceRefs"])
-        for field in ("evaluationRef",):
-            if item.get(field) is not None:
-                historical_refs.append(item[field])
+    try:
+        historical_refs = _collect_resource_refs(source, related)
+    except ReplayError as error:
+        raise EvaluationSuiteError(str(error)) from None
     selected = spec["evaluationRefs"]
     available = {
         (ref.get("kind"), ref.get("name")): ref
-        for ref in historical_refs if isinstance(ref, Mapping)
+        for ref in historical_refs
     }
     selected_by_identity: dict[tuple[str, str], Mapping[str, Any]] = {}
     for ref in selected:

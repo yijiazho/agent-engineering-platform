@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from aep.context_identity import context_identity
-from aep.inspection_cli import main
+from aep.inspection_cli import ExecutionInspector, main
 from aep.workflow_execution import _runtime_validator
 
 
@@ -359,3 +359,16 @@ def test_eval_safe_output_keeps_numeric_token_counters_but_redacts_credentials(t
     for field, value in (("inputTokens", 12), ("outputTokens", 7), ("totalTokens", 19)):
         assert f'"{field}": {value}' in output
     assert "credential-value" not in output
+
+
+def test_safe_experiment_output_keeps_dotted_token_metric_deltas():
+    value = {"comparisons": {"candidate": {
+        "tokenUsage.totalTokens": {"baseline": 100, "candidate": 120, "absoluteDifference": 20, "relativeDifference": 0.2},
+        "tokenUsage.inputTokens": {"baseline": 70, "candidate": 80, "absoluteDifference": 10, "relativeDifference": 1 / 7},
+        "providerAccessToken": "credential-value",
+    }}}
+    safe = ExecutionInspector({}).safe_output(value)
+    comparison = safe["comparisons"]["candidate"]
+    assert comparison["tokenUsage.totalTokens"]["absoluteDifference"] == 20
+    assert comparison["tokenUsage.inputTokens"]["candidate"] == 80
+    assert comparison["providerAccessToken"] == "[REDACTED]"

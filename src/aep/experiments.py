@@ -127,10 +127,10 @@ def run_experiment(
         if current.get("evaluationSuiteDigest") != suite_digest:
             raise ExperimentError("persisted ExperimentResult is bound to different EvaluationSuite contents")
         arm_results = []
-        for arm in arms:
+        for arm_index, arm in enumerate(arms):
             if lease_lost.is_set():
                 raise ExperimentError("experiment execution lease was lost")
-            arm_suite = _arm_suite(suite, arm)
+            arm_suite = _arm_suite(suite, arm, arm_index)
             try:
                 suite_result = run_suite(arm_suite, store, historical_runner=historical_runner, now=now)
                 arm_results.append({"name": arm["name"], "resourceOverrides": deepcopy(arm_suite["spec"].get("resourceOverrides", [])), "status": suite_result["status"],
@@ -157,9 +157,9 @@ def run_experiment(
         store.release_lease(lease_key, owner_id)
 
 
-def _arm_suite(suite: Mapping[str, Any], arm: Mapping[str, Any]) -> dict[str, Any]:
+def _arm_suite(suite: Mapping[str, Any], arm: Mapping[str, Any], arm_index: int = 0) -> dict[str, Any]:
     result = deepcopy(dict(suite))
-    result["metadata"]["name"] = f"{suite['metadata']['name']}-{arm['name']}"
+    result["metadata"]["name"] = f"{suite['metadata']['name']}-arm-{arm_index + 1}"
     selected: dict[tuple[str, str], dict[str, Any]] = {}
     for ref in [*suite["spec"].get("resourceOverrides", []), *arm["resourceOverrides"]]:
         selected[(ref["kind"], ref["name"])] = deepcopy(dict(ref))
