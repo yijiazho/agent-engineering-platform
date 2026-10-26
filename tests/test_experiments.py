@@ -46,7 +46,15 @@ def test_display_arm_names_do_not_become_resource_names():
     result = run_experiment(experiment, suite, InMemoryRuntimeObjectStore())
     assert result["arms"][1]["name"] == "Candidate A"
     assert result["arms"][1]["status"] == "SUCCEEDED"
-    assert _arm_suite(suite, experiment["spec"]["candidates"][0], 1)["metadata"]["name"] == "smoke-arm-2"
+    assert _arm_suite(suite, experiment["spec"]["candidates"][0], 1, "abc123")["metadata"]["name"] == "smoke-x-abc123-arm-2"
+
+
+def test_arm_suite_identity_is_namespaced_by_experiment():
+    _, suite = _definitions()
+    baseline = {"name": "baseline", "resourceOverrides": []}
+    first = _arm_suite(suite, baseline, 0, "experiment-one")
+    second = _arm_suite(suite, baseline, 0, "experiment-two")
+    assert first["metadata"]["name"] != second["metadata"]["name"]
 
 
 def test_experiment_keeps_partial_failed_arm_and_does_not_drop_it():
@@ -127,6 +135,16 @@ def test_historical_override_can_resolve_context_element_resource_provenance():
     spec = {"workflowRef": source["workflowRef"], "evaluationRefs": [],
             "resourceOverrides": [{"kind": "KnowledgeBase", "name": "repo-knowledge", "version": "2.0.0"}]}
     assert _historical_overrides(source, related, spec) == ["KnowledgeBase:repo-knowledge:2.0.0"]
+
+
+def test_override_replaces_all_historical_versions_used_by_different_tasks():
+    source = {"workflowRef": {"kind": "Workflow", "name": "flow", "version": "1.0.0"},
+              "provenance": {"resourceRefs": [{"kind": "Workflow", "name": "flow", "version": "1.0.0"},
+                                               {"kind": "Prompt", "name": "shared", "version": "1.0.0"},
+                                               {"kind": "Prompt", "name": "shared", "version": "2.0.0"}]}}
+    spec = {"workflowRef": source["workflowRef"], "evaluationRefs": [],
+            "resourceOverrides": [{"kind": "Prompt", "name": "shared", "version": "2.0.0"}]}
+    assert _historical_overrides(source, [], spec) == ["Prompt:shared:2.0.0"]
 
 
 def test_fixture_resource_overrides_are_rejected_as_unexecuted():

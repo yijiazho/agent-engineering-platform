@@ -437,10 +437,9 @@ def _historical_overrides(
     except ReplayError as error:
         raise EvaluationSuiteError(str(error)) from None
     selected = spec["evaluationRefs"]
-    available = {
-        (ref.get("kind"), ref.get("name")): ref
-        for ref in historical_refs
-    }
+    available: dict[tuple[str, str], set[str]] = {}
+    for ref in historical_refs:
+        available.setdefault((ref["kind"], ref["name"]), set()).add(ref["version"])
     selected_by_identity: dict[tuple[str, str], Mapping[str, Any]] = {}
     for ref in selected:
         selected_by_identity[(ref["kind"], ref["name"])] = ref
@@ -448,10 +447,10 @@ def _historical_overrides(
         selected_by_identity[(ref["kind"], ref["name"])] = ref
     overrides_by_identity: dict[tuple[str, str], str] = {}
     for identity, ref in selected_by_identity.items():
-        prior = available.get(identity)
-        if prior is None:
+        historical_versions = available.get(identity)
+        if not historical_versions:
             raise EvaluationSuiteError(f"selected {ref['kind']} {ref['name']!r} is absent from historical Resource provenance")
-        if prior.get("version") != ref["version"]:
+        if any(version != ref["version"] for version in historical_versions):
             overrides_by_identity[identity] = f"{ref['kind']}:{ref['name']}:{ref['version']}"
     return [overrides_by_identity[key] for key in sorted(overrides_by_identity)]
 
