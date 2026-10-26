@@ -194,7 +194,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 60 | [AEP-058: Implement Workflow Execution Resume](tasks/AEP-058-implement-workflow-execution-resume.md) | Not Started |
 | 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | In Progress |
 | 62 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Completed |
-| 63 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Not Started |
+| 63 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Completed |
 | 64 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |
 | 65 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
 | 66 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
@@ -271,7 +271,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-058 | AEP-004, AEP-009, AEP-010, AEP-011, AEP-018, AEP-039, AEP-051, AEP-056 | Not Started |
 | AEP-059 | AEP-002, AEP-010, AEP-011, AEP-020, AEP-028, AEP-036, AEP-051, AEP-056 | Not Started |
 | AEP-060 | AEP-025, AEP-026, AEP-027, AEP-033, AEP-051, AEP-052, AEP-056, AEP-057 | Completed |
-| AEP-061 | AEP-052, AEP-055, AEP-057, AEP-060 | Not Started |
+| AEP-061 | AEP-052, AEP-055, AEP-057, AEP-060 | Completed |
 | AEP-062 | AEP-010, AEP-011, AEP-014, AEP-042, AEP-045, AEP-046, AEP-051, AEP-056, AEP-058 | Not Started |
 | AEP-063 | AEP-015, AEP-016, AEP-017, AEP-039, AEP-045 | Not Started |
 | AEP-064 | AEP-007, AEP-010, AEP-013, AEP-017, AEP-024, AEP-025, AEP-028, AEP-038, AEP-041, AEP-056, AEP-058 | Not Started |
@@ -300,7 +300,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Deployment And Observability | AEP-035, AEP-036, AEP-037, AEP-071 | In Progress |
 | Repository Integration And Dogfooding | AEP-038, AEP-039, AEP-040, AEP-041, AEP-042, AEP-043, AEP-044, AEP-046, AEP-047, AEP-052 | In Progress |
 | Operations And Governance Expansion | AEP-056, AEP-057, AEP-058, AEP-059, AEP-062 | In Progress |
-| Evaluation And Experimentation | AEP-060, AEP-061 | In Progress |
+| Evaluation And Experimentation | AEP-060, AEP-061 | Completed |
 | Repository Intelligence Expansion | AEP-063, AEP-069, AEP-070 | Not Started |
 | Workflow And CI Expansion | AEP-064, AEP-065 | Not Started |
 

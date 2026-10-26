@@ -16,6 +16,7 @@ from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.context_identity import context_identity
 from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
 from aep.evaluation_suites import EvaluationSuiteError, load_suite, run_suite
+from aep.experiments import ExperimentError, load_experiment, run_experiment
 
 
 KIND_COMMANDS = {
@@ -492,6 +493,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     replay.add_argument("--plan-only", action="store_true", help="record a pending replay without dispatching Tasks")
     evaluate = sub.add_parser("eval", help="run or inspect a versioned evaluation suite")
     evaluate.add_argument("suite", type=Path, help="suite definition, or persisted EvaluationSuiteRun id")
+    experiment = sub.add_parser("experiment", help="run or inspect a versioned configuration experiment")
+    experiment.add_argument("definition", type=Path)
+    experiment.add_argument("--suite", required=True, type=Path, help="pinned EvaluationSuite definition")
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
@@ -550,6 +554,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0 if result.get("status") == "SUCCEEDED" else 1
+        if args.command == "experiment":
+            definition, suite = load_experiment(args.definition), load_suite(args.suite)
+            runtime = None
+            if any(case.get("kind") == "historical" for case in suite["spec"]["cases"]):
+                from aep.dogfood_runtime import DogfoodWorkflowRunner
+                runtime = DogfoodWorkflowRunner(os.environ, state_file=args.state_file)
+            result = run_experiment(definition, suite, DurableJsonRuntimeObjectStore(args.state_file), historical_runner=(
+                lambda source, overrides: runtime.replay(source, overrides=tuple(overrides), publication=False)
+            ) if runtime is not None else None)
+            result = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects()).safe_output(result, unsafe=args.unsafe_debug)
+            if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
+            else: print(_human(result))
+            return 0 if result.get("status") == "SUCCEEDED" else 1
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
         elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
@@ -562,6 +579,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except EvaluationSuiteError as error:
         print(json.dumps({"error": {"code": "EVALUATION_SUITE_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except ExperimentError as error:
+        print(json.dumps({"error": {"code": "EXPERIMENT_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
     except RuntimeError as error:
         print(json.dumps({"error": {"code": "REPLAY_RUNTIME_ERROR", "message": str(error)}}, sort_keys=True), file=sys.stderr)

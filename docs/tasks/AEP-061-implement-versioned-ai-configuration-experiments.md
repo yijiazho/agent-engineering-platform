@@ -1,6 +1,6 @@
 # AEP-061: Implement Versioned AI Configuration Experiments
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -33,3 +33,16 @@ Support overrides for versioned Agent, Prompt, Model, Context/Knowledge configur
 * Experiment execution performs no publication or other external side effects by default.
 * Tests cover two-arm comparison, multiple candidates, incompatible override rejection, partial failure, deterministic aggregation, and metric regression/improvement calculations.
 * Documentation defines how experiment evidence can inform a later explicit resource-version promotion without automatically changing production configuration.
+
+## Implementation Notes
+
+`Experiment` is a versioned Resource that pins one EvaluationSuite and declares
+baseline and candidate versioned Resource override sets. The `experiment` CLI
+command runs each arm through the existing side-effect-disabled suite runner.
+Each `ExperimentResult` retains arm status, run IDs, case evidence and metrics;
+failed arms remain visible and make the experiment result FAILED. Comparisons
+use candidate minus baseline for absolute differences and divide that delta by
+the absolute baseline value for relative differences (undefined when the
+baseline is zero or either metric is unavailable). Results never promote
+Resources. Operators may use the evidence to author and explicitly select a
+new immutable Resource version through the normal configuration process.
