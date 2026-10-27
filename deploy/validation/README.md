@@ -16,31 +16,38 @@ evidence, not a failed candidate test.
 
 `offline-requirements.txt` pins every runtime, test, and Python build dependency
 and records the accepted SHA-256 wheel hashes. `wheelhouse/` contains only those
-artifacts for CPython 3.12 on the Linux validation platform and Windows local
-proof platform. `offline_bootstrap.py` installs from that directory using
-`--no-index --no-deps --require-hashes`, installs the mounted project with
-dependency resolution and build isolation disabled, and compiles the source and
-tests.
+artifacts for CPython 3.12 on the Linux x86_64 validation platform and the
+Windows amd64 and macOS arm64/x86_64 local proof platforms. `offline_bootstrap.py`
+installs from that directory using `--no-index --no-deps --require-hashes`,
+installs the mounted project with dependency resolution and build isolation
+disabled, and compiles the source and tests.
 
 To refresh the wheelhouse, select exact versions from `requirements-dev.lock`,
 pin compatible `setuptools` and `wheel` versions, download only binary wheels
 for each supported CPython 3.12 platform, and replace the lock-file hashes in
-the same change. Then run:
+the same change. Build the macOS wheels with explicit targets such as
+`pip download --only-binary=:all: --platform macosx_11_0_arm64
+--python-version 3.12 --implementation cp --abi cp312` and
+`--platform macosx_10_13_x86_64`. Then run:
 
-```powershell
+```sh
 python -m pytest tests/test_self_hosting_resource_bundle.py
 python -m pytest
 ```
 
 The focused test rejects a missing, additional, or hash-mismatched wheel and
 executes both configured validation commands in a fresh environment with index
-access disabled.
+access disabled. Its execution half requires CPython 3.12 on Linux x86_64,
+Windows amd64, or macOS arm64/x86_64; it skips with an explicit reason on other
+interpreters or platforms. The full pytest suite itself runs on Windows, macOS,
+and Linux.
 
 ## Required Validation Gate
 
-Run the one checked-in gate from a clean release checkout:
+Run the one checked-in gate from a clean release checkout on a host whose
+Docker daemon can run `linux/amd64` containers:
 
-```powershell
+```sh
 python deploy/validation/verify.py verify
 ```
 
@@ -62,7 +69,7 @@ created by the root container process.
 During development only, include the current tracked and untracked working-tree
 snapshot without claiming release validation:
 
-```powershell
+```sh
 python deploy/validation/verify.py candidate --include-working-tree
 ```
 
@@ -79,8 +86,17 @@ validation container and are removed after published-image verification.
 Authenticate Docker to the target registry, choose a non-floating candidate
 tag, and let the same entrypoint build and test before it pushes:
 
+Windows PowerShell:
+
 ```powershell
 python deploy/validation/verify.py promote `
+  --target ghcr.io/yijiazho/agent-engineering-platform-validation:aep-047-next
+```
+
+macOS or Linux:
+
+```sh
+python deploy/validation/verify.py promote \
   --target ghcr.io/yijiazho/agent-engineering-platform-validation:aep-047-next
 ```
 
@@ -97,6 +113,6 @@ version every affected immutable Resource reference, and run `verify` again.
 Never record a digest obtained from a separately rebuilt or merely tagged
 image. Before public ingress, the credential-free published-image preflight is:
 
-```powershell
+```sh
 python deploy/validation/verify.py published
 ```

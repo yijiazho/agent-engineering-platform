@@ -24,19 +24,30 @@ Do not leave documentation describing stale project structure, commands, or task
 
 ## Build, Test, and Development Commands
 
-Use the local Python test suite and repository checks:
+Use the local Python test suite and repository checks on Windows, macOS, or
+Linux. Python 3.12 is the pinned validation interpreter; newer 3.12+
+interpreters are supported for development.
 
-* `python -m venv .venv` creates the repo-local virtual environment.
-* `.\.venv\Scripts\Activate.ps1` activates it on Windows PowerShell.
+* `python3 -m venv .venv` creates the repo-local virtual environment.
+* `.\.venv\Scripts\Activate.ps1` activates it in Windows PowerShell.
+* `source .venv/bin/activate` activates it in macOS or Linux shells.
 * `python -m pip install -e ".[dev,yaml]"` installs local development dependencies.
 * `python -m pytest` runs the current automated tests.
+* `python deploy/validation/verify.py verify` runs the Docker-capable
+  validation gate described in `deploy/validation/README.md`.
 * `rg --files docs` lists all project documents.
 * `git status --short` reviews changed and untracked files.
 * `git log --oneline -5` checks recent commit style.
 
-Use the virtual environment for local development. Docker and Kubernetes remain the runtime and Tool execution isolation boundary; they do not replace a local Python venv for contributor workflows.
+Use the virtual environment for local development. Docker remains the runtime
+and Tool execution isolation boundary for validation; Kubernetes is a future
+deployment target. Neither replaces a local Python venv for contributor
+workflows.
 
-Add concrete build and test commands here when additional implementation stacks are introduced.
+The hash-locked offline bootstrap under `deploy/validation/wheelhouse/` is
+pinned to CPython 3.12 for Linux x86_64, Windows amd64, and macOS arm64/x86_64. Its
+focused test skips on other interpreters or platforms. Run the full suite with
+CPython 3.12 before treating a platform result as validation evidence.
 
 ## Coding Style & Naming Conventions
 

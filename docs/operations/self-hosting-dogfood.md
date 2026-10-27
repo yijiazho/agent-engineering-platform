@@ -18,11 +18,25 @@ addressable service responsibility. No other service receives the socket.
 Create a detached, read-only Resource checkout at the release commit. Do not
 run the control plane from a branch checkout.
 
+Windows PowerShell:
+
 ```powershell
 git clone --filter=blob:none https://github.com/yijiazho/agent-engineering-platform C:\aep\resources\agent-engineering-platform
 git -C C:\aep\resources\agent-engineering-platform checkout --detach 'replace-with-40-character-release-commit'
 New-Item -ItemType Directory -Force C:\aep\state\agent-engineering-platform\control
 Copy-Item deploy/self-hosting/.env.example deploy/self-hosting/.env
+```
+
+macOS or Linux:
+
+```sh
+export AEP_HOST_ROOT="$HOME/aep"
+git clone --filter=blob:none https://github.com/yijiazho/agent-engineering-platform \
+  "$AEP_HOST_ROOT/resources/agent-engineering-platform"
+git -C "$AEP_HOST_ROOT/resources/agent-engineering-platform" checkout --detach \
+  'replace-with-40-character-release-commit'
+mkdir -p "$AEP_HOST_ROOT/state/agent-engineering-platform/control"
+cp deploy/self-hosting/.env.example deploy/self-hosting/.env
 ```
 
 Set `AEP_RESOURCE_REVISION` to `git rev-parse HEAD`. Set
@@ -36,20 +50,21 @@ Startup verifies the checkout is detached and completely clean before loading
 `.ai/`; a modified or untracked file fails every service. The deployment also
 passes `AEP_STATE_DIRECTORY` as the host-visible Docker state root so nested
 validation binds the execution worktree rather than a container-only path.
-For Docker Desktop's Linux-container backend, keep `AEP_DOCKER_SOCKET` set to
-`/var/run/docker.sock`. Docker Compose resolves that path through the Linux VM
-and mounts an actual Unix socket into Workflow Runtime and Tool Runtime. A
-Windows named-pipe value such as `//./pipe/docker_engine` becomes a directory
-inside a Linux container and makes nested Docker validation unavailable.
-Because this profile mounts a checkout prepared by Windows Git into Linux
-containers, it explicitly verifies cleanliness with `core.autocrlf=true`.
-This matches the host's CRLF worktree normalization while still rejecting
-content changes and untracked files. Verification also disables Git's optional
-index locks and allows up to 60 seconds per bounded Git probe so all seven
-read-only startup checks can safely run concurrently on the Windows bind mount.
-Recreate the checkout with Windows Git if
-it was prepared with a different line-ending policy; do not bypass the clean
-checkout check.
+For Docker Desktop's Linux-container backend on Windows or macOS, keep
+`AEP_DOCKER_SOCKET` set to `/var/run/docker.sock`. Docker Compose resolves that
+path through the Linux VM and mounts an actual Unix socket into Workflow
+Runtime and Tool Runtime. A Windows named-pipe value such as
+`//./pipe/docker_engine` becomes a directory inside a Linux container and makes
+nested Docker validation unavailable.
+Because this profile can mount a checkout prepared by Windows Git into Linux
+containers, Windows operators explicitly verify cleanliness with
+`AEP_RESOURCE_GIT_AUTOCRLF=true`. This matches the host's CRLF worktree
+normalization while still rejecting content changes and untracked files.
+macOS and Linux checkouts normally use the default `false`. Verification also
+disables Git's optional index locks and allows up to 60 seconds per bounded Git
+probe so all seven read-only startup checks can safely run concurrently on a
+bind mount. Recreate the checkout with the platform's Git if it was prepared
+with a different line-ending policy; do not bypass the clean checkout check.
 
 ## Configure GitHub And Secrets
 
@@ -80,10 +95,14 @@ failure, publish a corrected immutable generation, and restart from the first
 affected test. Do not skip directly to opening a live issue.
 
 The plan separates read-only checks, isolated ingress checks, fail-closed checks,
-and the one authorized live publication. Commands assume Windows PowerShell 5,
-Docker Desktop, Git, GitHub CLI, and `cloudflared`. Run repository commands from
+and the one authorized live publication. Command examples use Windows PowerShell
+5, Docker Desktop, Git, GitHub CLI, and `cloudflared`. macOS and Linux operators
+should use [macOS/Linux Host Operations](macos-linux-host.md), which mirrors the
+same gates with POSIX paths and commands; environment variable names, Compose
+services, and evidence contracts are identical. Run repository commands from
 the repository root. Run only the Cloudflare connector command from an elevated
-Administrator PowerShell.
+Administrator PowerShell, or with the equivalent elevated process on macOS or
+Linux.
 
 Record the following in an operator change record without recording secret
 values, webhook signatures, request bodies, prompts, or artifact bodies:
@@ -98,6 +117,11 @@ values, webhook signatures, request bodies, prompts, or artifact bodies:
   and terminal status; and
 * any deviation, retry, provider ambiguity, retained worktree, or cleanup
   decision.
+
+> **Command syntax:** The command blocks below are Windows PowerShell examples.
+> macOS and Linux operators should use the equivalent POSIX commands in
+> [macOS/Linux Host Operations](macos-linux-host.md). Service names, environment
+> variables, expected status codes, and evidence contracts are identical.
 
 The test gates are:
 
@@ -192,12 +216,24 @@ digest. It also proves the published digest has the configuration identity
 captured during promotion and repeats the credential-free probes by digest.
 For focused diagnosis, the host-side suites may also be run directly:
 
+Windows PowerShell:
+
 ```powershell
 .\.venv\Scripts\python.exe -m pytest tests/test_mvp_harness.py tests/test_dogfood_deployment.py
 .\.venv\Scripts\python.exe -m pytest tests/test_github_webhook.py tests/test_execution_checkout.py
 .\.venv\Scripts\python.exe -m pytest tests/test_github_app_provider.py tests/test_openai_model_provider.py
 .\.venv\Scripts\python.exe -m pytest tests/test_self_hosting_resource_bundle.py
 .\.venv\Scripts\python.exe -m pytest
+```
+
+macOS or Linux:
+
+```sh
+.venv/bin/python -m pytest tests/test_mvp_harness.py tests/test_dogfood_deployment.py
+.venv/bin/python -m pytest tests/test_github_webhook.py tests/test_execution_checkout.py
+.venv/bin/python -m pytest tests/test_github_app_provider.py tests/test_openai_model_provider.py
+.venv/bin/python -m pytest tests/test_self_hosting_resource_bundle.py
+.venv/bin/python -m pytest
 ```
 
 Pass only if the Docker gate exits `0`. The focused commands must also pass when
@@ -707,9 +743,11 @@ outbox identity for the replayed delivery. The row may remain pending while the
 workflow runs, but must become completed only after terminal runtime evidence.
 
 The following Windows PowerShell 5-compatible procedure reads the configured
-secret file without printing the secret, signature, or request body. Run it
-from the repository root and use a new fixed delivery ID for each intentional
-test. Do not enable transcript logging for this session.
+secret file without printing the secret, signature, or request body. macOS and
+Linux operators should use the equivalent POSIX procedure in
+[macOS/Linux Host Operations](macos-linux-host.md). Run it from the repository
+root and use a new fixed delivery ID for each intentional test. Do not enable
+transcript logging for this session.
 
 ```powershell
 $envLines = Get-Content .\deploy\self-hosting\.env

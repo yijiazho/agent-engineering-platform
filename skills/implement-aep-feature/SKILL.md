@@ -57,7 +57,8 @@ Do not introduce infrastructure or generality that the task does not require. Pr
 4. Use provider-neutral interfaces at boundaries for models, Tools, storage, repository knowledge, and external systems.
 5. Classify failures explicitly as recoverable, configuration, evaluation, policy, or permanent where the runtime contract requires it.
 6. Cover idempotency, immutability, ordering, retries, and concurrency when state can be replayed or updated by multiple workers.
-7. Avoid unrelated refactors. Keep fixtures small and deterministic.
+7. Isolate platform-specific path, lock, subprocess, and shell behavior behind an explicit branch, and fail closed when a supported capability is unavailable.
+8. Avoid unrelated refactors. Keep fixtures small and deterministic.
 
 Do not weaken a schema or invariant merely to make an implementation pass. Fix the implementation or document an intentional contract change.
 
@@ -94,18 +95,31 @@ related project documents.
 
 ## Validate and Complete
 
-Run focused tests while iterating, then run the full local suite when practical:
+Run focused tests while iterating, then run the full local suite when practical.
+AEP supports Windows PowerShell, macOS shells, and Linux shells; CPython 3.12 is
+the pinned validation interpreter.
 
-```powershell
+```sh
 python -m pytest
 ```
 
+On Windows PowerShell, use the activated virtual environment or
+`.\.venv\Scripts\python.exe -m pytest`. On macOS or Linux, use the activated
+environment or `.venv/bin/python -m pytest`.
+
 Also inspect:
 
-```powershell
+```sh
 git diff --check
 git status --short
 ```
+
+When a change touches path handling, file locking, subprocesses, shell
+commands, or platform-specific adapters, verify it on every supported platform
+or add a focused test that exercises the platform branch. Run
+`python deploy/validation/verify.py verify` when validation-image, wheelhouse,
+`.ai/tasks/run-validation.yaml`, or `.ai/tools/docker-validation.yaml` inputs
+change; that gate requires a Docker-capable Linux/amd64 host.
 
 Verify documentation and knowledge synchronization in the same change whenever
 behavior, configuration, commands, public APIs, structure, knowledge retrieval,

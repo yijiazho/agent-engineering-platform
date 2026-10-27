@@ -80,7 +80,10 @@ class RedirectOriginHandler(BaseHTTPRequestHandler):
         type(self).authorizations.append(self.headers.get("Authorization"))
         self.send_response(302)
         self.send_header("Location", type(self).redirect_url)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
         self.end_headers()
+        self.close_connection = True
 
     def log_message(self, *_args):
         pass
@@ -92,7 +95,10 @@ class RedirectTargetHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         type(self).authorizations.append(self.headers.get("Authorization"))
         self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.send_header("Connection", "close")
         self.end_headers()
+        self.close_connection = True
 
     do_POST = do_GET
 

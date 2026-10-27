@@ -73,18 +73,34 @@ Map every acceptance criterion to implementation evidence and at least one meani
 - omit negative, boundary, retry, immutability, or concurrency paths
 - rely on nondeterministic ordering, time, or external state
 - fail to exercise schema validation or persistence boundaries
+- assume one host OS for path, lock, subprocess, or shell behavior without a
+  platform guard or a test for each supported branch
 - pass while leaving an acceptance criterion unimplemented
 
 Keep fixtures small and deterministic. A task may be marked `Completed` only when all acceptance criteria are satisfied. Require `README.md`, task files, architecture, ADRs, schemas, fixtures, and `docs/execution-plan.md` to remain synchronized with changed behavior.
 
 ## Validate Independently
 
-Run the narrowest relevant checks first, then the full local suite when practical:
+Run the narrowest relevant checks first, then the full local suite when practical.
+AEP supports Windows PowerShell, macOS shells, and Linux shells; CPython 3.12 is
+the pinned validation interpreter.
 
-```powershell
+```sh
 python -m pytest
 git diff --check
 ```
+
+On Windows PowerShell, use the activated virtual environment or
+`.\.venv\Scripts\python.exe -m pytest`. On macOS or Linux, use the activated
+environment or `.venv/bin/python -m pytest`.
+
+For changes to path handling, file locking, subprocesses, shell commands, or
+platform-specific adapters, verify the affected platform branch and check that
+unsupported platforms fail closed rather than silently bypassing a boundary.
+Run `python deploy/validation/verify.py verify` for validation-image,
+wheelhouse, RunValidation Task, or Docker Tool changes. That gate requires a
+Docker-capable Linux/amd64 host; record it as not run when that host is
+unavailable.
 
 Run additional schema, fixture, or task-specific validation when the change requires it. Record commands exactly and distinguish passed, failed, and not run. Never treat passing tests as proof that no defect exists.
 
