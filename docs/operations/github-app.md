@@ -71,7 +71,7 @@ therefore cannot remain hidden behind a process-local identity cache.
 Independently prove the credential-helper executable without a private key,
 installation token, GitHub network call, or inherited process environment:
 
-```powershell
+```sh
 python -m aep.github_app_provider askpass-readiness
 ```
 
@@ -85,9 +85,19 @@ runs the service-image askpass pytest gate with
 `AEP_RUN_SERVICE_IMAGE_TESTS=1`; changes to the Dockerfile also trigger that
 workflow. For the equivalent focused local check, run:
 
+Windows PowerShell:
+
 ```powershell
 $env:AEP_RUN_SERVICE_IMAGE_TESTS = "1"
 .\.venv\Scripts\python.exe -m pytest tests/test_dogfood_deployment.py::test_service_image_runs_askpass_with_its_absolute_interpreter
+```
+
+macOS or Linux:
+
+```sh
+AEP_RUN_SERVICE_IMAGE_TESTS=1 \
+  .venv/bin/python -m pytest \
+  tests/test_dogfood_deployment.py::test_service_image_runs_askpass_with_its_absolute_interpreter
 ```
 
 ## Token And Mutation Behavior

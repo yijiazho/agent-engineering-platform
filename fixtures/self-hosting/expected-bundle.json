@@ -54,7 +54,7 @@
                                   "deployment.create"
                               ],
     "validation":  {
-                       "offlineArtifactCount":  17,
+                       "offlineArtifactCount":  21,
                        "image":  "ghcr.io/yijiazho/agent-engineering-platform-validation@sha256:6e0214265e1c8bbdc0553413801dded85ede2c1c2e90be413d0c02fae17fbf5a",
                        "baseImage":  "python@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de",
                        "aptSnapshot":  "http://snapshot.debian.org/archive/debian/20260101T000000Z",

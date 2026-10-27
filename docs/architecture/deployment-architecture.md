@@ -651,6 +651,16 @@ remain provider-neutral even though the MVP consumer invokes them in one
 process. Workflow Runtime therefore mounts the Docker socket for its Docker
 Tool boundary; the separately addressable Tool Runtime retains its own mount.
 
+Local development and deterministic tests run on Windows, macOS, and Linux
+with CPython 3.12 as the pinned validation interpreter. The hash-locked offline
+wheelhouse covers Linux x86_64, Windows amd64, and macOS arm64/x86_64. The Docker
+validation gate remains Linux/amd64 and is authoritative for candidate build
+and test evidence. The self-hosting host profile supports Windows checkouts
+with `core.autocrlf=true` and macOS/Linux checkouts with the default
+`core.autocrlf=false`; `AEP_RESOURCE_GIT_AUTOCRLF` makes the choice explicit.
+See [macOS/Linux Host Operations](../operations/macos-linux-host.md) for the
+POSIX host procedure.
+
 ---
 
 # 21. Repository Registration And Self-Hosting

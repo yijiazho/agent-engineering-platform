@@ -1184,10 +1184,18 @@ def _open_handle_path(descriptor: int) -> Path:
 
     import fcntl
 
-    path_buffer = bytearray(4096)
-    fcntl.fcntl(descriptor, 50, path_buffer)
-    value = bytes(path_buffer).split(b"\0", 1)[0]
-    return Path(os.fsdecode(value)).resolve(strict=True)
+    # macOS exposes F_GETPATH instead of /proc/self/fd. fcntl returns the
+    # filled buffer; it does not mutate a bytearray argument in place.
+    if hasattr(fcntl, "F_GETPATH"):
+        path_buffer = fcntl.fcntl(descriptor, fcntl.F_GETPATH, b"\0" * 1024)
+        if isinstance(path_buffer, int):
+            raise OSError("could not resolve opened filesystem handle")
+        value = bytes(path_buffer).split(b"\0", 1)[0]
+        if not value:
+            raise OSError("could not resolve opened filesystem handle")
+        return Path(os.fsdecode(value)).resolve(strict=True)
+
+    raise OSError("opened filesystem handle cannot be resolved on this platform")
 
 
 def _timestamp(value: datetime) -> str:

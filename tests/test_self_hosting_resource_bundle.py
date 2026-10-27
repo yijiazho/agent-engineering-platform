@@ -2,6 +2,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -381,6 +382,25 @@ def test_offline_wheelhouse_exactly_matches_hash_locked_artifacts() -> None:
     ).read_text(encoding="utf-8")
 
 
+OFFLINE_PROOF_PLATFORMS = {
+    ("Linux", "x86_64"),
+    ("Windows", "AMD64"),
+    ("Darwin", "arm64"),
+    ("Darwin", "x86_64"),
+}
+
+
+@pytest.mark.skipif(
+    sys.version_info[:2] != (3, 12),
+    reason="the hash-locked offline wheelhouse is pinned to CPython 3.12",
+)
+@pytest.mark.skipif(
+    (platform.system(), platform.machine()) not in OFFLINE_PROOF_PLATFORMS,
+    reason=(
+        "the hash-locked offline wheelhouse covers Linux x86_64, "
+        "Windows amd64, and macOS arm64/x86_64"
+    ),
+)
 def test_configured_build_and_test_commands_execute_in_fresh_offline_environment(
     tmp_path: Path, resources: ResourceCollection
 ) -> None:

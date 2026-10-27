@@ -258,3 +258,12 @@ run `32553884007` passed the complete source-built and published-image gate from
 clean Linux checkout `73f3d480aab67005975f369651cc44e734471e56`. The latest
 successful controlled MTP-10 execution also recorded passing build and
 repository-test Evaluations before proceeding to EvaluateAcceptance.
+
+## Platform Support Update
+
+The hash-locked wheelhouse now also carries the CPython 3.12 macOS arm64 and
+x86_64 PyYAML and rpds-py wheels. The Linux/amd64 validation image and its published
+digest inputs are unchanged. The focused offline execution test runs on Linux
+x86_64, Windows amd64, and macOS arm64/x86_64 with CPython 3.12, and skips with an
+explicit reason on other platform/interpreter pairs. The full pytest suite runs
+on Windows, macOS, and Linux.

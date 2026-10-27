@@ -1,5 +1,6 @@
-# Generated from .venv with:
-# .\.venv\Scripts\python.exe -m pip list --format=freeze
+# Generated from the development virtual environment with:
+#   Windows: .\.venv\Scripts\python.exe -m pip list --format=freeze
+#   macOS/Linux: .venv/bin/python -m pip list --format=freeze
 agent-engineering-platform==0.1.0
 attrs==26.1.0
 colorama==0.4.6

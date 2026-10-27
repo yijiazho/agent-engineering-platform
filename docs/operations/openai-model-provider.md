@@ -154,7 +154,7 @@ Resource discovery in the local Compose smoke test remains credential-free.
 The provider selection and endpoint can also be checked without reading a key
 or making a network request:
 
-```powershell
+```sh
 python -c "from aep.openai_model_provider import verify_openai_model_provider_environment as verify; print(verify('openai'))"
 python -m pytest tests/test_openai_model_provider.py
 ```
@@ -226,8 +226,28 @@ numeric allowlisted limit/remaining/reset fields. Raw bodies, raw headers,
 prompts, ContextPackage/output bodies, API keys, project or credential
 identity, and raw request IDs are omitted.
 
+Windows PowerShell:
+
 ```powershell
 $objects = Get-Content "$env:AEP_STATE_ROOT/runtime/objects.json" -Raw | ConvertFrom-Json
-$objects | Where-Object kind -eq ModelInvocation | Select-Object id,status,failure,providerMetadata
+$objects.objects.PSObject.Properties.Value | Where-Object kind -eq ModelInvocation | Select-Object id,status,failure,providerMetadata
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml logs --since 15m agent-invocation | Select-String 'ModelRequestAdmitted|ModelRequestThrottled|ModelRetry'
+```
+
+macOS or Linux:
+
+```sh
+python - <<'PY'
+import json
+import os
+from pathlib import Path
+
+state = json.loads(
+    Path(os.environ["AEP_STATE_ROOT"], "runtime", "objects.json").read_text()
+)
+for value in state["objects"].values():
+    if value.get("kind") == "ModelInvocation":
+        print(value.get("id"), value.get("status"), value.get("failure"), value.get("providerMetadata"))
+PY
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml logs --since 15m agent-invocation | grep -E 'ModelRequestAdmitted|ModelRequestThrottled|ModelRetry'
 ```

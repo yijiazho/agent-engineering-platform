@@ -36,12 +36,27 @@ deploy/
   local/
   self-hosting/
   validation/
+.ai/
+  workspace.yaml
+  events/
+  workflows/
+  tasks/
+  agents/
+  prompts/
+  models/
+  tools/
+  policies/
+  evaluations/
+  knowledge/
+.github/
+  workflows/
 docs/
   prd.md
   execution-plan.md
   implementation-tasks.md
   adr/
   architecture/
+  operations/
   tasks/
 schemas/
   resources/
@@ -59,7 +74,13 @@ tests/
 
 ## Local Development
 
-Use a repository-local virtual environment for Python development. This isolates local test and tooling dependencies from the host interpreter and does not conflict with Docker or Kubernetes; containers remain the planned runtime and Tool execution isolation boundary.
+Use a repository-local virtual environment for Python development on Windows,
+macOS, or Linux. This isolates local test and tooling dependencies from the host
+interpreter and does not conflict with Docker; containers remain the runtime and
+Tool execution isolation boundary. Python 3.12 is the pinned validation
+interpreter, and newer 3.12+ interpreters are supported for development.
+
+Windows PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -68,9 +89,24 @@ python -m pip install -e ".[dev,yaml]"
 python -m pytest
 ```
 
+macOS or Linux:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev,yaml]"
+python -m pytest
+```
+
 `PyYAML` is installed with the base package so local `.ai/` resource files may use either YAML or JSON-compatible YAML.
 
-Installed development package versions are captured in [requirements-dev.lock](requirements-dev.lock). Refresh it after dependency changes with `.\.venv\Scripts\python.exe -m pip list --format=freeze`.
+Installed development package versions are captured in [requirements-dev.lock](requirements-dev.lock). Refresh it after dependency changes with `.\.venv\Scripts\python.exe -m pip list --format=freeze` on Windows PowerShell or `.venv/bin/python -m pip list --format=freeze` on macOS or Linux.
+
+The deterministic suite runs on all three platforms. The cross-platform CI
+workflow runs `pytest` on Ubuntu, macOS, and Windows with CPython 3.12. The
+Docker validation gate and its published-image checks remain Linux/amd64. See
+[the validation image runbook](deploy/validation/README.md) for platform
+coverage and promotion commands.
 
 ## Local MVP Composition
 
@@ -78,6 +114,8 @@ The local composition starts the seven MVP control/execution
 service adapters as separate containers. Git-backed Resources are mounted
 read-only from this repository, while service readiness and future local
 runtime state are externalized to the `aep-state` volume.
+
+Windows PowerShell:
 
 ```powershell
 Copy-Item deploy/local/.env.example deploy/local/.env
@@ -87,6 +125,19 @@ docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml up --bu
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml ps
 Invoke-RestMethod http://localhost:8081/healthz
 Invoke-RestMethod http://localhost:8082/v1/resources
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml down
+```
+
+macOS or Linux:
+
+```sh
+cp deploy/local/.env.example deploy/local/.env
+mkdir -p deploy/local/secrets
+printf %s "replace-with-a-random-secret" > deploy/local/secrets/github-webhook-secret.txt
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml up --build -d
+docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml ps
+curl -fsS http://localhost:8081/healthz
+curl -fsS http://localhost:8082/v1/resources
 docker compose --env-file deploy/local/.env -f deploy/local/compose.yaml down
 ```
 
@@ -143,6 +194,8 @@ providers, and Docker validation boundary. Both Workflow Runtime and the
 separately addressable Tool Runtime mount the Docker socket; only Workflow
 Runtime performs the MVP end-to-end reconciliation.
 
+Windows PowerShell:
+
 ```powershell
 Copy-Item deploy/self-hosting/.env.example deploy/self-hosting/.env
 docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml config --quiet
@@ -150,9 +203,26 @@ docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compos
 docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml up -d
 ```
 
+macOS or Linux:
+
+```sh
+cp deploy/self-hosting/.env.example deploy/self-hosting/.env
+docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml config --quiet
+docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml pull
+docker compose --env-file deploy/self-hosting/.env -f deploy/self-hosting/compose.yaml up -d
+```
+
+Set `AEP_RESOURCE_GIT_AUTOCRLF=true` only when the pinned checkout was created
+with Git's Windows CRLF normalization; macOS and Linux checkouts normally use
+the default `false`.
+
 Do not expose webhook ingress until the readiness, replay, blocked-publication,
 backup, and provider checks in the
 [self-hosting dogfood runbook](docs/operations/self-hosting-dogfood.md) pass.
+The Windows runbook remains the canonical pilot record; macOS and Linux
+operators should use the
+[macOS/Linux host operations guide](docs/operations/macos-linux-host.md), which
+mirrors the same gates and evidence contracts with POSIX commands.
 Creating the durable emergency-disable marker rejects new deliveries and is
 also rechecked at the CreatePullRequest boundary before remote mutation. The
 repository implementation does not claim the controlled live pilot complete;
@@ -271,11 +341,15 @@ content remain outside Resources.
 Run the bundle contract tests and the locked repository test command before
 review:
 
-```powershell
+```sh
 python -m pytest tests/test_self_hosting_resource_bundle.py
 python -m pytest
 python deploy/validation/verify.py verify
 ```
+
+Run the first two commands with CPython 3.12 to exercise the offline bootstrap
+proof on Linux x86_64, Windows amd64, or macOS arm64/x86_64. The final command
+requires a Docker-capable Linux/amd64 host and builds the validation image.
 
 Validation starts from the separately published immutable validation image,
 which includes CPython 3.12, Git, and CA certificates, and runs the repository's
@@ -306,14 +380,16 @@ build-created configuration metadata.
 See [the validation image runbook](deploy/validation/README.md) for local,
 CI, and promotion commands.
 
-The wheelhouse includes CPython 3.12 artifacts for the Linux validation
-container and Windows local contract proof. Refresh it only from
-`requirements-dev.lock` plus the explicitly pinned `setuptools` and `wheel`
-build dependencies, update every hash in
+The wheelhouse includes CPython 3.12 artifacts for the Linux x86_64 validation
+container and Windows amd64 and macOS arm64/x86_64 local contract proofs. Refresh it
+only from `requirements-dev.lock` plus the explicitly pinned `setuptools` and
+`wheel` build dependencies, update every hash in
 `deploy/validation/offline-requirements.txt`, and run
 `tests/test_self_hosting_resource_bundle.py`. That test verifies the complete
 artifact/hash set and executes both configured commands in a fresh environment
-with package indexes disabled.
+with package indexes disabled. Its execution test skips on interpreters or
+platforms that the pinned wheelhouse does not cover; run it with CPython 3.12
+on a covered platform before treating it as validation evidence.
 
 ### 2. Bind AEP To The Repository
 
@@ -487,11 +563,13 @@ provider throttle state before each delayed dispatch.
 See the [OpenAI Model provider operator guide](docs/operations/openai-model-provider.md)
 for supported configuration, safe evidence, and credential-free verification.
 
-On the Windows self-hosting profile, Resource checkout verification uses the
-host checkout's CRLF normalization and read-only, lock-free Git probes with a
-bounded 60-second timeout. This avoids false dirty or transient startup
-failures under concurrent container checks without allowing actual tracked or
-untracked changes.
+On self-hosting host bind mounts, Resource checkout verification uses the host
+checkout's configured line-ending normalization and read-only, lock-free Git
+probes with a bounded 60-second timeout. This avoids false dirty or transient
+startup failures under concurrent container checks without allowing actual
+tracked or untracked changes. Windows checkouts created with
+`core.autocrlf=true` must set `AEP_RESOURCE_GIT_AUTOCRLF=true`; macOS and Linux
+checkouts normally use `false`.
 The shared container image runs the copied `/opt/aep/src` tree so its
 source-relative runtime validators resolve the matching `/opt/aep/schemas`
 bundle included in the same immutable image.
@@ -593,16 +671,24 @@ an explicit, controlled local-investigation switch.
 Install the repository package into the local virtual environment to register
 the `aep` command:
 
+Windows PowerShell:
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,yaml]"
 .\.venv\Scripts\aep.exe --help
 ```
 
-After activating the virtual environment with
-`.\.venv\Scripts\Activate.ps1`, `aep --help` is available directly on
-`PATH`.
+macOS or Linux:
 
-```powershell
+```sh
+.venv/bin/python -m pip install -e ".[dev,yaml]"
+.venv/bin/aep --help
+```
+
+After activating the virtual environment, `aep --help` is available directly
+on `PATH`.
+
+```sh
 aep --output json executions list
 aep --output json executions list --status FAILED
 aep --output json executions show workflowexecution-...
@@ -614,7 +700,8 @@ aep replay workflowexecution-...
 aep replay workflowexecution-... --override Prompt:planner:2.0.0
 ```
 
-By default the checkpoint is `$env:AEP_STATE_ROOT/runtime/objects.json`; its
+By default the checkpoint is `$AEP_STATE_ROOT/runtime/objects.json` (Windows
+PowerShell: `$env:AEP_STATE_ROOT/runtime/objects.json`); its
 sibling writer fence is managed automatically and should not be shared with a
 second active runtime writer. Use
 `--state-file <path>` for an offline backup. `aep executions list` discovers
@@ -663,6 +750,11 @@ changes.
 * [Self-Hosting Repository Integration](docs/adr/ADR-004-self-hosting-repository-integration.md)
 * [Structured Observability](docs/architecture/observability.md)
 * [Execution Plan](docs/execution-plan.md)
+* [GitHub App Provider Operations](docs/operations/github-app.md)
+* [OpenAI Model Provider Operations](docs/operations/openai-model-provider.md)
+* [Self-Hosting Dogfood Runbook](docs/operations/self-hosting-dogfood.md)
+* [macOS/Linux Host Operations](docs/operations/macos-linux-host.md)
+* [Validation Image Runbook](deploy/validation/README.md)
 * [Implementation Tasks](docs/implementation-tasks.md)
 
 ## Current Status

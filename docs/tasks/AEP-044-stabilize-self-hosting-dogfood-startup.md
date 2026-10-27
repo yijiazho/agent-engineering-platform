@@ -213,3 +213,12 @@ duplicate` with the same Event identity, and isolated state contained exactly
 one Event and one pending outbox row. Public ingress returned AEP `401`, the
 focused deployment/provider/checkout suites passed, and the final complete
 suite passed with 693 tests and one skip.
+
+## Platform Support Update
+
+The startup procedure is no longer Windows-only. The same image, identity
+checks, webhook ingress, outbox, and evidence contracts apply to macOS arm64
+and Linux hosts. `AEP_RESOURCE_GIT_AUTOCRLF` is configurable and defaults to
+`false`; Windows checkouts created with `core.autocrlf=true` must set it to
+`true`. The POSIX host procedure is documented in
+[macOS/Linux Host Operations](../operations/macos-linux-host.md).
