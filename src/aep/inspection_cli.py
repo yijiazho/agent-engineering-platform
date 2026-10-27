@@ -9,9 +9,10 @@ import re
 import sys
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from aep.approval import ApprovalAuthorizationError, ApprovalError, ApprovalGate
 from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.context_identity import context_identity
 from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
@@ -116,6 +117,18 @@ class ExecutionInspector:
             and (status is None or value.get("status") == status)
         ]
         return {"workflowExecutions": [self._safe(_summary(value), unsafe=False) for value in _ordered(executions)]}
+
+    def list_approvals(self, *, status: str | None = None) -> dict[str, Any]:
+        """Return deterministic, safe approval discovery records."""
+
+        if status is not None and not status.strip():
+            raise InspectionError("INVALID_STATUS_FILTER", "status filter must be a non-empty string")
+        approvals = [
+            value for value in self._objects.values()
+            if value.get("kind") == "Approval"
+            and (status is None or value.get("status") == status)
+        ]
+        return {"approvals": [self._safe(_summary(value), unsafe=False) for value in _ordered(approvals)]}
 
     def execution(self, execution_id: str, *, unsafe: bool = False) -> dict[str, Any]:
         workflow = self._get(execution_id)
@@ -506,9 +519,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
-        if command == "executions":
+        if command in {"executions", "approvals"}:
             listing = group.add_parser("list")
             listing.add_argument("--status")
+        if command == "approvals":
+            decide = group.add_parser(
+                "decide",
+                help="record an authorized approval or rejection",
+            )
+            decide.add_argument("id")
+            decide.add_argument("--actor", required=True)
+            decide.add_argument(
+                "--decision",
+                required=True,
+                choices=("APPROVED", "REJECTED"),
+            )
+            decide.add_argument("--reason", required=True)
+            decide.add_argument(
+                "--digest",
+                help="expected current action digest; defaults to the persisted binding",
+            )
     try:
         args = parser.parse_args(arguments)
         if args.command == "replay":
@@ -578,9 +608,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0 if result.get("status") == "SUCCEEDED" else 1
+        if args.command == "approvals" and args.action == "decide":
+            store = DurableJsonRuntimeObjectStore(args.state_file)
+            approval = store.get(args.id)
+            if approval is None or approval.get("kind") != "Approval":
+                raise ApprovalError(
+                    "APPROVAL_NOT_FOUND", "approval request was not found"
+                )
+            digest = args.digest or approval.get("artifactRequestDigest")
+            if not isinstance(digest, str) or not digest:
+                raise ApprovalError(
+                    "APPROVAL_DIGEST_MISSING",
+                    "approval request has no bound action digest",
+                )
+            ApprovalGate(store).decide(
+                args.id,
+                actor=args.actor,
+                decision=args.decision,
+                timestamp=_current_timestamp(),
+                reason=args.reason,
+                current_digest=digest,
+            )
+            result = ExecutionInspector(
+                RuntimeEvidenceReader(args.state_file).objects()
+            ).show(args.id, "Approval")
+            if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
+            else: print(_human(result))
+            return 0
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
         elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
+        elif args.command == "approvals" and args.action == "list": result = inspector.list_approvals(status=args.status)
         else: result = inspector.show(args.id, KIND_COMMANDS[args.command], unsafe=args.unsafe_debug)
     except InspectionError as error:
         print(json.dumps({"error": {"code": error.code, "message": str(error)}}, sort_keys=True), file=sys.stderr)
@@ -594,6 +652,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ExperimentError as error:
         print(json.dumps({"error": {"code": "EXPERIMENT_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
+    except ApprovalAuthorizationError as error:
+        print(json.dumps({"error": {"code": error.code, "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except ApprovalError as error:
+        print(json.dumps({"error": {"code": error.code, "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
     except RuntimeError as error:
         print(json.dumps({"error": {"code": "REPLAY_RUNTIME_ERROR", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
@@ -605,6 +669,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
+def _current_timestamp() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _default_state_file() -> Path:
     return Path(os.environ.get("AEP_STATE_ROOT", ".")) / "runtime" / "objects.json"
 
@@ -614,6 +682,13 @@ def _human(value: Any) -> str:
         records = value["workflowExecutions"]
         return "Workflow executions:\n" + ("\n".join(
             f"- {item['id']}  {item.get('status', 'UNKNOWN')}  {item.get('createdAt', '')}" for item in records
+        ) if records else "- none")
+    if isinstance(value, Mapping) and "approvals" in value:
+        records = value["approvals"]
+        return "Approvals:\n" + ("\n".join(
+            f"- {item['id']}  {item.get('status', 'UNKNOWN')}  "
+            f"{item.get('targetAction', '')}  {item.get('requestedAt', '')}"
+            for item in records
         ) if records else "- none")
     if isinstance(value, Mapping) and "workflowExecution" in value:
         workflow = value["workflowExecution"]
@@ -638,6 +713,26 @@ def _human(value: Any) -> str:
     if isinstance(value, Mapping) and "decisiveEvidence" in value:
         evidence = value["decisiveEvidence"]
         return f"Outcome: {value['outcome']}\nReason: {value['reason']}\nDecisive evidence: {evidence.get('kind')} {evidence.get('id')}"
+    if isinstance(value, Mapping) and value.get("kind") == "Approval":
+        lines = [
+            f"Approval: {value.get('id', 'UNKNOWN')}",
+            f"Status: {value.get('status', 'UNKNOWN')}",
+            f"Action: {value.get('targetAction', '')}",
+            f"Repository revision: {value.get('repositoryRevision', '')}",
+            f"Digest: {value.get('artifactRequestDigest', '')}",
+            f"Requested by: {value.get('requester', '')} at {value.get('requestedAt', '')}",
+        ]
+        if value.get("approver"):
+            lines.append(
+                f"Decided by: {value['approver']} at {value.get('decidedAt', '')}"
+            )
+        if value.get("reason"):
+            lines.append(f"Reason: {value['reason']}")
+        if value.get("authorizedReviewers"):
+            lines.append(
+                "Authorized reviewers: " + ", ".join(value["authorizedReviewers"])
+            )
+        return "\n".join(lines)
     if isinstance(value, Mapping):
         return "\n".join(f"{key}: {item}" for key, item in value.items())
     return str(value)

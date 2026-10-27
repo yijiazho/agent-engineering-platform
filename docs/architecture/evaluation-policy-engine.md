@@ -575,6 +575,14 @@ recovery cannot reuse an earlier approval after a new gate is opened. Requests
 with `expiresAt` become `EXPIRED` when the decision timestamp reaches the
 deadline and cannot wake the waiting task.
 
+An operator resolves a pending request with `aep approvals list --status
+PENDING` and `aep approvals decide`, using an authorized identity and a
+non-empty reason. The command records the decision on the Approval; it does not
+bypass capability or publication policy. A gated TaskExecution remains durably
+`AWAITING_APPROVAL`, while the owning WorkflowExecution remains `RUNNING` so the
+scheduler can resume the same attempt exactly once after approval. Rejection or
+expiry becomes a non-retryable `POLICY` task failure.
+
 Contains:
 
 * requester

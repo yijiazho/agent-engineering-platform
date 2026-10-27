@@ -45,3 +45,41 @@ rechecks capability and publication policy.
 * AEP-056 inspection and explanation surfaces who approved or rejected, what immutable object was approved, and why the workflow is pending or permitted to continue.
 * Tests cover approval, rejection, unauthorized identity, artifact mutation after approval, duplicate approval submissions, restart while pending, and post-approval single execution.
 * Resource, runtime-schema, operator, and security documentation describe the approval contract and its invalidation rules.
+
+## Implementation Notes
+
+`src/aep/approval.py` owns the durable `Approval` request and decision contract.
+A request is bound to the governing Policy versions, target action, explicit
+target, repository revision, artifact digests, and a canonical
+action/target/revision/artifact-digest SHA-256 digest. `ApprovalGate.decide`
+rejects an unauthorized identity, a stale digest, an expired request, or a
+second conflicting decision, and records unauthorized attempts as
+`ApprovalAuthorizationDenied` events without changing eligibility.
+
+The scheduler persists `TaskExecutionAwaitingApproval`, creates or repairs the
+request, wakes only the task's current approval binding after `APPROVED`, and
+fails a rejected or expired wait as a non-retryable `POLICY` failure. The owning
+`WorkflowExecution` remains `RUNNING` by design so the same scheduler can resume
+the gated attempt after a valid decision. The durable pending condition is
+evidenced by the `AWAITING_APPROVAL` TaskExecution, the `Approval` request, and
+the `REQUIRE_APPROVAL` PolicyDecision, and `aep explain` reports it as
+`APPROVAL_PENDING`. The handler rechecks capability and publication policy
+before performing the gated action.
+
+Operators discover pending requests with `aep approvals list --status PENDING`
+and record a decision with:
+
+```sh
+aep approvals decide approval-... --actor alice --decision APPROVED \
+  --reason "Reviewed the exact target and digest."
+```
+
+`--digest` optionally supplies an independently verified current digest; when
+omitted, the digest bound to the persisted request is used and the handler still
+rechecks the current action before publication. Rejection and expiry remain
+durable evidence. The operator and security contract is documented in
+[`docs/operations/approval-gates.md`](../operations/approval-gates.md).
+
+Tests cover artifact and target binding, unauthorized and stale decisions,
+rejection, expiration, duplicate submissions, interrupted wake-up recovery,
+restart while pending, post-approval single execution, and the operator CLI.
