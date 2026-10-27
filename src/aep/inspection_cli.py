@@ -355,7 +355,14 @@ class ExecutionInspector:
         if isinstance(value, Mapping):
             if unsafe:
                 return {str(key): self._safe(item, unsafe=True) for key, item in value.items()}
-            safe = {str(key): ("[REDACTED]" if _is_sensitive_key(str(key)) else self._safe(item, unsafe=False)) for key, item in value.items()}
+            safe = {}
+            for key, item in value.items():
+                key = str(key)
+                if key == "comparisons" and isinstance(item, Mapping):
+                    # These keys are operator-authored arm labels, not evidence fields.
+                    safe[key] = {str(label): self._safe(comparison, unsafe=False) for label, comparison in item.items()}
+                else:
+                    safe[key] = "[REDACTED]" if _is_sensitive_key(key) else self._safe(item, unsafe=False)
             reasons = _context_selection_reasons(value)
             if reasons is not None:
                 safe["selectionReasons"] = reasons
@@ -563,8 +570,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = run_experiment(definition, suite, DurableJsonRuntimeObjectStore(args.state_file), historical_runner=(
                 lambda source, overrides: runtime.replay(
                     source, overrides=tuple(overrides), publication=False,
-                    context_mode="rebuild" if any(item.startswith("KnowledgeBase:") for item in overrides) else "reuse",
-                    allow_context_change=any(item.startswith("KnowledgeBase:") for item in overrides),
+                    context_mode="rebuild" if overrides else "reuse",
+                    allow_context_change=bool(overrides),
                 )
             ) if runtime is not None else None)
             result = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects()).safe_output(result, unsafe=args.unsafe_debug)

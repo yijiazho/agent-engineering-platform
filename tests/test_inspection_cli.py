@@ -366,9 +366,42 @@ def test_safe_experiment_output_keeps_dotted_token_metric_deltas():
         "tokenUsage.totalTokens": {"baseline": 100, "candidate": 120, "absoluteDifference": 20, "relativeDifference": 0.2},
         "tokenUsage.inputTokens": {"baseline": 70, "candidate": 80, "absoluteDifference": 10, "relativeDifference": 1 / 7},
         "providerAccessToken": "credential-value",
-    }}}
+    }, "planner-prompt-v2": {"passRate": {"baseline": 0.8, "candidate": 0.9}},
+        "model-token-candidate": {"cost": {"baseline": 1.0, "candidate": 0.9}}}}
     safe = ExecutionInspector({}).safe_output(value)
     comparison = safe["comparisons"]["candidate"]
     assert comparison["tokenUsage.totalTokens"]["absoluteDifference"] == 20
     assert comparison["tokenUsage.inputTokens"]["candidate"] == 80
     assert comparison["providerAccessToken"] == "[REDACTED]"
+    assert safe["comparisons"]["planner-prompt-v2"]["passRate"]["candidate"] == 0.9
+    assert safe["comparisons"]["model-token-candidate"]["cost"]["candidate"] == 0.9
+
+
+def test_experiment_cli_rebuilds_context_for_any_effective_override(tmp_path, capsys, monkeypatch):
+    import aep.inspection_cli as cli
+
+    state = _checkpoint(tmp_path, [])
+    captured = {}
+
+    class FakeRunner:
+        def __init__(self, environ, *, state_file):
+            pass
+
+        def replay(self, source, **kwargs):
+            captured.update(kwargs)
+            return "workflowexecution-replay"
+
+    monkeypatch.setattr("aep.dogfood_runtime.DogfoodWorkflowRunner", FakeRunner)
+    monkeypatch.setattr(cli, "load_experiment", lambda path: {"kind": "Experiment"})
+    monkeypatch.setattr(cli, "load_suite", lambda path: {"spec": {"cases": [{"kind": "historical"}]}})
+
+    def fake_run_experiment(experiment, suite, store, *, historical_runner):
+        historical_runner("workflowexecution-source", ["Prompt:planner:2.0.0"])
+        return {"id": "experimentresult-fixture", "status": "SUCCEEDED", "comparisons": {}}
+
+    monkeypatch.setattr(cli, "run_experiment", fake_run_experiment)
+    assert main(["--state-file", str(state), "--output", "json", "experiment", "experiment.yaml", "--suite", "suite.yaml"]) == 0
+    capsys.readouterr()
+    assert captured["context_mode"] == "rebuild"
+    assert captured["allow_context_change"] is True
+    assert captured["publication"] is False
