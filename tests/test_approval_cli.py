@@ -218,7 +218,9 @@ def test_approvals_list_discovers_and_filters_requests(tmp_path, capsys):
 
 
 def test_approvals_decide_human_output_reports_the_decision(tmp_path, capsys):
-    state, approval, _ = _pending_approval(tmp_path)
+    state, approval, _ = _pending_approval(
+        tmp_path, expires_at="2030-01-01T00:00:00Z"
+    )
 
     assert main([
         "--state-file", str(state),
@@ -230,6 +232,12 @@ def test_approvals_decide_human_output_reports_the_decision(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "Status: APPROVED" in output
     assert "Action: github.create_pr" in output
+    assert "Target: " in output
+    assert '"repository": "acme/widgets"' in output
+    assert '"branch": "main"' in output
+    assert "Artifact digests: " in output
+    assert "Governing policies: Policy:review:1.0.0" in output
+    assert "Expires at: 2030-01-01T00:00:00Z" in output
     assert "Decided by: alice" in output
     assert "Reason: Reviewed." in output
 

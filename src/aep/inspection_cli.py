@@ -720,8 +720,30 @@ def _human(value: Any) -> str:
             f"Action: {value.get('targetAction', '')}",
             f"Repository revision: {value.get('repositoryRevision', '')}",
             f"Digest: {value.get('artifactRequestDigest', '')}",
+            f"Workflow execution: {value.get('workflowExecutionId', '')}",
+            f"Task execution: {value.get('taskExecutionId', '')}",
+            f"Policy decision: {value.get('policyDecisionId', '')}",
             f"Requested by: {value.get('requester', '')} at {value.get('requestedAt', '')}",
         ]
+        if value.get("target"):
+            lines.append(
+                "Target: " + json.dumps(value["target"], sort_keys=True)
+            )
+        if value.get("artifactDigests"):
+            lines.append(
+                "Artifact digests: "
+                + json.dumps(value["artifactDigests"], sort_keys=True)
+            )
+        if value.get("governingPolicyRefs"):
+            refs = [
+                f"{ref.get('kind', '')}:{ref.get('name', '')}:{ref.get('version', '')}"
+                for ref in value["governingPolicyRefs"]
+                if isinstance(ref, Mapping)
+            ]
+            if refs:
+                lines.append("Governing policies: " + ", ".join(refs))
+        if value.get("expiresAt"):
+            lines.append(f"Expires at: {value['expiresAt']}")
         if value.get("approver"):
             lines.append(
                 f"Decided by: {value['approver']} at {value.get('decidedAt', '')}"
