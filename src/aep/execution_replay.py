@@ -23,7 +23,7 @@ _RESOURCE_KINDS = frozenset({
     "Workspace", "Workflow", "Task", "Agent", "Prompt", "Model", "Tool",
     "KnowledgeBase", "Policy", "Evaluation", "Event",
 })
-_OVERRIDE_KINDS = frozenset({"Agent", "Prompt", "Model", "Evaluation", "Policy"})
+_OVERRIDE_KINDS = frozenset({"Agent", "Prompt", "Model", "KnowledgeBase", "Evaluation", "Policy"})
 _SEMVER = re.compile(
     r"^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"

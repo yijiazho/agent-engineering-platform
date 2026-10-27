@@ -1,0 +1,14 @@
+apiVersion: aep.dev/v1alpha1
+kind: EvaluationSuite
+metadata:
+  name: issue-to-pr-historical-regression
+  version: 1.0.0
+spec:
+  workflowRef: {kind: Workflow, name: issue-to-pr, version: 1.39.0}
+  evaluationRefs:
+    - {kind: Evaluation, name: workflow-acceptance, version: 1.0.0}
+  metrics: [acceptanceScore]
+  cases:
+    - id: historical-issue-102
+      kind: historical
+      workflowExecutionId: workflowexecution-issue-102

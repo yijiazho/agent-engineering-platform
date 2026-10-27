@@ -16,6 +16,7 @@ from uuid import uuid4
 import yaml
 from jsonschema import Draft202012Validator
 
+from aep.execution_replay import ReplayError, _collect_resource_refs
 from aep.runtime_store import RuntimeObjectStore, StatusConflictError
 
 
@@ -431,30 +432,27 @@ def _historical_overrides(
         for key in ("kind", "name", "version")
     ):
         raise EvaluationSuiteError("suite Workflow does not match the historical execution; Workflow overrides are unsupported")
-    historical_refs: list[Any] = []
-    root = source.get("provenance")
-    if isinstance(root, Mapping) and isinstance(root.get("resourceRefs"), list):
-        historical_refs.extend(root["resourceRefs"])
-    for item in related:
-        provenance = item.get("provenance")
-        if isinstance(provenance, Mapping) and isinstance(provenance.get("resourceRefs"), list):
-            historical_refs.extend(provenance["resourceRefs"])
-        for field in ("evaluationRef",):
-            if item.get(field) is not None:
-                historical_refs.append(item[field])
+    try:
+        historical_refs = _collect_resource_refs(source, related)
+    except ReplayError as error:
+        raise EvaluationSuiteError(str(error)) from None
     selected = spec["evaluationRefs"]
-    available = {
-        (ref.get("kind"), ref.get("name")): ref
-        for ref in historical_refs if isinstance(ref, Mapping)
-    }
-    overrides: list[str] = []
+    available: dict[tuple[str, str], set[str]] = {}
+    for ref in historical_refs:
+        available.setdefault((ref["kind"], ref["name"]), set()).add(ref["version"])
+    selected_by_identity: dict[tuple[str, str], Mapping[str, Any]] = {}
     for ref in selected:
-        prior = available.get((ref["kind"], ref["name"]))
-        if prior is None:
-            raise EvaluationSuiteError(f"selected Evaluation {ref['name']!r} is absent from historical Resource provenance")
-        if prior.get("version") != ref["version"]:
-            overrides.append(f"Evaluation:{ref['name']}:{ref['version']}")
-    return overrides
+        selected_by_identity[(ref["kind"], ref["name"])] = ref
+    for ref in spec.get("resourceOverrides", []):
+        selected_by_identity[(ref["kind"], ref["name"])] = ref
+    overrides_by_identity: dict[tuple[str, str], str] = {}
+    for identity, ref in selected_by_identity.items():
+        historical_versions = available.get(identity)
+        if not historical_versions:
+            raise EvaluationSuiteError(f"selected {ref['kind']} {ref['name']!r} is absent from historical Resource provenance")
+        if any(version != ref["version"] for version in historical_versions):
+            overrides_by_identity[identity] = f"{ref['kind']}:{ref['name']}:{ref['version']}"
+    return [overrides_by_identity[key] for key in sorted(overrides_by_identity)]
 
 
 def _validate_ref(ref: Any, kind: str) -> None:

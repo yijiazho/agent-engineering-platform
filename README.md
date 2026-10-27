@@ -116,6 +116,16 @@ and input identities, expected outcome, evaluation schema version, and optional
 normalized metrics. See
 [`fixtures/resources/evaluation-suite-issue-to-pr.yaml`](fixtures/resources/evaluation-suite-issue-to-pr.yaml).
 
+Versioned AI configuration experiments compare a baseline and one or more
+candidate Resource override sets against the same EvaluationSuite case list.
+Run one with
+`aep --state-file <checkpoint> experiment <experiment-file> --suite <suite-file>`.
+The durable `ExperimentResult` links each arm to its `EvaluationSuiteRun`,
+preserves case evidence, and reports absolute and relative metric differences.
+Experiments disable publication. Their evidence can inform an operator's later
+explicit creation and selection of a new production Resource version; the
+runner never promotes or edits production configuration.
+
 `docker compose ... down` keeps the local state volume. To intentionally reset
 that recoverable local state, run the same command with `--volumes`.
 

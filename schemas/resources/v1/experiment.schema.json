@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aep.dev/schemas/resources/v1/experiment.schema.json",
+  "title": "Experiment Resource",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "properties": {
+    "apiVersion": {"const": "aep.dev/v1alpha1"},
+    "kind": {"const": "Experiment"},
+    "metadata": {"type": "object", "required": ["name", "version"], "properties": {"name": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"}, "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"}}, "additionalProperties": true},
+    "spec": {"type": "object", "required": ["evaluationSuiteRef", "baseline", "candidates", "metrics"], "properties": {
+      "evaluationSuiteRef": {"$ref": "#/$defs/suiteRef"},
+      "baseline": {"type": "object", "required": ["name", "resourceOverrides"], "properties": {"name": {"type": "string", "minLength": 1}, "resourceOverrides": {"$ref": "#/$defs/overrides"}}, "additionalProperties": false},
+      "candidates": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["name", "resourceOverrides"], "properties": {"name": {"type": "string", "minLength": 1}, "resourceOverrides": {"$ref": "#/$defs/overrides"}}, "additionalProperties": false}},
+      "metrics": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+    }, "additionalProperties": false}
+  },
+  "$defs": {
+    "suiteRef": {"type": "object", "required": ["kind", "name", "version"], "properties": {"kind": {"const": "EvaluationSuite"}, "name": {"type": "string", "minLength": 1}, "version": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+    "overrides": {"type": "array", "items": {"type": "object", "required": ["kind", "name", "version"], "properties": {"kind": {"enum": ["Agent", "Prompt", "Model", "KnowledgeBase", "Evaluation", "Policy"]}, "name": {"type": "string", "minLength": 1}, "version": {"type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"}}, "additionalProperties": false}}
+  },
+  "additionalProperties": false
+}

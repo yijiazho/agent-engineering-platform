@@ -16,6 +16,7 @@ from aep.execution_replay import ExecutionReplayService, ReplayError
 from aep.context_identity import context_identity
 from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
 from aep.evaluation_suites import EvaluationSuiteError, load_suite, run_suite
+from aep.experiments import ExperimentError, load_experiment, run_experiment
 
 
 KIND_COMMANDS = {
@@ -354,7 +355,14 @@ class ExecutionInspector:
         if isinstance(value, Mapping):
             if unsafe:
                 return {str(key): self._safe(item, unsafe=True) for key, item in value.items()}
-            safe = {str(key): ("[REDACTED]" if _is_sensitive_key(str(key)) else self._safe(item, unsafe=False)) for key, item in value.items()}
+            safe = {}
+            for key, item in value.items():
+                key = str(key)
+                if key == "comparisons" and isinstance(item, Mapping):
+                    # These keys are operator-authored arm labels, not evidence fields.
+                    safe[key] = {str(label): self._safe(comparison, unsafe=False) for label, comparison in item.items()}
+                else:
+                    safe[key] = "[REDACTED]" if _is_sensitive_key(key) else self._safe(item, unsafe=False)
             reasons = _context_selection_reasons(value)
             if reasons is not None:
                 safe["selectionReasons"] = reasons
@@ -382,7 +390,7 @@ def _belongs_to_workflow(value: Mapping[str, Any], workflow_execution_id: str) -
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("_", "").replace("-", "")
-    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "inputtokens", "outputtokens", "totaltokens", "promptref"}:
+    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "inputtokens", "outputtokens", "totaltokens", "tokenusageinputtokens", "tokenusageoutputtokens", "tokenusagetotaltokens", "tokenusage.inputtokens", "tokenusage.outputtokens", "tokenusage.totaltokens", "promptref"}:
         return False
     return normalized in SENSITIVE_FIELDS or normalized in {"logs", "message"} or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")
@@ -492,6 +500,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     replay.add_argument("--plan-only", action="store_true", help="record a pending replay without dispatching Tasks")
     evaluate = sub.add_parser("eval", help="run or inspect a versioned evaluation suite")
     evaluate.add_argument("suite", type=Path, help="suite definition, or persisted EvaluationSuiteRun id")
+    experiment = sub.add_parser("experiment", help="run or inspect a versioned configuration experiment")
+    experiment.add_argument("definition", type=Path)
+    experiment.add_argument("--suite", required=True, type=Path, help="pinned EvaluationSuite definition")
     for command in KIND_COMMANDS:
         group = sub.add_parser(command).add_subparsers(dest="action", required=True)
         show = group.add_parser("show"); show.add_argument("id")
@@ -550,6 +561,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
             else: print(_human(result))
             return 0 if result.get("status") == "SUCCEEDED" else 1
+        if args.command == "experiment":
+            definition, suite = load_experiment(args.definition), load_suite(args.suite)
+            runtime = None
+            if any(case.get("kind") == "historical" for case in suite["spec"]["cases"]):
+                from aep.dogfood_runtime import DogfoodWorkflowRunner
+                runtime = DogfoodWorkflowRunner(os.environ, state_file=args.state_file)
+            result = run_experiment(definition, suite, DurableJsonRuntimeObjectStore(args.state_file), historical_runner=(
+                lambda source, overrides: runtime.replay(
+                    source, overrides=tuple(overrides), publication=False,
+                    context_mode="rebuild" if overrides else "reuse",
+                    allow_context_change=bool(overrides),
+                )
+            ) if runtime is not None else None)
+            result = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects()).safe_output(result, unsafe=args.unsafe_debug)
+            if args.output == "json": print(json.dumps(result, indent=2, sort_keys=True, default=str))
+            else: print(_human(result))
+            return 0 if result.get("status") == "SUCCEEDED" else 1
         inspector = ExecutionInspector(RuntimeEvidenceReader(args.state_file).objects())
         if args.command == "explain": result = inspector.explain(args.id)
         elif args.command == "executions" and args.action == "list": result = inspector.list_executions(status=args.status)
@@ -562,6 +590,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     except EvaluationSuiteError as error:
         print(json.dumps({"error": {"code": "EVALUATION_SUITE_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
+        return 2
+    except ExperimentError as error:
+        print(json.dumps({"error": {"code": "EXPERIMENT_FAILED", "message": str(error)}}, sort_keys=True), file=sys.stderr)
         return 2
     except RuntimeError as error:
         print(json.dumps({"error": {"code": "REPLAY_RUNTIME_ERROR", "message": str(error)}}, sort_keys=True), file=sys.stderr)

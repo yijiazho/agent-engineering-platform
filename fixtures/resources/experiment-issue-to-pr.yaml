@@ -1,0 +1,26 @@
+apiVersion: aep.dev/v1alpha1
+kind: Experiment
+metadata:
+  name: issue-to-pr-prompt-comparison
+  version: 1.0.0
+spec:
+  evaluationSuiteRef:
+    kind: EvaluationSuite
+    name: issue-to-pr-historical-regression
+    version: 1.0.0
+  baseline:
+    name: current-planner
+    resourceOverrides: []
+  candidates:
+    - name: planner-prompt-v2
+      resourceOverrides:
+        - kind: Prompt
+          name: planner
+          version: 2.0.0
+  metrics:
+    - acceptanceScore
+    - passRate
+    - tokenUsage.totalTokens
+    - cost
+    - latencyMilliseconds
+    - modelInvocationCount
