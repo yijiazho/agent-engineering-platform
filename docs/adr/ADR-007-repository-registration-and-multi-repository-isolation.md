@@ -158,8 +158,10 @@ generation moves to `DRAINING` when a new generation activates.
   isolation are being checked.
 * `INVALID`: validation failed. No ingress and no dispatch.
 * `ACTIVE`: ingress and dispatch are enabled for the active generation.
-* `DRAINING`: no new ingress or dispatch. In-flight executions pinned to this
-  generation may finish and publish according to their original policy.
+* `DRAINING`: no new Event admission and no new WorkflowExecution. In-flight
+  executions pinned to this generation may finish, acquire or renew leases, and
+  be redispatched after approval or worker loss. Their publication follows the
+  original policy.
 * `SUSPENDED`: new events are rejected. In-flight publication defaults to
   disabled until the operator revalidates.
 * `REMOVED`: no new work. Durable evidence is retained according to policy;
@@ -182,9 +184,11 @@ new generation:
 
 A new generation validates independently. The active generation switches only
 after the new generation is `ACTIVE`; the previous active generation moves to
-`DRAINING`. In-flight WorkflowExecutions remain pinned to the generation and
-revision that created them and drain under that generation. A generation is
-never mutated in place.
+`DRAINING`. Validation permits an active predecessor in the same repository
+lineage. Activation uses a compare-and-swap on the lineage and fails if the
+lineage changed while validation was running. In-flight WorkflowExecutions
+remain pinned to the generation and revision that created them and drain under
+that generation. A generation is never mutated in place.
 
 ## 5. Registration Validation
 
@@ -211,8 +215,11 @@ Registration validation is deterministic and fail-closed. It checks:
    values.
 10. The state namespace is empty or belongs to the same registration and
     generation.
-11. No Resource contains a secret, credential, or runtime-generated body.
-12. A credential-free smoke load can resolve the Workspace, Event, Workflow,
+11. The repository lineage has at most one active generation. A validating
+    successor may coexist with its active predecessor; the activation
+    transaction enforces the single-active invariant atomically.
+12. No Resource contains a secret, credential, or runtime-generated body.
+13. A credential-free smoke load can resolve the Workspace, Event, Workflow,
     and Task DAG without invoking a model or external provider.
 
 A validation failure records stable check identifiers and safe reasons. It does
@@ -232,13 +239,21 @@ verify X-Hub-Signature-256 with the App webhook secret
 parse minimal payload identity (repository.id, full_name, event, action)
         |
         v
+compute stable dedup key:
+github:repository:<repository.id>:delivery:<X-GitHub-Delivery>
+        |
+        v
+existing Event? --yes--> return original Event and registration generation
+        |
+        no
+        v
 look up ACTIVE registration by repository.id
         |
         v
 reject unregistered, suspended, or repository-mismatched delivery
         |
         v
-commit Event + outbox row scoped to registrationId
+commit Event + outbox row scoped to the selected registrationId
 ```
 
 The payload is untrusted until the signature verifies. After verification, the
@@ -250,8 +265,11 @@ one, or redirect credentials.
 * Repository rename: the numeric GitHub repository ID remains the registration
   key; owner and name are display and routing attributes that must be
   revalidated after a transfer or rename.
-* Duplicate delivery: deduplication key includes `registrationId` and
-  `X-GitHub-Delivery`.
+* Duplicate delivery: the deduplication key is stable across registration
+  generations: `github:repository:<repository-id>:delivery:<delivery-id>`. A
+  redelivery returns the original Event and its original registration
+  generation, even when a newer generation is active. It never re-routes the
+  delivery to the active generation.
 * Optional per-repository webhook secrets are a future isolation refinement. The
   first implementation uses one App webhook secret and registration-scoped
   routing.
@@ -265,11 +283,11 @@ another repository.
 | Scope | Isolation rule |
 | --- | --- |
 | Resources | Each registration loads its own immutable `ResourceCollection` from its own checkout. Cross-registration Resource references are invalid. |
-| Runtime objects | Every Event, WorkflowExecution, TaskExecution, ContextPackage, AgentInvocation, ModelInvocation, ToolInvocation, EvaluationResult, PolicyDecision, Approval, GeneratedArtifact, and ExecutionEvent carries `registrationId`. Queries and deterministic keys are registration-scoped. |
+| Runtime objects | Every Event, WorkflowExecution, TaskExecution, ContextPackage, AgentInvocation, ModelInvocation, ToolInvocation, EvaluationResult, PolicyDecision, Approval, GeneratedArtifact, and ExecutionEvent carries `registrationId`. Queries and execution identity are registration-scoped; webhook deduplication is keyed by stable repository lineage plus delivery identity. |
 | Runtime state | Each registration has a state namespace. A shared database is partitioned by registration; a local profile uses one namespace. |
 | Artifacts | Metadata is registration-scoped. Object-store keys are prefixed by registration. Cross-registration deduplication is disabled by default. |
 | Checkouts | Branch names, worktree roots, and checkout registry uniqueness are scoped by registration and repository. |
-| Credentials | Webhook secret, GitHub App installation, Git credential leases, and Model credentials resolve through registration-scoped references. |
+| Credentials | Webhook secret, GitHub App installation, source Git credential leases, and Model credentials resolve through registration-scoped references. Publication credentials are held only by the publication service. |
 | Policy and approval | Policy decisions and approval requests are registration-scoped. An approver for one registration cannot authorize another. |
 | Model quota | Each registration maps to a provider/credential quota scope. Shared provider limits are enforced by the distributed admission service from ADR-006. |
 | Dispatch | Queue items and worker leases carry `registrationId`; a worker may hold capabilities for a declared registration set. |
@@ -291,11 +309,13 @@ Each registration constructs its own:
 * policy and evaluation bindings;
 * knowledge base snapshot and repository reader;
 * dispatch eligibility and worker allowlist;
-* artifact namespace.
+* artifact namespace;
+* publication service binding and provider credential scope.
 
 A worker may serve multiple registrations, but it executes one registration's
 WorkflowExecution at a time. A worktree, context package, or artifact from one
-registration is never mixed into another execution.
+registration is never mixed into another execution. A worker never receives
+publication credentials.
 
 ## 9. Validation Portability
 
@@ -355,14 +375,17 @@ A pull request cannot register its own repository.
 1. Derive the first registration from the existing `.ai/workspace.yaml` and
    deployment identity.
 2. Assign it generation 1 and a state namespace.
-3. Backfill `registrationId` into runtime objects, events, deterministic keys,
-   artifact metadata, and checkout records. Existing IDs remain valid.
-4. Replace `_BOUND_REPOSITORY`, inline Compose identity, and the local
+3. Backfill `registrationId` into runtime objects, events, execution identity
+   keys, artifact metadata, and checkout records. Existing IDs remain valid.
+4. Rebuild webhook deduplication entries under the stable repository-ID plus
+   delivery-ID key. Existing accepted Events retain their original registration
+   generation.
+5. Replace `_BOUND_REPOSITORY`, inline Compose identity, and the local
    `../../:/workspace` assumption with a registration manifest and a pinned
    `AEP_RESOURCE_CHECKOUT`.
-5. Report `registrationId`, generation, repository, Workspace, and resource
+6. Report `registrationId`, generation, repository, Workspace, and resource
    revision in every health and readiness response.
-6. Preserve the existing single-repository profile as the default until the
+7. Preserve the existing single-repository profile as the default until the
    multi-registration control plane is validated.
 
 The existing repository remains a valid registration. Its behavior does not
@@ -447,6 +470,25 @@ ambiguous.
 Rejected because execution IDs, artifact provenance, approvals, and checkouts
 would no longer have a single registration owner. Isolation must be structural,
 not convention.
+
+## Suspend The Predecessor Before Validating A Successor
+
+Rejected because it creates an ingress gap that the atomic generation switch is
+designed to avoid. A successor validates while the predecessor remains
+`ACTIVE`; activation performs the single-active transition atomically.
+
+## Include The Registration Generation In The Deduplication Key
+
+Rejected because a delivery accepted under one generation would become a new
+Event if redelivered after a successor activated. Deduplication uses stable
+repository lineage plus delivery identity, and the Event retains its original
+generation.
+
+## Block All Dispatch While A Generation Drains
+
+Rejected because an already accepted execution awaiting approval or recovering
+from worker loss still needs a new owner. DRAINING blocks new Event admission
+and new WorkflowExecutions, not redispatch of existing executions.
 
 ## Reuse The AEP Validation Image For Every Repository
 

@@ -80,6 +80,7 @@ their guarantees.
 |                                                             |
 |  Event Controller -> Registration Router -> Event + Outbox  |
 |  Dispatcher       -> Dispatch Queue -> Execution Creator    |
+|  Publication Service -> serialized provider mutations       |
 |  Inspection API/CLI                                         |
 +------------------------------+------------------------------+
                                |
@@ -118,6 +119,10 @@ Only the control plane writes shared state directly for admission and dispatch.
 Workers write runtime evidence through the transactional adapter and bytes
 through the object-store adapter.
 
+The publication service is the only component that holds credentials for
+`git.push` and `github.create_pr`. Execution workers retain only source-fetch
+credentials for their leased worktree.
+
 ---
 
 # 4. Component Responsibilities
@@ -133,7 +138,7 @@ through the object-store adapter.
 | Artifact Catalog | Store artifact metadata and registration scope | Treat content addressing as authorization |
 | Object Store | Store immutable content-addressed bytes | Serve bytes without catalog authorization |
 | Model Admission | Reserve request and token capacity across workers | Store raw credentials or provider bodies |
-| Publisher | Recheck lease, policy, and provider identity before mutation | Publish from a stale or lease-lost worker |
+| Publication Service | Validate fence, policy, and idempotency; reconstruct the accepted patch; own publication credentials; serialize attempts; reconcile ambiguity | Let a worker publish directly or start a second attempt for one execution |
 | Inspector | Read correlated evidence and explain outcomes | Materialize artifact bodies by default |
 
 ---
@@ -149,8 +154,11 @@ through the object-store adapter.
 | Event outbox | Transactional database | Until terminal | Claim and visibility timeout |
 | Dispatch queue | Transactional database | Until terminal | Lease and fence |
 | Execution lease | Transactional database | Heartbeat and expiry | Fence token |
+| Publication attempts | Transactional database | Until terminal or reconciled | Serialized attempt identity |
 | Artifact metadata | Transactional database | Retained per policy | Registration scope |
+| Content reservations and collection tombstones | Transactional database | Reservation or retention window | Digest-scoped compare-and-swap |
 | Artifact and evidence bytes | Object store | Retained or garbage-collected | Content address plus catalog |
+| Publication credentials | Publication service secret store | Provider lifetime | Publication service |
 | Source cache | Node-local filesystem | Node lifetime | Node-local |
 | Execution worktree | Node-local filesystem | Execution lifetime | Execution owner |
 | Docker container | Node-local daemon | Invocation lifetime | Tool Runtime boundary |
@@ -168,17 +176,26 @@ evidence, not a portable key.
 
 1. GitHub signs the delivery.
 2. The Event Controller verifies the raw body with the App webhook secret.
-3. The router resolves `repository.id` to an `ACTIVE` registration generation.
-4. The controller rejects an unregistered, suspended, mismatched, or malformed
+3. The controller parses the minimal repository identity and computes the
+   stable deduplication key:
+   `github:repository:<repository-id>:delivery:<delivery-id>`.
+4. If an Event already exists for that key, the controller returns the original
+   Event and its original registration generation. It does not re-route to the
+   currently active generation.
+5. Otherwise the router resolves `repository.id` to an `ACTIVE` registration
+   generation.
+6. The controller rejects an unregistered, suspended, mismatched, or malformed
    delivery before persistence.
-5. One transaction commits the normalized Event, deduplication key, and outbox
+7. One transaction commits the normalized Event, deduplication key, and outbox
    row scoped by `registrationId`.
 
 Event Controllers are stateless with respect to ingress. Multiple replicas may
 run behind a load balancer without sticky sessions: signature verification is
 local, and the unique deduplication constraint plus transactional outbox make
-concurrent delivery and GitHub redelivery safe. Only the registration lookup and
-Webhook secret are shared configuration.
+concurrent delivery and GitHub redelivery safe. The key is stable across
+registration generations, so a redelivery returns the originally accepted Event
+rather than selecting the new active generation. Only the registration lookup
+and webhook secret are shared configuration.
 
 ## 6.2 Dispatch
 
@@ -191,6 +208,12 @@ Webhook secret are shared configuration.
 5. The outbox row is marked complete only when the execution reaches terminal
    evidence.
 
+A `DRAINING` registration generation accepts no new Event or new
+WorkflowExecution. It still permits dispatch and lease acquisition for an
+already accepted execution that needs a new owner after approval, worker loss,
+or lease expiry. The admission predicate and the redispatch predicate are
+separate.
+
 ## 6.3 Worker Claim
 
 1. A worker advertises its worker ID, registration allowlist, Docker
@@ -200,8 +223,44 @@ Webhook secret are shared configuration.
    heartbeat time, and expiry.
 4. The worker verifies the recorded WorkflowExecution revision and provisions a
    local source cache and worktree.
-5. The worker renews and verifies the lease before every durable mutation and
-   before every external effect.
+5. If GeneratePatch already succeeded, the worker reconstructs the accepted
+   worktree state from the durable PATCH artifact before any dependent Task
+   resumes. It verifies the patch digest, applies the patch to the exact base
+   revision, and checks changed paths and postimage digests against terminal
+   evidence.
+6. The worker renews and verifies the lease before every durable mutation and
+   before every publication request.
+
+If the accepted patch cannot be restored, the worker fails the execution
+closed. It does not run RunValidation or CreatePullRequest against the
+unmodified source, and it does not silently re-run GeneratePatch under the
+existing terminal evidence.
+
+## 6.3.1 Worktree Reconstruction
+
+The durable terminal TaskExecution and its GeneratedArtifacts are the source of
+truth for accepted worktree state.
+
+| Existing evidence | Replacement worktree state |
+| --- | --- |
+| No successful GeneratePatch | Clean worktree at the recorded base revision |
+| GeneratePatch succeeded with PATCH artifact | Clean base plus the exact accepted patch |
+| GeneratePatch succeeded but PATCH is missing or corrupt | Terminal fail-closed recovery error |
+| RunValidation succeeded and patch identity matches | Validation evidence may be reused |
+| RunValidation input identity differs | RunValidation must run again |
+
+Reconstruction verifies:
+
+* the PATCH content address and patch digest;
+* applicability to the exact recorded base revision;
+* the changed-file set and every recorded postimage digest;
+* the checkout branch and repository identity;
+* no extra tracked or untracked changes remain.
+
+CreatePullRequest refuses to publish unless the reconstructed worktree matches
+the PATCH artifact and the recorded publication evidence. A model-generated
+replacement patch is a new execution or an explicit replay boundary, never an
+automatic recovery of the same terminal evidence.
 
 ## 6.4 Task Execution
 
@@ -210,23 +269,40 @@ Webhook secret are shared configuration.
 3. It transitions and emits lifecycle events in one transaction.
 4. Context Builder reads Resources, prior artifacts, and revision-bound
    knowledge through its existing contracts.
-5. Task handlers write only through the transactional store and object store.
-6. GeneratedArtifact bytes are written first; metadata and evaluation evidence
+5. RunValidation reuses terminal evidence only when the restored patch digest
+   and validation input identity match; otherwise it runs again against the
+   reconstructed worktree.
+6. Task handlers write only through the transactional store and object store.
+7. GeneratedArtifact bytes are written first; metadata and evaluation evidence
    commit afterward.
-7. The scheduler stops at configuration, evaluation, policy, or exhausted
+8. The scheduler stops at configuration, evaluation, policy, or exhausted
    retry failures and leaves dependents blocked.
 
 ## 6.5 Publication
 
 1. EvaluateAcceptance completes.
 2. Publication Policy and capability policy allow the action.
-3. The publisher rechecks the execution lease and fence.
-4. Git commit and push use the captured execution branch and repository
+3. The worker submits one immutable publication request to the publication
+   service. The request binds execution, registration, TaskExecution, lease
+   fence, policy decisions, patch digest, repository, branch, head, base, and
+   idempotency key.
+4. The publication service validates the current lease fence, policy evidence,
+   repository identity, and any prior publication attempt.
+5. The service records a durable publication attempt and obtains short-lived
+   provider credentials for itself. Workers never receive publication
+   credentials.
+6. The service reconstructs a clean publication worktree at the recorded base
+   revision from the accepted PATCH artifact. It verifies the patch digest,
+   changed paths, and postimages. It does not trust a worker-supplied worktree
+   or unverified commit.
+7. Git commit and push use the captured execution branch and repository
    identity.
-5. GitHub pull-request creation uses idempotent branch/head/base identity.
-6. Ambiguous remote outcomes are recorded as `UNKNOWN` and reconciled before
-   retry.
-7. Terminal evidence commits before the dispatch row is retired.
+8. GitHub pull-request creation uses idempotent branch/head/base identity.
+9. The attempt records `CONFIRMED`, `FAILED`, or `UNKNOWN`. Ambiguous remote
+   outcomes are reconciled before retry.
+10. A new execution owner must reconcile a non-terminal or `UNKNOWN` attempt
+    before dispatch or lease transfer.
+11. Terminal evidence commits before the dispatch row is retired.
 
 ## 6.6 Release And Cleanup
 
@@ -236,7 +312,9 @@ Webhook secret are shared configuration.
 3. Dirty worktrees and failed removals remain recorded on the owning node for
    operator recovery.
 4. A lost node's worktree is re-provisioned on the next owner from the recorded
-   revision; no live worktree is copied between nodes.
+   revision. If GeneratePatch succeeded, the accepted PATCH artifact is applied
+   and verified before dependent work resumes; no live worktree is copied
+   between nodes.
 
 ---
 
@@ -270,9 +348,34 @@ Rules:
 * A write uses a unique temporary key, then an atomic object-store commit.
 * Bytes are written before metadata.
 * A read verifies the digest before returning content.
-* Orphaned objects are collected only after a grace period and only when no
-  metadata references them.
 * Cross-registration deduplication is disabled by default.
+
+### 7.2.1 Content Lifecycle And Collection
+
+Every catalog record for a digest has a state:
+
+```text
+RESERVED -> REFERENCED -> COLLECTING -> DELETED
+```
+
+* `put`, including reuse of existing bytes, first reserves the digest in a
+  transaction. The reservation carries an owner and expiry.
+* Bytes are written or verified while the reservation is active.
+* Metadata publication commits the artifact and moves the digest to
+  `REFERENCED` in the same transaction that consumes the reservation.
+* Collection finds unreferenced digests older than the retention grace period,
+  then compare-and-swaps the state to `COLLECTING`. It rechecks that no metadata
+  reference and no active reservation exists before deleting bytes.
+* A concurrent `put` either reserves before collection claims the digest, or
+  waits and recreates the bytes after deletion. It never returns bytes that the
+  collector can remove under an active reservation.
+* A `DELETED` tombstone records the collected digest. A late read fails closed;
+  a later identical `put` safely recreates the content and a new catalog record.
+* Retention and legal hold are checked before the `COLLECTING` transition.
+
+The reservation and collection protocol is authoritative across workers. A
+grace period alone is not sufficient because an object reused after the grace
+period would still race a collector that only checked metadata references.
 
 ## 7.3 Evidence Classes
 
@@ -337,12 +440,16 @@ and external effect. A stale fence is rejected before any mutation.
 
 ## 8.3 Idempotency
 
-* Event IDs are deterministic from registration and delivery identity.
+* Event IDs are deterministic from stable repository lineage and delivery
+  identity. The selected registration generation is recorded on the Event but
+  is not part of the deduplication key.
 * WorkflowExecution IDs are deterministic from Event and Workflow version.
 * TaskExecution attempts are deterministic from execution, Task, and attempt
   number.
 * Artifact IDs are deterministic from producer and contract.
 * Git branch and pull-request identities are deterministic from execution.
+* Publication attempt identity is deterministic from execution, policy
+  decision, patch digest, and idempotency key.
 * Provider reconciliation checks branch, head, base, and existing PR before
   creation.
 
@@ -364,8 +471,10 @@ REGISTERING -> ACTIVE -> DRAINING -> OFFLINE
   leases.
 * `UNHEALTHY` workers lose eligibility immediately; existing leases expire.
 * `OFFLINE` workers have no claims and no leases.
-* Worker registration does not grant repository credentials. Credentials are
-  issued per execution lease and registration.
+* Worker registration does not grant repository credentials. Source-fetch
+  credentials are issued per execution lease and registration. Publication
+  credentials are never issued to workers; they belong to the publication
+  service.
 
 The control plane must not route a WorkflowExecution to a worker that cannot
 provision its repository, run its validation profile, or reach its publication
@@ -377,19 +486,22 @@ boundary.
 
 | Failure | Detection | Recovery | Forbidden |
 | --- | --- | --- | --- |
-| Worker process crash | Lease heartbeat expires | New worker claims, re-provisions, retries recoverable work | Reusing unknown worktree state |
-| Worker network partition | Lease renewal fails | Worker stops before next mutation; new owner after expiry | Publishing on a stale lease |
-| Duplicate delivery | Dedup unique constraint | Return original Event | Creating a second execution |
+| Worker process crash | Lease heartbeat expires | New worker claims, re-provisions, restores accepted patch, retries recoverable work | Reusing unknown worktree state |
+| Worker network partition | Lease renewal fails | Worker stops before next mutation; publication service rejects stale requests; new owner after expiry | Publishing on a stale lease |
+| Duplicate delivery | Stable repository-plus-delivery unique constraint | Return original Event and generation | Creating a second execution or re-routing to the active generation |
 | Duplicate dispatch claim | Compare-and-swap loser | Observe existing owner or queue position | Concurrent execution |
 | Database outage | Transaction failure | Fail closed for admission and publication; retry when durable | In-memory-only progress |
 | Object store outage | Put/get failure | Recoverable task failure; no metadata commit | Metadata pointing at missing bytes |
 | Corrupt bytes | Digest mismatch | Quarantine; terminal integrity failure | Returning unverified content |
 | Source cache corruption | Checkout verification | Rebuild cache at pinned revision | Using an unverified cache |
 | Dirty worktree after failure | Worktree status | Retain on owning node for operator | Silent deletion |
-| Lost node | Worker and lease expiry | Re-provision at recorded revision | Copying a live worktree across nodes |
+| Lost node | Worker and lease expiry | Re-provision at recorded revision and restore the accepted PATCH | Copying a live worktree across nodes or validating unmodified source |
+| Publication worker pauses after authorization | Publication attempt state | Reconcile `IN_FLIGHT` or `UNKNOWN` before lease transfer | Starting a second mutation from the stale worker |
+| Collection races a reused digest | Reservation or collection state | Serialize reservation and collection; recreate after deletion | Deleting a reserved or referenced object |
 | Partial Git push | Git evidence | Reconcile branch and head | Blind retry |
 | Duplicate pull request | Provider lookup | Reuse existing PR | Creating another PR |
 | Approval pending | Durable approval state | Release lease; wake a new owner after decision | Creating another execution |
+| DRAINING execution needs a new owner | Registration lineage state | Allow redispatch of the existing execution only | Admitting a new execution or Event |
 | Registration suspended | Registration status | Reject new events; disable publication by default | Continuing publication |
 
 ---
@@ -407,8 +519,9 @@ boundary.
 * Secrets are mounted only into the components that need them. They never enter
   runtime objects, logs, object metadata, or artifact bodies.
 * Lease fences are authorization evidence, not just scheduling hints.
-* A worker that loses its lease cannot publish even if provider credentials are
-  still valid.
+* Publication credentials are held only by the publication service. A worker
+  cannot publish directly, and a stale worker's request is rejected against the
+  current lease and attempt state.
 * Registration suspension can disable publication independently of provider
   availability.
 
@@ -473,16 +586,23 @@ implementation task is accepted.
 1. Keep `RuntimeObjectStore`, `ContentAddressedStore`, and `CheckoutRegistry` as
    the provider-neutral boundaries.
 2. Add the transactional adapter and schema migration tooling.
-3. Add registration scope to runtime objects, events, deterministic keys,
+3. Add registration scope to runtime objects, events, execution identity keys,
    artifact metadata, checkout records, and queue rows.
-4. Move artifact and evidence bytes behind the object-store adapter.
-5. Replace outbox listing with claim and visibility timeout.
-6. Add execution leases, worker identity, and fence checks.
-7. Add durable model admission and remove the single-replica restriction.
-8. Enable shared workers and validate failover, duplicate delivery, and
-   publication ambiguity.
-9. Update the inspection CLI to read the shared store without materializing
-   artifact bodies.
+4. Rebuild webhook deduplication entries under the stable repository ID plus
+   delivery ID key; preserve the original registration generation on accepted
+   Events.
+5. Move artifact and evidence bytes behind the object-store adapter. Add digest
+   reservations and collection tombstones before enabling garbage collection.
+6. Replace outbox listing with claim and visibility timeout.
+7. Add execution leases, worker identity, and fence checks.
+8. Add the publication service and durable publication attempts; move provider
+   credentials out of execution workers.
+9. Add accepted-patch reconstruction for replacement worktrees.
+10. Add durable model admission and remove the single-replica restriction.
+11. Enable shared workers and validate failover, duplicate delivery, patch
+    restoration, garbage-collection races, and publication ambiguity.
+12. Update the inspection CLI to read the shared store without materializing
+    artifact bodies.
 
 Compatibility rules:
 
@@ -504,7 +624,10 @@ Required evidence and metrics:
 * lease acquisition, renewal, expiry, and fencing rejections;
 * worker capacity, active executions, and drain state;
 * per-registration dispatch and publication counts;
-* artifact put/get latency, bytes, integrity failures, and orphan count;
+* artifact put/get latency, bytes, integrity failures, reservation contention,
+  and collected objects;
+* publication attempts by state, rejected stale-fence requests, and
+  reconciliation outcomes;
 * database transaction latency and failures;
 * model admission reservations, deferrals, and quota rejections;
 * publication ambiguity and reconciliation outcomes;

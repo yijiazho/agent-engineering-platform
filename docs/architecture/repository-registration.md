@@ -175,7 +175,10 @@ ACTIVE --operator--> SUSPENDED --validation--> VALIDATING
 ```
 
 At most one generation per repository ID may be `ACTIVE`. When a new generation
-activates, the previous active generation moves to `DRAINING`.
+activates, the previous active generation moves to `DRAINING`. A `DRAINING`
+generation rejects new Events and new WorkflowExecutions, but it permits
+redispatch and lease acquisition for already accepted executions. This includes
+approval wake-up and recovery after a worker loss.
 
 | State | Ingress | Dispatch | Publication | Notes |
 | --- | --- | --- | --- | --- |
@@ -183,7 +186,7 @@ activates, the previous active generation moves to `DRAINING`.
 | VALIDATING | Rejected | None | None | Checks running |
 | INVALID | Rejected | None | None | Stable failure evidence |
 | ACTIVE | Accepted | Enabled | Per policy | Normal operation |
-| DRAINING | Rejected | No new work | Per original policy | In-flight generation rollover |
+| DRAINING | Rejected | Existing executions only | Per original policy | Generation rollover; redispatch allowed |
 | SUSPENDED | Rejected | No new work | Disabled by default | Drift, operator, or credential failure |
 | REMOVED | Rejected | None | None | Evidence retained per policy |
 
@@ -194,7 +197,10 @@ namespace. Activation is idempotent for the same generation.
 
 At most one generation is `ACTIVE` for a repository ID. Activating a new
 generation moves the previous `ACTIVE` generation to `DRAINING`. The switch and
-the previous generation's state change commit atomically.
+the previous generation's state change commit atomically. Validation may run
+while an active predecessor exists; activation uses a compare-and-swap on the
+lineage and fails if another generation activated or the lineage changed during
+validation.
 
 ## 4.2 Suspension
 
@@ -286,7 +292,9 @@ run the full repository build during registration.
 
 * State namespace is empty or belongs to the same registration generation.
 * Artifact prefix is empty or belongs to the same registration generation.
-* No other active registration claims the same repository identity.
+* The repository lineage has at most one `ACTIVE` generation. A `VALIDATING`
+  successor may coexist with its `ACTIVE` predecessor; validation does not
+  require the predecessor to be suspended or removed.
 * Worker allowlists and quota scopes can represent the registration.
 
 ## 5.7 Smoke Resolution
@@ -322,6 +330,11 @@ POST /v1/webhooks/github
   |
   +-- parse repository.id
   |
+  +-- compute stable dedup key:
+  |   github:repository:<repository.id>:delivery:<delivery-id>
+  |
+  +-- existing Event? --yes--> return original Event and registration generation
+  |
   +-- look up ACTIVE registration by repository.id
   |
   +-- reject unregistered, suspended, renamed, or mismatched repository
@@ -334,7 +347,7 @@ POST /v1/webhooks/github
 | Condition | Response | Persistence |
 | --- | --- | --- |
 | Authenticated accepted delivery | `202 accepted` | Event and outbox row |
-| Authenticated duplicate | `200 duplicate` with original Event ID | None |
+| Authenticated duplicate | `200 duplicate` with original Event ID, registration ID, and generation | None |
 | Invalid signature | `401` | None |
 | Malformed or incomplete payload | `400` | None |
 | Unsupported event or action | `422` | None |
@@ -347,8 +360,16 @@ lifecycle evidence.
 
 ## 6.3 Deduplication
 
-The deduplication key is `registrationId:github:delivery:<delivery-id>`. A
-redelivery returns the original Event and does not create another execution.
+The deduplication key is stable across registration generations:
+
+```text
+github:repository:<repository-id>:delivery:<delivery-id>
+```
+
+Ingress checks this key before selecting the active generation. A redelivery
+returns the original Event, registration ID, generation, and execution identity
+even when a newer generation is active. It never re-routes the delivery to the
+active generation or creates another execution.
 
 ## 6.4 Per-Registration Secrets
 
@@ -365,7 +386,7 @@ repository.
 | --- | --- | --- |
 | Workspace | One per registration generation | Resource loader and registration validation |
 | Resource collection | Registration | In-memory collection per execution |
-| Event | Registration | `registrationId` on the Event and dedup key |
+| Event | Registration | `registrationId` on the Event; stable repository-lineage plus delivery dedup key |
 | WorkflowExecution | Registration | Creation transaction and provenance |
 | TaskExecution and attempts | Registration via execution | Ownership check |
 | ContextPackage | Registration and execution | Context identity validation |
@@ -377,6 +398,8 @@ repository.
 | Approval | Registration | Reviewer set and target binding |
 | GeneratedArtifact | Registration | Catalog scope, object prefix, provenance |
 | Checkout | Registration and repository | Registry uniqueness and branch prefix |
+| Publication | Registration and execution | Publication service reconstructs the accepted patch, checks lease/fence, and uses idempotent provider identity |
+| Credentials | Registration and service | Registration-scoped source credentials; publication credentials only in the publication service |
 | Dispatch queue | Registration | Worker allowlist and claim predicate |
 | Model quota | Registration and provider scope | Reservation keys |
 | Inspection | Registration | CLI filter and authorization |
@@ -401,7 +424,10 @@ new provenance; it is not an implicit read.
 * GitHub App installation: resolved per registration repository.
 * Installation token: requested with the registered repository in the token
   scope.
-* Git credential lease: bound to the registration repository.
+* Git credential lease: source-fetch only and bound to the registration
+  repository.
+* Publication credentials: held only by the registration's publication service
+  boundary and never issued to workers.
 * Model credential: reference attached to the registration's Model scope.
 * No credential is stored in Resources, runtime objects, logs, or artifact
   metadata.
@@ -410,15 +436,21 @@ new provenance; it is not an implicit read.
 
 Publication requires:
 
-* an execution owned by the current worker lease;
+* a durable publication request from the execution owner;
+* a valid execution lease and fence at the publication service;
+* a serialized publication attempt for the execution;
 * an allowing capability and publication policy decision from the
   registration's Resource collection;
+* the accepted PATCH artifact and evidence, reconstructed and verified by the
+  publication service in a clean worktree;
 * a repository and branch matching the registration;
 * a GitHub provider bound to the registration installation;
 * no suspension or emergency disable.
 
-An approval from one registration cannot authorize another. A Git credential
-lease from one repository cannot push another.
+The publication service owns the external mutation credentials and reconciles
+`IN_FLIGHT` or `UNKNOWN` attempts before an execution lease transfers. An
+approval from one registration cannot authorize another. A source-fetch
+credential from one repository cannot push another.
 
 ---
 
@@ -581,6 +613,10 @@ repository.
 | Resource revision drift | SUSPENDED | Rejected | No new | Disabled |
 | App uninstalled at runtime | SUSPENDED | Rejected | No new | Disabled |
 | State namespace mismatch | INVALID | Rejected | None | None |
+| Successor validating while predecessor active | Predecessor ACTIVE; successor VALIDATING | Predecessor unchanged | Predecessor unchanged | Predecessor unchanged |
+| Concurrent generation activation | Activation fails; successor remains VALIDATING | Per active generation | Per active generation | Per active generation |
+| Duplicate delivery after generation rollover | Original Event's generation | Duplicate response | Original execution only | Original policy |
+| Existing execution needs redispatch while DRAINING | DRAINING | Rejected for new work | Existing executions only | Per original policy |
 | Duplicate registration | Idempotent | Per active state | Per active state | Per active state |
 | Repository renamed | SUSPENDED until revalidated | Rejected | No new | Disabled |
 | Removed registration | REMOVED | Rejected | None | None |
@@ -595,17 +631,20 @@ contains repository source, issue text, provider response bodies, or secrets.
 1. Derive the first registration from `.ai/workspace.yaml` and the current
    deployment environment.
 2. Assign generation 1 and a state namespace.
-3. Add `registrationId` to runtime objects, events, deterministic keys, artifact
-   metadata, and checkout records.
-4. Keep existing runtime object IDs valid; backfill scope lazily or in a
+3. Add `registrationId` to runtime objects, events, execution identity keys,
+   artifact metadata, and checkout records.
+4. Rebuild webhook deduplication entries under the stable repository-ID plus
+   delivery-ID key. Existing accepted Events retain their original registration
+   generation.
+5. Keep existing runtime object IDs valid; backfill scope lazily or in a
    bounded migration.
-5. Replace hardcoded repository and Workspace values with a registration
+6. Replace hardcoded repository and Workspace values with a registration
    manifest and a pinned `AEP_RESOURCE_CHECKOUT`.
-6. Report registration ID, generation, repository, Workspace, and revision in
+7. Report registration ID, generation, repository, Workspace, and revision in
    health and readiness.
-7. Keep the single-registration profile as the default until multi-registration
+8. Keep the single-registration profile as the default until multi-registration
    is validated.
-8. Add registration-scoped artifact prefixes only when the shared object-store
+9. Add registration-scoped artifact prefixes only when the shared object-store
    profile is enabled.
 
 Rollback:
