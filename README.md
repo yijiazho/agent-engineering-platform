@@ -757,6 +757,11 @@ changes.
 * [Runtime Object Model](docs/adr/ADR-002-runtime-object-model.md)
 * [MVP Vertical Slice](docs/adr/ADR-003-mvp-vertical-slice.md)
 * [Self-Hosting Repository Integration](docs/adr/ADR-004-self-hosting-repository-integration.md)
+* [Post-MVP Platform Evolution](docs/adr/ADR-005-post-mvp-platform-evolution.md)
+* [Distributed Execution And Shared Artifacts](docs/adr/ADR-006-distributed-execution-and-shared-artifacts.md)
+* [Repository Registration And Multi-Repository Isolation](docs/adr/ADR-007-repository-registration-and-multi-repository-isolation.md)
+* [Distributed Execution Architecture](docs/architecture/distributed-execution.md)
+* [Repository Registration Architecture](docs/architecture/repository-registration.md)
 * [Structured Observability](docs/architecture/observability.md)
 * [Execution Plan](docs/execution-plan.md)
 * [GitHub App Provider Operations](docs/operations/github-app.md)
@@ -784,6 +789,16 @@ semantic repository knowledge, hybrid candidate retrieval, a pull-request
 review workflow, and governed GitHub Actions evidence. These increments are
 tracked by AEP-056 through AEP-065 and AEP-069 through AEP-070 and are organized
 in [ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
+
+Two further target designs are proposed but not yet implemented:
+[ADR-006](docs/adr/ADR-006-distributed-execution-and-shared-artifacts.md)
+defines multi-machine execution with shared artifact and evidence storage, and
+[ADR-007](docs/adr/ADR-007-repository-registration-and-multi-repository-isolation.md)
+defines explicit registration and isolation for additional repositories. Their
+architecture is described in [Distributed Execution](docs/architecture/distributed-execution.md)
+and [Repository Registration](docs/architecture/repository-registration.md).
+Implementation tasks will be added after those designs are reviewed; the
+current single-host, single-repository deployment remains authoritative.
 
 AEP-059 approval gates are implemented. Versioned reviewer declarations,
 durable request and decision evidence, canonical

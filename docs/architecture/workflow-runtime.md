@@ -688,7 +688,11 @@ the next idempotent TaskExecution attempt. The self-hosting Model uses one
 provider attempt and at most two scheduler attempts, eliminating the former
 two-by-two expansion. Existing ModelInvocation pair claims prevent ambiguous
 provider replay after restart. Multi-worker startup is rejected until
-coordination is durable across processes.
+coordination is durable across processes. The target design for durable
+cross-process coordination, shared artifacts, and multi-machine execution is
+specified in
+[ADR-006](../adr/ADR-006-distributed-execution-and-shared-artifacts.md) and
+[Distributed Execution](distributed-execution.md).
 
 The Context Builder assembles knowledge.
 
