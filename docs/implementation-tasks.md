@@ -85,3 +85,4 @@ stable task catalog and avoid duplicating status values here.
 * [AEP-069: Build Revision-Bound Semantic Repository Index](tasks/AEP-069-build-revision-bound-semantic-repository-index.md)
 * [AEP-070: Add Hybrid Semantic And Lexical Context Retrieval](tasks/AEP-070-add-hybrid-semantic-and-lexical-context-retrieval.md)
 * [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md)
+* [AEP-072: Bind Documentation Scope Constraints to Patch Evidence](tasks/AEP-072-bind-documentation-scope-constraints.md)

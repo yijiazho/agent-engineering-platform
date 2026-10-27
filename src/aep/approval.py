@@ -11,6 +11,20 @@ from typing import Any
 from aep.runtime_store import RuntimeObject, RuntimeObjectStore
 
 
+class ApprovalError(ValueError):
+    """A stable, operator-safe approval failure."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class ApprovalAuthorizationError(PermissionError):
+    """Raised when a decision actor is not an authorized reviewer."""
+
+    code = "APPROVAL_UNAUTHORIZED"
+
+
 def approval_digest(*, action: str, target: Mapping[str, Any], repository_revision: str,
                     artifact_digests: Mapping[str, str] | None = None) -> str:
     """Return a canonical digest for the exact action and evidence being approved."""
@@ -35,9 +49,15 @@ class ApprovalGate:
                 approval_policy_refs: tuple[Mapping[str, Any], ...] = (),
                 expected_current_approval_id: str | None = None) -> RuntimeObject:
         if policy_decision.get("decision") != "REQUIRE_APPROVAL":
-            raise ValueError("approval requires a REQUIRE_APPROVAL PolicyDecision")
+            raise ApprovalError(
+                "APPROVAL_POLICY_INVALID",
+                "approval requires a REQUIRE_APPROVAL PolicyDecision",
+            )
         if not authorized_reviewers:
-            raise ValueError("approval policy must resolve at least one reviewer")
+            raise ApprovalError(
+                "APPROVAL_REVIEWERS_MISSING",
+                "approval policy must resolve at least one reviewer",
+            )
         record = {
             "apiVersion": "aep.dev/v1alpha1", "kind": "Approval", "id": approval_id,
             "traceId": policy_decision["traceId"], "createdAt": timestamp,
@@ -72,29 +92,43 @@ class ApprovalGate:
                timestamp: str, reason: str, current_digest: str) -> RuntimeObject:
         approval = self.store.get(approval_id)
         if approval is None or approval.get("kind") != "Approval":
-            raise ValueError("approval request was not found")
+            raise ApprovalError("APPROVAL_NOT_FOUND", "approval request was not found")
         if actor not in approval.get("authorizedReviewers", ()):
             self._record_unauthorized_attempt(approval, actor, decision, timestamp)
-            raise PermissionError("identity is not authorized by the resolved approval policy")
+            raise ApprovalAuthorizationError(
+                "identity is not authorized by the resolved approval policy"
+            )
         if current_digest != approval.get("artifactRequestDigest"):
-            raise ValueError("approval is stale because its bound artifact or action changed")
+            raise ApprovalError(
+                "APPROVAL_STALE",
+                "approval is stale because its bound artifact or action changed",
+            )
         expires_at = approval.get("expiresAt")
         if approval.get("status") == "PENDING" and expires_at is not None and _timestamp(timestamp) >= _timestamp(expires_at):
             self.store.update_status(
                 approval_id, "EXPIRED", expected_status="PENDING", updated_at=timestamp,
                 changes={"decidedAt": timestamp, "reason": "Approval request expired."},
             )
-            raise ValueError("approval request has expired")
+            raise ApprovalError("APPROVAL_EXPIRED", "approval request has expired")
         if approval.get("status") != "PENDING":
             if approval.get("approver") == actor and approval.get("status") == decision:
                 if decision == "APPROVED":
                     self._wake_task(approval, approval_id, timestamp)
                 return approval
-            raise ValueError("approval request already has a terminal decision")
+            raise ApprovalError(
+                "APPROVAL_ALREADY_DECIDED",
+                "approval request already has a terminal decision",
+            )
         if decision not in {"APPROVED", "REJECTED"}:
-            raise ValueError("decision must be APPROVED or REJECTED")
+            raise ApprovalError(
+                "APPROVAL_DECISION_INVALID",
+                "decision must be APPROVED or REJECTED",
+            )
         if not isinstance(reason, str) or not reason.strip():
-            raise ValueError("a non-empty decision reason is required")
+            raise ApprovalError(
+                "APPROVAL_REASON_REQUIRED",
+                "a non-empty decision reason is required",
+            )
         decided = self.store.update_status(
             approval_id, decision, expected_status="PENDING", updated_at=timestamp,
             changes={"approver": actor, "decidedAt": timestamp, "reason": reason.strip()},
@@ -134,9 +168,15 @@ def _timestamp(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (AttributeError, ValueError) as error:
-        raise ValueError("approval timestamps must be RFC3339 values") from error
+        raise ApprovalError(
+            "APPROVAL_TIMESTAMP_INVALID",
+            "approval timestamps must be RFC3339 values",
+        ) from error
     if parsed.tzinfo is None:
-        raise ValueError("approval timestamps must include a timezone")
+        raise ApprovalError(
+            "APPROVAL_TIMESTAMP_INVALID",
+            "approval timestamps must include a timezone",
+        )
     return parsed
 
 

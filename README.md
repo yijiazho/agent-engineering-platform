@@ -663,10 +663,12 @@ authorized operator completes and records the credentialed live pilot.
 
 ### Inspecting Execution Evidence
 
-The installed `aep` command reads the durable runtime checkpoint without
-starting a worker or materializing artifact bodies. It redacts prompt, source,
-event, Tool input/output, and artifact content by default; `--unsafe-debug` is
-an explicit, controlled local-investigation switch.
+The installed `aep` command inspects the durable runtime checkpoint without
+starting a worker or materializing artifact bodies. Inspection reads redact
+prompt, source, event, Tool input/output, and artifact content by default;
+`--unsafe-debug` is an explicit, controlled local-investigation switch.
+`aep replay`, `aep eval`, `aep experiment`, and `aep approvals decide` are the
+explicit commands that create new evidence or mutate durable state.
 
 Install the repository package into the local virtual environment to register
 the `aep` command:
@@ -696,6 +698,10 @@ aep explain workflowexecution-...
 aep contexts show contextpackage-...
 aep artifacts show generatedartifact-...
 aep policy-decisions show policydecision-...
+aep approvals list --status PENDING
+aep approvals show approval-...
+aep approvals decide approval-... --actor alice --decision APPROVED \
+  --reason "Reviewed target, revision, and digest."
 aep replay workflowexecution-...
 aep replay workflowexecution-... --override Prompt:planner:2.0.0
 ```
@@ -712,7 +718,10 @@ uses deterministic runtime evidence, prioritizing pending approvals, policy
 denials, failed evaluations, and failed Tasks rather than generating text with
 a model. Drill-down families are `tasks`, `contexts`, `invocations`,
 `artifacts`, `evaluations`, `policy-decisions`, and `approvals`, each followed
-by `show <immutable-id>`.
+by `show <immutable-id>`. `approvals` additionally supports
+`list [--status <status>]` and `decide <id> --actor <identity>
+--decision APPROVED|REJECTED --reason <text> [--digest <sha256>]`; see
+[the approval-gate operator guide](docs/operations/approval-gates.md).
 
 To trace an issue-to-PR run, start with `aep executions list`, select the
 WorkflowExecution whose `eventId` corresponds to the normalized Event, and run
@@ -751,6 +760,7 @@ changes.
 * [Structured Observability](docs/architecture/observability.md)
 * [Execution Plan](docs/execution-plan.md)
 * [GitHub App Provider Operations](docs/operations/github-app.md)
+* [Approval Gate Operations](docs/operations/approval-gates.md)
 * [OpenAI Model Provider Operations](docs/operations/openai-model-provider.md)
 * [Self-Hosting Dogfood Runbook](docs/operations/self-hosting-dogfood.md)
 * [macOS/Linux Host Operations](docs/operations/macos-linux-host.md)
@@ -760,26 +770,31 @@ changes.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 44 of the 71 implementation tasks are complete.
+contracts are established, and 62 of the 72 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
 Task status is tracked in [docs/execution-plan.md](docs/execution-plan.md).
 
 The post-MVP roadmap extends the proven issue-to-PR control loop without
-changing its completion boundary. It adds deterministic execution inspection,
-replay and resume, artifact-bound human approvals, first-class budgets,
-AI-regression suites and versioned experiments, symbol-aware and semantic
-repository knowledge, hybrid candidate retrieval, a pull-request review
-workflow, and governed GitHub Actions evidence. These increments are tracked
-by AEP-056 through AEP-065 and AEP-069 through AEP-070 and are organized in
-[ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
+changing its completion boundary. It includes deterministic execution
+inspection, replay and resume, artifact-bound human approvals, first-class
+budgets, AI-regression suites and versioned experiments, symbol-aware and
+semantic repository knowledge, hybrid candidate retrieval, a pull-request
+review workflow, and governed GitHub Actions evidence. These increments are
+tracked by AEP-056 through AEP-065 and AEP-069 through AEP-070 and are organized
+in [ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
 
-AEP-059 approval-gate foundations now include versioned reviewer declarations,
-durable request and decision evidence, canonical action/target/revision/artifact
-binding, stale-request rejection, and an approval wake-up signal for the
-scheduler. Full handler integration, unauthorized-attempt audit evidence, and
-workflow-level pending status remain in progress.
+AEP-059 approval gates are implemented. Versioned reviewer declarations,
+durable request and decision evidence, canonical
+action/target/revision/artifact binding, stale-request rejection, authorized
+approval and rejection recording, scheduler wake-up, and AEP-056 inspection are
+available. Operators find pending requests with `aep approvals list --status
+PENDING` and record a decision with `aep approvals decide`; see the
+[approval-gate operator guide](docs/operations/approval-gates.md). A gated
+TaskExecution remains durably `AWAITING_APPROVAL`, the owning WorkflowExecution
+remains `RUNNING` so reconciliation can resume it after a valid decision, and a
+rejected or expired wait becomes a non-retryable `POLICY` failure.
 
 AEP-066 tracks the issue #88 GeneratePatch remediation: localized
 preimage-bound edit operations, server-derived region-local anchor matching,
