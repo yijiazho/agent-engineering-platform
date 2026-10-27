@@ -106,6 +106,12 @@ Future AEP-059 approvals may authorize an explicitly planned risky rewrite by
 exact artifact digest, but human review does not replace deterministic
 pre-publication rejection for accidental or contradictory changes.
 
+[ADR-006](ADR-006-distributed-execution-and-shared-artifacts.md) and
+[ADR-007](ADR-007-repository-registration-and-multi-repository-isolation.md)
+define later distribution and multi-repository registration boundaries. They do
+not change the task sequencing above and should be implemented only after their
+contracts are reviewed and explicit implementation tasks are accepted.
+
 ---
 
 # Consequences

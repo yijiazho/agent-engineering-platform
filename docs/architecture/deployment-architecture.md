@@ -671,6 +671,11 @@ repository and one immutable Workspace version. The webhook payload must match
 that identity; it cannot select an arbitrary repository or cause dynamic
 onboarding.
 
+The multi-registration target design is specified in
+[ADR-007](../adr/ADR-007-repository-registration-and-multi-repository-isolation.md)
+and [Repository Registration](repository-registration.md). It generalizes this
+boundary for additional repositories without changing the current MVP contract.
+
 The first registered repository is
 `github:yijiazho/agent-engineering-platform`. Its self-hosting deployment follows
 ADR-004 and separates three repository views:
@@ -843,6 +848,12 @@ The deployment architecture intentionally supports:
 * multi-repository orchestration
 
 No architectural changes should be required.
+
+The distributed execution target is specified in
+[ADR-006](../adr/ADR-006-distributed-execution-and-shared-artifacts.md) and
+[Distributed Execution](distributed-execution.md). It defines control-plane and
+worker separation, transactional runtime state, shared artifact storage, and
+execution leases without changing Resource or runtime-object semantics.
 
 ---
 
