@@ -661,6 +661,12 @@ with `core.autocrlf=true` and macOS/Linux checkouts with the default
 See [macOS/Linux Host Operations](../operations/macos-linux-host.md) for the
 POSIX host procedure.
 
+The first production-like small-scale profile is specified in
+[ADR-008](../adr/ADR-008-hetzner-postgresql-r2-small-scale.md) and
+[Small-Scale Deployment](small-scale-deployment.md). It retains Docker Compose
+but replaces the local JSON, SQLite, and filesystem persistence boundaries with
+PostgreSQL and Cloudflare R2, and uses a Cloudflare Tunnel for ingress.
+
 ---
 
 # 21. Repository Registration And Self-Hosting

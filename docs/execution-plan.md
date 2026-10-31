@@ -26,9 +26,9 @@ or `Blocked` as implementation state changes.
 | ------ | ----: |
 | Completed | 62 |
 | In Progress | 2 |
-| Not Started | 8 |
+| Not Started | 16 |
 | Blocked | 0 |
-| Total | 72 |
+| Total | 80 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -210,6 +210,14 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 70 | [AEP-071: Harden Durable Runtime Checkpoint and Audit Events](tasks/AEP-071-harden-durable-runtime-checkpoint-and-audit-events.md) | In Progress |
 | 71 | [AEP-072: Bind Documentation Scope Constraints to Patch Evidence](tasks/AEP-072-bind-documentation-scope-constraints.md) | Not Started |
 | 72 | [AEP-043: Deploy Self-Hosting Dogfood Pilot](tasks/AEP-043-deploy-self-hosting-dogfood-pilot.md) | In Progress |
+| 73 | [AEP-073: Implement PostgreSQL Transactional Runtime Store](tasks/AEP-073-implement-postgresql-transactional-runtime-store.md) | Not Started |
+| 74 | [AEP-074: Implement Shared Content-Addressed Evidence Store](tasks/AEP-074-implement-shared-content-addressed-evidence-store.md) | Not Started |
+| 75 | [AEP-075: Add Durable Dispatch, Execution Leases, And Worker Identity](tasks/AEP-075-add-durable-dispatch-leases-and-worker-identity.md) | Not Started |
+| 76 | [AEP-076: Add Credential-Owning Publication Service](tasks/AEP-076-add-credential-owning-publication-service.md) | Not Started |
+| 77 | [AEP-077: Package The Hetzner Small-Scale Deployment](tasks/AEP-077-package-hetzner-small-scale-deployment.md) | Not Started |
+| 78 | [AEP-078: Verify Small-Scale Backup, Restore, And Failover](tasks/AEP-078-verify-small-scale-backup-and-failover.md) | Not Started |
+| 79 | [AEP-079: Implement Repository Registration Control Plane](tasks/AEP-079-implement-repository-registration-control-plane.md) | Not Started |
+| 80 | [AEP-080: Route And Isolate Multiple Repository Registrations](tasks/AEP-080-route-and-isolate-multiple-repository-registrations.md) | Not Started |
 
 ---
 
@@ -289,6 +297,14 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-070 | AEP-016, AEP-017, AEP-029, AEP-045, AEP-053, AEP-054, AEP-069, AEP-046, AEP-062 | Not Started |
 | AEP-071 | AEP-002, AEP-004, AEP-008, AEP-010, AEP-011, AEP-018, AEP-036, AEP-040, AEP-056, AEP-058 | In Progress |
 | AEP-072 | AEP-025, AEP-027, AEP-029, AEP-030, AEP-040, AEP-052, AEP-055, AEP-056, AEP-066, AEP-068, AEP-057 | Not Started |
+| AEP-073 | AEP-004 | Not Started |
+| AEP-074 | AEP-018, AEP-073 | Not Started |
+| AEP-075 | AEP-010, AEP-011, AEP-039, AEP-073 | Not Started |
+| AEP-076 | AEP-022, AEP-024, AEP-034, AEP-049, AEP-066, AEP-073, AEP-074, AEP-075 | Not Started |
+| AEP-077 | AEP-047, AEP-073, AEP-074, AEP-075, AEP-076 | Not Started |
+| AEP-078 | AEP-077 | Not Started |
+| AEP-079 | AEP-038, AEP-041, AEP-073, AEP-074, AEP-075, AEP-077 | Not Started |
+| AEP-080 | AEP-038, AEP-041, AEP-073, AEP-074, AEP-075, AEP-077, AEP-079 | Not Started |
 
 ---
 
@@ -309,6 +325,9 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Evaluation And Experimentation | AEP-060, AEP-061 | Completed |
 | Repository Intelligence Expansion | AEP-063, AEP-069, AEP-070 | Not Started |
 | Workflow And CI Expansion | AEP-064, AEP-065 | Not Started |
+| Distributed Storage And Execution | AEP-073, AEP-074, AEP-075, AEP-076 | Not Started |
+| Small-Scale Deployment And Recovery | AEP-077, AEP-078 | Not Started |
+| Multi-Repository Registration | AEP-079, AEP-080 | Not Started |
 
 ---
 

@@ -307,6 +307,10 @@ idempotent external identity, and explicit ambiguity evidence are.
 All profiles use the same Resource and runtime-object schemas. Profile selection
 changes adapters, not workflow semantics.
 
+The first small-scale `shared` implementation profile is specified in
+[ADR-008](ADR-008-hetzner-postgresql-r2-small-scale.md): Hetzner Cloud,
+PostgreSQL, Cloudflare R2, Cloudflare Tunnel, and Docker Compose.
+
 ---
 
 # State And Ownership
