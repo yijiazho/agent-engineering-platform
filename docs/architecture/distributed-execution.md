@@ -654,6 +654,11 @@ The first distributed implementation should declare:
 Limits are control-plane policy, not Agent choices. Exhaustion produces a stable
 blocked or deferred reason.
 
+The first implementation slices are tracked by AEP-073 (transactional store),
+AEP-074 (shared evidence store), AEP-075 (dispatch/leases/worker identity), and
+AEP-076 (publication service), with deployment and recovery in AEP-077 and
+AEP-078.
+
 ---
 
 # 15. Open Questions
@@ -675,7 +680,9 @@ blocked or deferred reason.
 
 * [ADR-006: Distributed Execution And Shared Artifacts](../adr/ADR-006-distributed-execution-and-shared-artifacts.md)
 * [ADR-007: Repository Registration And Multi-Repository Isolation](../adr/ADR-007-repository-registration-and-multi-repository-isolation.md)
+* [ADR-008: Small-Scale Deployment On Hetzner](../adr/ADR-008-hetzner-postgresql-r2-small-scale.md)
 * [Deployment Architecture](deployment-architecture.md)
+* [Small-Scale Deployment](small-scale-deployment.md)
 * [Workflow Runtime](workflow-runtime.md)
 * [Repository Registration](repository-registration.md)
 * [Observability](observability.md)

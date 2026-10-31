@@ -760,8 +760,10 @@ changes.
 * [Post-MVP Platform Evolution](docs/adr/ADR-005-post-mvp-platform-evolution.md)
 * [Distributed Execution And Shared Artifacts](docs/adr/ADR-006-distributed-execution-and-shared-artifacts.md)
 * [Repository Registration And Multi-Repository Isolation](docs/adr/ADR-007-repository-registration-and-multi-repository-isolation.md)
+* [Small-Scale Deployment On Hetzner](docs/adr/ADR-008-hetzner-postgresql-r2-small-scale.md)
 * [Distributed Execution Architecture](docs/architecture/distributed-execution.md)
 * [Repository Registration Architecture](docs/architecture/repository-registration.md)
+* [Small-Scale Deployment Architecture](docs/architecture/small-scale-deployment.md)
 * [Structured Observability](docs/architecture/observability.md)
 * [Execution Plan](docs/execution-plan.md)
 * [GitHub App Provider Operations](docs/operations/github-app.md)
@@ -775,7 +777,7 @@ changes.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 62 of the 72 implementation tasks are complete.
+contracts are established, and 62 of the 80 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 
@@ -790,15 +792,21 @@ review workflow, and governed GitHub Actions evidence. These increments are
 tracked by AEP-056 through AEP-065 and AEP-069 through AEP-070 and are organized
 in [ADR-005](docs/adr/ADR-005-post-mvp-platform-evolution.md).
 
-Two further target designs are proposed but not yet implemented:
+Further target designs are proposed but not yet implemented:
 [ADR-006](docs/adr/ADR-006-distributed-execution-and-shared-artifacts.md)
 defines multi-machine execution with shared artifact and evidence storage, and
 [ADR-007](docs/adr/ADR-007-repository-registration-and-multi-repository-isolation.md)
 defines explicit registration and isolation for additional repositories. Their
 architecture is described in [Distributed Execution](docs/architecture/distributed-execution.md)
 and [Repository Registration](docs/architecture/repository-registration.md).
-Implementation tasks will be added after those designs are reviewed; the
-current single-host, single-repository deployment remains authoritative.
+[ADR-008](docs/adr/ADR-008-hetzner-postgresql-r2-small-scale.md) selects the
+first small-scale production-like profile: Hetzner Cloud with PostgreSQL and
+Cloudflare R2, described in
+[Small-Scale Deployment](docs/architecture/small-scale-deployment.md).
+AEP-073 through AEP-078 track the first small-scale profile, and AEP-079 and
+AEP-080 track repository registration and multi-registration isolation. These
+tasks are Not Started; the current single-host, single-repository deployment
+remains authoritative.
 
 AEP-059 approval gates are implemented. Versioned reviewer declarations,
 durable request and decision evidence, canonical

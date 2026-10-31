@@ -347,7 +347,9 @@ registration.
 
 The single-registration mode remains the default self-hosting profile. The
 multi-registration mode is a control-plane capability, not a requirement for
-local development.
+local development. The first small-scale single-registration deployment profile
+is specified in
+[ADR-008](ADR-008-hetzner-postgresql-r2-small-scale.md).
 
 ## 11. API And CLI
 

@@ -595,7 +595,8 @@ Behavior:
   explicitly configured.
 
 No Resource annotation, issue label, or webhook payload can register a
-repository.
+repository. Implementation is tracked by AEP-079 (registration control plane)
+and AEP-080 (routing and isolation).
 
 ---
 
