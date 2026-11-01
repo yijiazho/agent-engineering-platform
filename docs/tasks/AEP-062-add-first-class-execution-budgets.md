@@ -55,11 +55,13 @@ Retries reuse Task-identity consumption, resume continues the same
 WorkflowExecution ledger, and replay starts a new ledger while preserving only
 explicit execution-level overrides. Provider retry policies are clamped to the
 remaining invocation allowance and the full granted attempt allowance is
-reserved before dispatch, so concurrent Tasks cannot over-admit provider
-attempts. Admission and reconciliation run as one atomic workflow/task budget
-transaction, serialized by the durable store's cross-process writer fence.
-Deferred requests with zero dispatched attempts release their reservation
-without charging an invocation. Task ceilings do not consume the shared Agent
+reserved before dispatch, bounded by the configured retry policy, so concurrent
+Tasks cannot over-admit provider attempts or hold unrelated units. Admission,
+immutable execution-budget initialization, and reconciliation run as one atomic
+workflow/task budget transaction, serialized by the durable store's
+cross-process writer fence. Deferred requests with zero dispatched attempts
+release their reservation without charging an invocation; dispatched failures
+with unavailable usage retain their token reservation conservatively. Task ceilings do not consume the shared Agent
 ledger, execution overrides are validated against declared limits before
 narrowing admission, and temporary reservation exhaustion is reevaluated after
 reconciliation. Pre-dispatch pricing rejections are local rather than sticky.

@@ -130,7 +130,7 @@ def test_execution_level_override_narrows_but_cannot_widen_workflow_budget() -> 
         changes={"budgetOverrides": {"maxModelInvocations": 3}},
     )
 
-    narrowed = prepare(store, resources, workflow, task)
+    narrowed = prepare(store, resources, store.get(WORKFLOW_ID), task)
     assert narrowed is not None
     assert narrowed.resolved.workflow["maxModelInvocations"].value == 3
     assert narrowed.resolved.workflow["maxModelInvocations"].scope == "Execution"
@@ -142,7 +142,7 @@ def test_execution_level_override_narrows_but_cannot_widen_workflow_budget() -> 
         changes={"budgetOverrides": {"maxModelInvocations": 6}},
     )
     with pytest.raises(ExecutionBudgetError, match="widens Workflow"):
-        prepare(store, resources, workflow, task)
+        prepare(store, resources, store.get(WORKFLOW_ID), task)
 
 
 def test_execution_override_validates_against_declared_not_narrowed_parent() -> None:
@@ -157,7 +157,7 @@ def test_execution_override_validates_against_declared_not_narrowed_parent() -> 
         changes={"budgetOverrides": {"maxModelInvocations": 3}},
     )
 
-    budget = prepare(store, resources, workflow, task)
+    budget = prepare(store, resources, store.get(WORKFLOW_ID), task)
     assert budget is not None
     assert budget.resolved.workflow["maxModelInvocations"].value == 3
     assert budget.resolved.task["maxModelInvocations"].value == 3
@@ -272,6 +272,7 @@ def test_concurrent_preflights_reserve_the_full_provider_attempt_allowance() -> 
     first_reservation = first_budget.preflight(
         estimated_input_tokens=10,
         configured_output_token_limit=100,
+        configured_provider_attempts=3,
         timestamp=TIMESTAMP,
     )
     assert first_reservation.max_provider_attempts == 3
@@ -282,6 +283,7 @@ def test_concurrent_preflights_reserve_the_full_provider_attempt_allowance() -> 
         second_budget.preflight(
             estimated_input_tokens=10,
             configured_output_token_limit=100,
+            configured_provider_attempts=3,
             timestamp=LATER,
         )
     assert raised.value.decision["dimension"] == "maxModelInvocations"
@@ -296,9 +298,38 @@ def test_concurrent_preflights_reserve_the_full_provider_attempt_allowance() -> 
     second_reservation = second_budget.preflight(
         estimated_input_tokens=10,
         configured_output_token_limit=100,
+        configured_provider_attempts=3,
         timestamp=LATER,
     )
     assert second_reservation.max_provider_attempts == 2
+
+
+def test_one_attempt_models_reserve_only_one_invocation_unit() -> None:
+    store, workflow, first, second, resources = two_task_runtime(
+        workflow_budget={"maxModelInvocations": 3}
+    )
+    first_budget, second_budget = prepare_two(
+        store, resources, workflow, first, second
+    )
+    assert first_budget is not None and second_budget is not None
+
+    first_reservation = first_budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        configured_provider_attempts=1,
+        timestamp=TIMESTAMP,
+    )
+    assert first_reservation.max_provider_attempts == 1
+    workflow_consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["workflow"]
+    assert workflow_consumption["reservedModelInvocations"] == 1
+
+    second_reservation = second_budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        configured_provider_attempts=1,
+        timestamp=LATER,
+    )
+    assert second_reservation.max_provider_attempts == 1
 
 
 def test_temporary_output_reservation_does_not_poison_workflow_budget() -> None:
@@ -359,24 +390,38 @@ def test_durable_budget_admission_is_atomic_across_store_instances(tmp_path) -> 
         workflow_budget={"maxModelInvocations": 1}
     )[4]
     second_store = DurableJsonRuntimeObjectStore(path)
-    first_budget = TaskBudgetManager(
-        first_store, resources, lambda: TIMESTAMP
-    ).prepare(
-        workflow_execution=first_store.get(WORKFLOW_ID),
-        task_execution=first_store.get("taskexecution-budget00031"),
-        task=resources.get(ResourceRef.from_mapping(TASK_REF)),
-        agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
-        model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
-    )
-    second_budget = TaskBudgetManager(
-        second_store, resources, lambda: TIMESTAMP
-    ).prepare(
-        workflow_execution=second_store.get(WORKFLOW_ID),
-        task_execution=second_store.get("taskexecution-budget00032"),
-        task=resources.get(ResourceRef("Task", "plan", "1.0.0")),
-        agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
-        model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
-    )
+
+    def prepare(store, task_id, task_ref):
+        return TaskBudgetManager(store, resources, lambda: TIMESTAMP).prepare(
+            workflow_execution=workflow_execution(),
+            task_execution={
+                **task_execution(execution_id=task_id),
+                "taskRef": {
+                    "kind": task_ref.kind,
+                    "name": task_ref.name,
+                    "version": task_ref.version,
+                },
+            },
+            task=resources.get(task_ref),
+            agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
+            model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(
+            prepare,
+            first_store,
+            "taskexecution-budget00031",
+            ResourceRef.from_mapping(TASK_REF),
+        )
+        second_future = pool.submit(
+            prepare,
+            second_store,
+            "taskexecution-budget00032",
+            ResourceRef("Task", "plan", "1.0.0"),
+        )
+        first_budget = first_future.result()
+        second_budget = second_future.result()
     assert first_budget is not None and second_budget is not None
 
     def admit(budget) -> str:
@@ -593,6 +638,39 @@ def test_zero_dispatched_attempts_release_without_charging_budget() -> None:
         timestamp=LATER,
     )
     assert reservation.max_provider_attempts == 1
+
+
+def test_failed_dispatched_request_retains_token_reservation() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxOutputTokens": 5}
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    reservation = budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=5,
+        timestamp=TIMESTAMP,
+    )
+    assert reservation.effective_output_token_limit == 5
+
+    budget.record(
+        invocation_count=1,
+        unreconciled_dispatched_attempts=1,
+        timestamp=TIMESTAMP,
+    )
+
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["outputTokens"] == 0
+    assert consumption["reservedOutputTokens"] == 5
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        budget.preflight(
+            estimated_input_tokens=1,
+            configured_output_token_limit=5,
+            timestamp=LATER,
+        )
+    assert raised.value.decision["dimension"] == "maxOutputTokens"
 
 
 def test_adapter_retry_allowance_is_clamped_to_remaining_invocations() -> None:

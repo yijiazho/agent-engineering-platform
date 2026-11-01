@@ -261,12 +261,6 @@ class TaskBudgetManager:
         agent: Any,
         model: Any,
     ) -> "TaskBudget | None":
-        workflow_execution = (
-            self._store.get(str(workflow_execution["id"])) or workflow_execution
-        )
-        task_execution = (
-            self._store.get(str(task_execution["id"])) or task_execution
-        )
         workflow_resource = self._resource(workflow_execution.get("workflowRef"))
         task_spec = task.data.get("spec") if isinstance(task.data.get("spec"), Mapping) else {}
         agent_spec = agent.data.get("spec") if isinstance(agent.data.get("spec"), Mapping) else {}
@@ -294,17 +288,11 @@ class TaskBudgetManager:
         if not resolved.has_limits():
             return None
         timestamp = self._clock()
-        self._persist_once(
+        self._initialize_evidence(
             workflow_execution,
-            "executionBudget",
-            resolved.workflow_record(timestamp),
-            "WorkflowExecution",
-        )
-        self._persist_once(
             task_execution,
-            "executionBudget",
-            resolved.task_record(timestamp),
-            "TaskExecution",
+            resolved,
+            timestamp,
         )
         return TaskBudget(
             store=self._store,
@@ -327,37 +315,49 @@ class TaskBudgetManager:
         except (KeyError, TypeError, ValueError):
             return None
 
-    def _persist_once(
+    def _initialize_evidence(
         self,
-        runtime_object: Mapping[str, Any],
-        field: str,
-        expected: Mapping[str, Any],
-        kind: str,
+        workflow_execution: Mapping[str, Any],
+        task_execution: Mapping[str, Any],
+        resolved: ResolvedExecutionBudget,
+        timestamp: str,
     ) -> None:
-        existing = runtime_object.get(field)
-        if existing is not None:
-            if _without_resolution_time(existing) != _without_resolution_time(expected):
+        expected_workflow = resolved.workflow_record(timestamp)
+        expected_task = resolved.task_record(timestamp)
+
+        def mutate(
+            workflow: Mapping[str, Any], task: Mapping[str, Any]
+        ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+            workflow_changes: dict[str, Any] = {}
+            task_changes: dict[str, Any] = {}
+            existing_workflow = workflow.get("executionBudget")
+            if existing_workflow is None:
+                workflow_changes["executionBudget"] = deepcopy(expected_workflow)
+            elif _without_resolution_time(existing_workflow) != _without_resolution_time(
+                expected_workflow
+            ):
                 raise ExecutionBudgetContractError(
-                    f"{kind}.{field} does not match the resolved execution budget"
+                    "WorkflowExecution.executionBudget does not match the resolved "
+                    "execution budget"
                 )
-            return
-        changes = {field: deepcopy(dict(expected))}
-        if kind == "WorkflowExecution":
-            self._store.update_status(
-                str(runtime_object["id"]),
-                "RUNNING",
-                expected_status="RUNNING",
-                updated_at=str(expected["resolvedAt"]),
-                changes=changes,
-            )
-        else:
-            self._store.update_status(
-                str(runtime_object["id"]),
-                "RUNNING",
-                expected_status="RUNNING",
-                updated_at=str(expected["resolvedAt"]),
-                changes=changes,
-            )
+            existing_task = task.get("executionBudget")
+            if existing_task is None:
+                task_changes["executionBudget"] = deepcopy(expected_task)
+            elif _without_resolution_time(existing_task) != _without_resolution_time(
+                expected_task
+            ):
+                raise ExecutionBudgetContractError(
+                    "TaskExecution.executionBudget does not match the resolved "
+                    "execution budget"
+                )
+            return workflow_changes, task_changes
+
+        self._store.mutate_execution_budget(
+            str(workflow_execution["id"]),
+            str(task_execution["id"]),
+            mutate=mutate,
+            updated_at=timestamp,
+        )
 
 
 class TaskBudget:
@@ -398,6 +398,7 @@ class TaskBudget:
         *,
         estimated_input_tokens: int,
         configured_output_token_limit: int | None,
+        configured_provider_attempts: int | None = None,
         timestamp: str,
     ) -> BudgetReservation:
         """Reserve budget or raise ``ExecutionBudgetExceeded`` before dispatch."""
@@ -424,6 +425,11 @@ class TaskBudget:
                 configured_output_token_limit, remaining_output
             )
             max_provider_attempts = self._invocation_allowance(state)
+            if max_provider_attempts is not None and configured_provider_attempts is not None:
+                max_provider_attempts = max(
+                    1,
+                    min(max_provider_attempts, int(configured_provider_attempts)),
+                )
             reserved_invocations = max_provider_attempts or 1
             reserved_output = 0 if remaining_output is None else int(effective_output or 0)
             reserved_cost = (
@@ -533,15 +539,19 @@ class TaskBudget:
                     record["reservedModelInvocations"]
                     - int(reservation.get("modelInvocations", 1)),
                 )
-                record["reservedInputTokens"] = max(
-                    0, record["reservedInputTokens"] - int(reservation["inputTokens"])
-                )
-                record["reservedOutputTokens"] = max(
-                    0, record["reservedOutputTokens"] - int(reservation["outputTokens"])
-                )
-                record["reservedCostUsd"] = max(
-                    0.0, record["reservedCostUsd"] - float(reservation["costUsd"])
-                )
+                if unreconciled_dispatched_attempts == 0:
+                    record["reservedInputTokens"] = max(
+                        0,
+                        record["reservedInputTokens"] - int(reservation["inputTokens"]),
+                    )
+                    record["reservedOutputTokens"] = max(
+                        0,
+                        record["reservedOutputTokens"] - int(reservation["outputTokens"]),
+                    )
+                    record["reservedCostUsd"] = max(
+                        0.0,
+                        record["reservedCostUsd"] - float(reservation["costUsd"]),
+                    )
                 record["modelInvocations"] += invocation_count
                 record["inputTokens"] += input_tokens
                 record["outputTokens"] += output_tokens

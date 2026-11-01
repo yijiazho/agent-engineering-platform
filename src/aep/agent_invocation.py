@@ -166,6 +166,7 @@ def invoke_agent(
             budget_reservation = budget.preflight(
                 estimated_input_tokens=_context_input_tokens(package),
                 configured_output_token_limit=model_configuration.token_limit,
+                configured_provider_attempts=model_configuration.max_attempts,
                 timestamp=started_at,
             )
         except ExecutionBudgetExceeded:
@@ -479,13 +480,15 @@ def _record_failed_budget_charge(
 ) -> dict[str, Any] | None:
     if budget is None:
         return None
+    attempt_count = _attempt_count(error.provider_metadata)
     return budget.record(
         input_tokens=0,
         output_tokens=0,
         latency_ms=0,
         cost=None,
         cost_status="UNAVAILABLE",
-        invocation_count=_attempt_count(error.provider_metadata),
+        invocation_count=attempt_count,
+        unreconciled_dispatched_attempts=attempt_count,
         timestamp=completed_at,
     )
 

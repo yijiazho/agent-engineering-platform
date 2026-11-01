@@ -997,6 +997,36 @@ def test_execution_budget_blocks_when_retry_success_hides_earlier_usage() -> Non
     assert consumption["blockedDecision"]["dimension"] == "maxCostUsd"
 
 
+def test_execution_budget_retains_tokens_for_failed_dispatched_request() -> None:
+    resources, task = resource_collection(task_budget={"maxOutputTokens": 5})
+    store, handler, task, adapter = setup_handler(
+        ModelInvocationError(
+            "model provider request timed out",
+            classification=ModelErrorClass.RECOVERABLE,
+            code="timeout",
+            provider_metadata={"attemptCount": 1},
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+    assert result.succeeded is False
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["outputTokens"] == 0
+    assert consumption["reservedOutputTokens"] == 5
+
+    retry = retry_task_execution()
+    store.create(retry, deterministic_key="task-retry-token")
+    blocked = handler.execute(task, store.get(retry["id"]))
+
+    assert blocked.succeeded is False
+    assert blocked.failure_class is FailureClass.POLICY
+    assert blocked.message.startswith("execution budget exhausted")
+    assert len(adapter.requests) == 1
+
+
 def test_execution_budget_cost_limit_without_pricing_blocks_before_dispatch() -> None:
     resources, task = resource_collection(task_budget={"maxCostUsd": 1})
     store, handler, task, adapter = setup_handler(

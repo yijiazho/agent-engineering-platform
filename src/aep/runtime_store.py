@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import tempfile
 from threading import RLock
+import time
 from types import MappingProxyType
 from typing import Any, Callable, Final
 
@@ -768,15 +769,25 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
         ],
         updated_at: str,
     ) -> tuple[RuntimeObject, RuntimeObject]:
-        return self._mutate(
-            lambda: InMemoryRuntimeObjectStore.mutate_execution_budget(
-                self,
-                workflow_execution_id,
-                task_execution_id,
-                mutate=mutate,
-                updated_at=updated_at,
-            )
-        )
+        for attempt in range(100):
+            try:
+                return self._mutate(
+                    lambda: InMemoryRuntimeObjectStore.mutate_execution_budget(
+                        self,
+                        workflow_execution_id,
+                        task_execution_id,
+                        mutate=mutate,
+                        updated_at=updated_at,
+                    )
+                )
+            except RuntimeStoreError as error:
+                if (
+                    error.diagnostic.get("category") != "busy"
+                    or attempt == 99
+                ):
+                    raise
+                time.sleep(0.02)
+        raise AssertionError("unreachable budget fence retry state")
 
     def update_status(
         self,

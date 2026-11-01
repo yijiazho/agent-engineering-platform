@@ -644,8 +644,10 @@ resolves the effective budget and checks the known minimum requirement:
 * at least one output token must fit the remaining output-token allowance;
 * the configured Model output limit is clamped to the remaining aggregate
   output allowance, so the provider request cannot knowingly exceed the budget;
-* the Model retry policy is clamped to the remaining invocation allowance, so
-  adapter-level provider retries cannot exceed the hard invocation limit;
+* the Model retry policy is clamped to the remaining invocation allowance, and
+  the reservation covers the smaller of that policy and the remaining
+  allowance, so adapter-level retries cannot exceed the hard invocation limit
+  or hold unrelated units;
 * elapsed time must leave room for another invocation; and
 * a monetary budget requires reliable Model pricing and a minimum estimated
   cost that fits the remaining allowance.
@@ -656,14 +658,18 @@ concurrent Tasks cannot each receive the same remaining units. Admission and
 reconciliation execute as one atomic workflow/task budget transaction. The
 durable store serializes that transaction under its cross-process writer fence;
 the runtime does not rely on a process-local lock for the concurrency
-guarantee. After each invocation, actual provider usage replaces the
+guarantee. Immutable Workflow and Task execution-budget evidence is installed
+or compared in that same transaction, so concurrent initializers agree on the
+first value. After each invocation, actual provider usage replaces the
 reservation and unused attempt units are released. The coordinator records input and output tokens, latency,
 the provider/model identity, the attempt count, and cost evidence classified as
 `EXACT` (provider-reported), `CONFIGURED` (declared fixed cost), `ESTIMATED`
 (Model pricing multiplied by usage), or `UNAVAILABLE`.
 
 A request deferred before any provider dispatch reports zero attempts and
-releases its reservation without charging an invocation. An invocation-only,
+releases its reservation without charging an invocation. A dispatched request
+that returns no reliable token usage retains its token reservation
+conservatively instead of releasing already-spent allowance. An invocation-only,
 input-only, or elapsed-only budget does not require a Model output-token limit;
 an absent `Model.spec.tokenLimit` remains absent. A dispatched request that
 returns no reliable usage under a monetary limit records an enforceable
