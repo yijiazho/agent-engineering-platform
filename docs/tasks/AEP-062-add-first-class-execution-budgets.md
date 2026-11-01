@@ -55,8 +55,11 @@ Retries reuse Task-identity consumption, resume continues the same
 WorkflowExecution ledger, and replay starts a new ledger while preserving only
 explicit execution-level overrides. Provider retry policies are clamped to the
 remaining invocation allowance and the full granted attempt allowance is
-reserved before dispatch, bounded by the configured retry policy, so concurrent
-Tasks cannot over-admit provider attempts or hold unrelated units. Admission,
+reserved before dispatch, bounded by the configured retry policy and the
+remaining invocation, input-token, output-token, and monetary allowances, so
+concurrent Tasks cannot over-admit provider attempts or hold unrelated units.
+Each granted provider attempt receives a bounded share of the remaining output
+budget. Admission,
 immutable execution-budget initialization, and reconciliation run as one atomic
 workflow/task budget transaction, serialized by the durable store's
 cross-process writer fence. Deferred requests with zero dispatched attempts

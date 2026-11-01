@@ -410,7 +410,7 @@ class TaskBudget:
             workflow: Mapping[str, Any], task: Mapping[str, Any]
         ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
             state = self._load_state(workflow, task, timestamp)
-            decision, remaining_output = self._evaluate(
+            decision, _ = self._evaluate(
                 state,
                 estimated_input_tokens=estimated,
                 configured_output_token_limit=configured_output_token_limit,
@@ -421,25 +421,22 @@ class TaskBudget:
                 outcome["decision"] = decision
                 return self._changes_for_state(workflow, state, decision=decision)
 
-            effective_output = _effective_output_limit(
-                configured_output_token_limit, remaining_output
+            (
+                max_provider_attempts,
+                effective_output,
+                reserved_input,
+                reserved_output,
+                reserved_cost,
+            ) = self._reservation_plan(
+                state,
+                estimated_input_tokens=estimated,
+                configured_output_token_limit=configured_output_token_limit,
+                configured_provider_attempts=configured_provider_attempts,
             )
-            max_provider_attempts = self._invocation_allowance(state)
-            if max_provider_attempts is not None and configured_provider_attempts is not None:
-                max_provider_attempts = max(
-                    1,
-                    min(max_provider_attempts, int(configured_provider_attempts)),
-                )
-            reserved_invocations = max_provider_attempts or 1
-            reserved_output = 0 if remaining_output is None else int(effective_output or 0)
-            reserved_cost = (
-                _estimate_cost(self.resolved.model_pricing, estimated, reserved_output)
-                if self.resolved.model_pricing is not None
-                else 0.0
-            )
+            reserved_invocations = max_provider_attempts
             for record in state["records"]:
                 record["reservedModelInvocations"] += reserved_invocations
-                record["reservedInputTokens"] += estimated
+                record["reservedInputTokens"] += reserved_input
                 record["reservedOutputTokens"] += reserved_output
                 record["reservedCostUsd"] += reserved_cost
                 record["updatedAt"] = timestamp
@@ -465,7 +462,7 @@ class TaskBudget:
                 },
             )
             outcome["reservedModelInvocations"] = reserved_invocations
-            outcome["reservedInputTokens"] = estimated
+            outcome["reservedInputTokens"] = reserved_input
             outcome["reservedOutputTokens"] = reserved_output
             outcome["reservedCostUsd"] = reserved_cost
             return self._changes_for_state(workflow, state)
@@ -809,6 +806,110 @@ class TaskBudget:
                     overrun = True
             if overrun:
                 record["overrun"] = True
+
+    def _reservation_plan(
+        self,
+        state: Mapping[str, Any],
+        *,
+        estimated_input_tokens: int,
+        configured_output_token_limit: int | None,
+        configured_provider_attempts: int | None,
+    ) -> tuple[int, int | None, int, int, float]:
+        invocation_allowance = self._invocation_allowance(state)
+        if configured_provider_attempts is not None:
+            attempt_limit = max(1, int(configured_provider_attempts))
+        elif invocation_allowance is not None:
+            attempt_limit = invocation_allowance
+        else:
+            attempt_limit = 1
+        if invocation_allowance is not None:
+            attempt_limit = min(attempt_limit, invocation_allowance)
+
+        remaining_input = self._minimum_remaining(
+            state, "maxInputTokens", "inputTokens", "reservedInputTokens"
+        )
+        if remaining_input is not None:
+            attempt_limit = min(
+                attempt_limit, max(1, int(remaining_input) // estimated_input_tokens)
+            )
+        remaining_output = self._minimum_remaining(
+            state, "maxOutputTokens", "outputTokens", "reservedOutputTokens"
+        )
+        if remaining_output is not None:
+            attempt_limit = min(attempt_limit, max(1, int(remaining_output)))
+
+        per_attempt_output = configured_output_token_limit
+        if remaining_output is not None:
+            output_cap = max(1, int(remaining_output) // attempt_limit)
+            per_attempt_output = max(
+                1,
+                min(configured_output_token_limit or output_cap, output_cap),
+            )
+
+        remaining_cost = self._minimum_remaining(
+            state, "maxCostUsd", "costUsd", "reservedCostUsd"
+        )
+        if remaining_cost is not None and self.resolved.model_pricing is not None:
+            for _ in range(3):
+                minimum_cost = _estimate_cost(
+                    self.resolved.model_pricing,
+                    estimated_input_tokens,
+                    per_attempt_output or 1,
+                )
+                if minimum_cost <= 0:
+                    break
+                max_by_cost = int(float(remaining_cost) // minimum_cost)
+                if max_by_cost >= attempt_limit:
+                    break
+                attempt_limit = max(1, max_by_cost)
+                if remaining_output is not None:
+                    output_cap = max(1, int(remaining_output) // attempt_limit)
+                    per_attempt_output = max(
+                        1,
+                        min(configured_output_token_limit or output_cap, output_cap),
+                    )
+
+        reserved_input = estimated_input_tokens * attempt_limit
+        reserved_output = (
+            int(per_attempt_output or 0) * attempt_limit
+            if remaining_output is not None
+            else 0
+        )
+        reserved_cost = (
+            _estimate_cost(
+                self.resolved.model_pricing,
+                reserved_input,
+                reserved_output if remaining_output is not None else attempt_limit,
+            )
+            if self.resolved.model_pricing is not None
+            else 0.0
+        )
+        return (
+            attempt_limit,
+            per_attempt_output,
+            reserved_input,
+            reserved_output,
+            reserved_cost,
+        )
+
+    def _minimum_remaining(
+        self,
+        state: Mapping[str, Any],
+        limit_field: str,
+        consumed_field: str,
+        reserved_field: str,
+    ) -> int | float | None:
+        remaining: int | float | None = None
+        for scope_name in ("workflow", "task", "agent"):
+            limit = getattr(self.resolved, scope_name).get(limit_field)
+            if limit is None:
+                continue
+            record = state[scope_name]
+            value = limit.value - (
+                record[consumed_field] + record[reserved_field]
+            )
+            remaining = value if remaining is None else min(remaining, value)
+        return remaining
 
     def _invocation_allowance(self, state: Mapping[str, Any]) -> int | None:
         allowance: int | None = None

@@ -640,6 +640,50 @@ def test_zero_dispatched_attempts_release_without_charging_budget() -> None:
     assert reservation.max_provider_attempts == 1
 
 
+def test_provider_attempts_are_bounded_by_remaining_input_tokens() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxInputTokens": 10}
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+
+    reservation = budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        configured_provider_attempts=3,
+        timestamp=TIMESTAMP,
+    )
+
+    assert reservation.max_provider_attempts == 1
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["reservedInputTokens"] == 10
+    assert consumption["reservedModelInvocations"] == 1
+
+
+def test_provider_attempts_and_output_allowance_share_remaining_output_budget() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxOutputTokens": 2}
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+
+    reservation = budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=100,
+        configured_provider_attempts=3,
+        timestamp=TIMESTAMP,
+    )
+
+    assert reservation.max_provider_attempts == 2
+    assert reservation.effective_output_token_limit == 1
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["reservedOutputTokens"] == 2
+
+
 def test_failed_dispatched_request_retains_token_reservation() -> None:
     store, workflow, task, resources = budget_runtime(
         task_budget={"maxOutputTokens": 5}

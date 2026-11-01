@@ -644,17 +644,20 @@ resolves the effective budget and checks the known minimum requirement:
 * at least one output token must fit the remaining output-token allowance;
 * the configured Model output limit is clamped to the remaining aggregate
   output allowance, so the provider request cannot knowingly exceed the budget;
-* the Model retry policy is clamped to the remaining invocation allowance, and
-  the reservation covers the smaller of that policy and the remaining
-  allowance, so adapter-level retries cannot exceed the hard invocation limit
-  or hold unrelated units;
+* the Model retry policy is clamped to the invocation, input-token,
+  output-token, and monetary allowances, and the reservation covers every
+  granted attempt, so adapter-level retries cannot exceed any hard limit or
+  hold unrelated units. Each attempt receives a per-attempt output cap derived
+  from the remaining output budget and the granted attempt count;
 * elapsed time must leave room for another invocation; and
 * a monetary budget requires reliable Model pricing and a minimum estimated
   cost that fits the remaining allowance.
 
 An allowed check writes a durable reservation before dispatch. The reservation
-covers the full provider-attempt allowance granted to that invocation, so two
-concurrent Tasks cannot each receive the same remaining units. Admission and
+covers the full provider-attempt, input-token, output-token, and cost allowance
+granted to that invocation, so two concurrent Tasks cannot each receive the
+same remaining units and provider retries cannot reuse already-reserved token
+or cost allowance. Admission and
 reconciliation execute as one atomic workflow/task budget transaction. The
 durable store serializes that transaction under its cross-process writer fence;
 the runtime does not rely on a process-local lock for the concurrency
