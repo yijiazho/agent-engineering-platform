@@ -824,6 +824,85 @@ def test_adapter_retry_allowance_is_clamped_to_remaining_invocations() -> None:
     assert bounded.token_limit == 10
 
 
+def test_cost_budget_reserves_the_granted_output_allowance() -> None:
+    store, workflow, task, resources = budget_runtime(
+        workflow_budget={"maxCostUsd": 1},
+        model_token_limit=60,
+        model_pricing={
+            "inputPerMillionTokens": 0,
+            "outputPerMillionTokens": 10_000,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    first = prepare(store, resources, workflow, task)
+    assert first is not None
+    first.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=60,
+        configured_provider_attempts=1,
+        timestamp=TIMESTAMP,
+    )
+    reserved = store.get(WORKFLOW_ID)["budgetConsumption"]["workflow"][
+        "reservedCostUsd"
+    ]
+    assert reserved == pytest.approx(0.6)
+
+    retry = store.create(
+        task_execution(attempt=2, execution_id="taskexecution-budget00041"),
+        deterministic_key="task-cost-allowance",
+    )
+    second = prepare(store, resources, store.get(WORKFLOW_ID), retry)
+    assert second is not None
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        second.preflight(
+            estimated_input_tokens=1,
+            configured_output_token_limit=60,
+            configured_provider_attempts=1,
+            timestamp=LATER,
+        )
+    assert raised.value.decision["reason"] == BUDGET_EXHAUSTED
+    assert raised.value.decision["dimension"] == "maxCostUsd"
+
+
+def test_exact_monetary_boundary_is_admitted() -> None:
+    store, workflow, task, resources = budget_runtime(
+        workflow_budget={"maxCostUsd": 0.3},
+        model_token_limit=1,
+        model_pricing={
+            "inputPerMillionTokens": 0,
+            "outputPerMillionTokens": 200_000,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=1,
+        configured_provider_attempts=1,
+        timestamp=TIMESTAMP,
+    )
+    budget.record(
+        input_tokens=0,
+        output_tokens=1,
+        latency_ms=1,
+        cost=0.1,
+        cost_status="EXACT",
+        invocation_count=1,
+        timestamp=TIMESTAMP,
+    )
+
+    reservation = budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=1,
+        configured_provider_attempts=1,
+        timestamp=LATER,
+    )
+    assert reservation.max_provider_attempts == 1
+
+
 def test_dispatched_usage_unavailable_blocks_further_cost_budget_work() -> None:
     store, workflow, task, resources = budget_runtime(
         task_budget={"maxCostUsd": 100},
@@ -948,6 +1027,7 @@ def budget_runtime(
     task_budget: dict | None = None,
     agent_budget: dict | None = None,
     model_pricing: dict | None = None,
+    model_token_limit: int = 100,
 ):
     store = InMemoryRuntimeObjectStore()
     workflow = store.create(workflow_execution(), deterministic_key="workflow")
@@ -957,6 +1037,7 @@ def budget_runtime(
         task_budget=task_budget,
         agent_budget=agent_budget,
         model_pricing=model_pricing,
+        model_token_limit=model_token_limit,
     )
     return store, workflow, task, resources
 
@@ -1048,6 +1129,7 @@ def budget_resources(
     task_budget: dict | None = None,
     agent_budget: dict | None = None,
     model_pricing: dict | None = None,
+    model_token_limit: int = 100,
 ) -> ResourceCollection:
     workspace = _resource("Workspace", "local", {"repository": "octo/repo"})
     workflow_spec = {
@@ -1076,7 +1158,7 @@ def budget_resources(
     model_spec = {
         "provider": "local",
         "model": "fake-reasoning",
-        "tokenLimit": 100,
+        "tokenLimit": model_token_limit,
         "timeoutMs": 1000,
     }
     if model_pricing is not None:

@@ -650,8 +650,10 @@ resolves the effective budget and checks the known minimum requirement:
   hold unrelated units. Each attempt receives a per-attempt output cap derived
   from the remaining output budget and the granted attempt count;
 * elapsed time must leave room for another invocation; and
-* a monetary budget requires reliable Model pricing and a minimum estimated
-  cost that fits the remaining allowance.
+* a monetary budget requires reliable Model pricing and reserves the priced
+  output allowance for every granted attempt, even when no aggregate
+  output-token limit is declared, so concurrent Tasks cannot each receive an
+  unpriced share of the same ceiling.
 
 An allowed check writes a durable reservation before dispatch. The reservation
 covers the full provider-attempt, input-token, output-token, and cost allowance
@@ -682,9 +684,11 @@ an absent `Model.spec.tokenLimit` remains absent. A dispatched request that
 returns no reliable usage under a monetary limit records an enforceable
 `BUDGET_COST_UNAVAILABLE` decision instead of reusing an unchanged balance.
 The same applies when a retry eventually succeeds after one or more earlier
-dispatched attempts whose usage is unavailable. A pre-dispatch pricing
-rejection is local to the attempted invocation, so a later Task using a
-correctly priced Model can still run. Ordinary exhaustion caused by a temporary
+dispatched attempts whose usage is unavailable. Monetary estimates, charges,
+and remaining amounts use fixed-point arithmetic normalized to twelve decimal
+places, so exact boundaries are not rejected by binary floating-point addition.
+A pre-dispatch pricing rejection is local to the attempted invocation, so a
+later Task using a correctly priced Model can still run. Ordinary exhaustion caused by a temporary
 reservation is recomputed after reconciliation; only unreconciled dispatched
 monetary spend is sticky. An overrun remains visible and blocks further work;
 it is never hidden by resetting a counter.

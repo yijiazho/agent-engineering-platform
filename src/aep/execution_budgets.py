@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, ROUND_FLOOR
 from math import isfinite
 from typing import Any
 
@@ -433,6 +434,43 @@ class TaskBudget:
                 configured_output_token_limit=configured_output_token_limit,
                 configured_provider_attempts=configured_provider_attempts,
             )
+            remaining_cost = self._minimum_remaining(
+                state, "maxCostUsd", "costUsd", "reservedCostUsd"
+            )
+            if remaining_cost is not None and _cost_exceeds(
+                reserved_cost, remaining_cost
+            ):
+                decision = None
+                for scope_name in ("workflow", "task", "agent"):
+                    cost_limit = getattr(self.resolved, scope_name).get("maxCostUsd")
+                    if cost_limit is None:
+                        continue
+                    record = state[scope_name]
+                    consumed_cost = _cost_total(
+                        record["costUsd"], record["reservedCostUsd"]
+                    )
+                    scope_remaining = _normalized_cost(
+                        float(cost_limit.value) - consumed_cost
+                    )
+                    if _cost_exceeds(reserved_cost, scope_remaining):
+                        decision = _blocked_decision(
+                            scope_name,
+                            cost_limit,
+                            consumed=consumed_cost,
+                            reserved=record["reservedCostUsd"],
+                            required=reserved_cost,
+                            timestamp=timestamp,
+                            message=(
+                                "monetary budget exhausted: the granted provider "
+                                "output allowance does not fit the remaining cost"
+                            ),
+                        )
+                        break
+                assert decision is not None
+                self._apply_block_decision(state, decision)
+                outcome["decision"] = decision
+                return self._changes_for_state(workflow, state, decision=decision)
+
             reserved_invocations = max_provider_attempts
             for record in state["records"]:
                 record["reservedModelInvocations"] += reserved_invocations
@@ -576,7 +614,9 @@ class TaskBudget:
                 record["lastModel"] = self.model
                 if dispatched:
                     if actual_cost is not None:
-                        record["costUsd"] = round(record["costUsd"] + actual_cost, 12)
+                        record["costUsd"] = _cost_total(
+                            record["costUsd"], actual_cost
+                        )
                     counts = dict(record.get("costStatusCounts", {}))
                     counts[status] = counts.get(status, 0) + 1
                     record["costStatusCounts"] = counts
@@ -592,7 +632,9 @@ class TaskBudget:
                         decision = _blocked_decision(
                             scope_name,
                             cost_limit,
-                            consumed=record["costUsd"] + record["reservedCostUsd"],
+                            consumed=_cost_total(
+                                record["costUsd"], record["reservedCostUsd"]
+                            ),
                             reserved=record["reservedCostUsd"],
                             required=0,
                             timestamp=timestamp,
@@ -816,8 +858,15 @@ class TaskBudget:
                 ("maxCostUsd", "costUsd", "reservedCostUsd"),
             ):
                 limit = limits.get(field)
-                if limit is not None and (
-                    record[consumed_field] + record[reserved_field] > limit.value
+                if limit is None:
+                    continue
+                combined = _cost_total(
+                    record[consumed_field], record[reserved_field]
+                )
+                if (
+                    _cost_exceeds(combined, limit.value)
+                    if field == "maxCostUsd"
+                    else combined > limit.value
                 ):
                     overrun = True
             if overrun:
@@ -874,7 +923,7 @@ class TaskBudget:
                 )
                 if minimum_cost <= 0:
                     break
-                max_by_cost = int(float(remaining_cost) // minimum_cost)
+                max_by_cost = _cost_floor_div(remaining_cost, minimum_cost)
                 if max_by_cost >= attempt_limit:
                     break
                 attempt_limit = max(1, max_by_cost)
@@ -891,11 +940,16 @@ class TaskBudget:
             if remaining_output is not None
             else 0
         )
+        priced_output_tokens = (
+            reserved_output
+            if remaining_output is not None
+            else int(per_attempt_output or 1) * attempt_limit
+        )
         reserved_cost = (
             _estimate_cost(
                 self.resolved.model_pricing,
                 reserved_input,
-                reserved_output if remaining_output is not None else attempt_limit,
+                priced_output_tokens,
             )
             if self.resolved.model_pricing is not None
             else 0.0
@@ -924,6 +978,8 @@ class TaskBudget:
             value = limit.value - (
                 record[consumed_field] + record[reserved_field]
             )
+            if limit_field == "maxCostUsd":
+                value = _normalized_cost(value)
             remaining = value if remaining is None else min(remaining, value)
         return remaining
 
@@ -981,7 +1037,11 @@ def summarize_limits(
         held = consumption.get(reserved_field, 0)
         consumed[field] = used
         reserved[field] = held
-        remaining[field] = round(limit.value - used - held, 12)
+        remaining[field] = (
+            _normalized_cost(float(limit.value) - used - held)
+            if field == "maxCostUsd"
+            else round(limit.value - used - held, 12)
+        )
     return {
         "configured": configured,
         "consumed": consumed,
@@ -1011,8 +1071,14 @@ def budget_evidence(
         reserved_value = consumption.get(reserved_field, 0)
         used[field] = consumed_value
         reserved[field] = reserved_value
-        remaining[field] = round(
-            float(rule.get("value", 0)) - consumed_value - reserved_value, 12
+        remaining[field] = (
+            _normalized_cost(
+                float(rule.get("value", 0)) - consumed_value - reserved_value
+            )
+            if field == "maxCostUsd"
+            else round(
+                float(rule.get("value", 0)) - consumed_value - reserved_value, 12
+            )
         )
     return {
         "configuredLimits": configured,
@@ -1196,8 +1262,10 @@ def _check_scope(
                 message="monetary budget requires reliable Model pricing metadata",
             )
         minimum_cost = _estimate_cost(pricing, estimated_input_tokens, 1)
-        consumed_cost = record.get("costUsd", 0.0) + record.get("reservedCostUsd", 0.0)
-        if consumed_cost + minimum_cost > cost_limit.value:
+        consumed_cost = _cost_total(
+            record.get("costUsd", 0.0), record.get("reservedCostUsd", 0.0)
+        )
+        if _cost_exceeds(_cost_total(consumed_cost, minimum_cost), cost_limit.value):
             return _blocked_decision(
                 scope_name,
                 cost_limit,
@@ -1221,7 +1289,11 @@ def _blocked_decision(
     message: str | None = None,
     sticky: bool = False,
 ) -> dict[str, Any]:
-    remaining = round(float(limit.value) - float(consumed), 12)
+    remaining = (
+        _normalized_cost(float(limit.value) - float(consumed))
+        if limit.field == "maxCostUsd"
+        else round(float(limit.value) - float(consumed), 12)
+    )
     scope_label = limit.scope
     ref_label = (
         "/".join(str(limit.resource_ref.get(field, "")) for field in ("name", "version"))
@@ -1311,6 +1383,35 @@ def _effective_output_limit(
     return remaining if configured is None else min(configured, remaining)
 
 
+_COST_QUANTUM = Decimal("0.000000000001")
+
+
+def _decimal(value: int | float) -> Decimal:
+    return Decimal(str(value))
+
+
+def _normalized_cost(value: int | float) -> float:
+    return float(_decimal(value).quantize(_COST_QUANTUM))
+
+
+def _cost_total(*values: int | float) -> float:
+    total = sum((_decimal(value) for value in values), Decimal(0))
+    return float(total.quantize(_COST_QUANTUM))
+
+
+def _cost_exceeds(total: int | float, limit: int | float) -> bool:
+    return _decimal(total) > _decimal(limit)
+
+
+def _cost_floor_div(remaining: int | float, per_attempt: int | float) -> int:
+    denominator = _decimal(per_attempt)
+    if denominator <= 0:
+        return 0
+    return int((_decimal(remaining) / denominator).to_integral_value(
+        rounding=ROUND_FLOOR
+    ))
+
+
 def _estimate_cost(
     pricing: Mapping[str, Any] | None,
     input_tokens: int,
@@ -1318,14 +1419,11 @@ def _estimate_cost(
 ) -> float:
     if pricing is None:
         return 0.0
-    return round(
-        (
-            input_tokens * float(pricing["inputPerMillionTokens"])
-            + output_tokens * float(pricing["outputPerMillionTokens"])
-        )
-        / 1_000_000,
-        12,
-    )
+    total = (
+        _decimal(input_tokens) * _decimal(pricing["inputPerMillionTokens"])
+        + _decimal(output_tokens) * _decimal(pricing["outputPerMillionTokens"])
+    ) / Decimal(1_000_000)
+    return float(total.quantize(_COST_QUANTUM))
 
 
 def _cost_evidence(
