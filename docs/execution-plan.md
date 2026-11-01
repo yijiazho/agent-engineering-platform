@@ -26,9 +26,9 @@ or `Blocked` as implementation state changes.
 | ------ | ----: |
 | Completed | 62 |
 | In Progress | 2 |
-| Not Started | 16 |
+| Not Started | 20 |
 | Blocked | 0 |
-| Total | 80 |
+| Total | 84 |
 
 The completed work establishes schemas, resource loading, runtime persistence,
 GitHub issue event normalization and deduplication, WorkflowExecution creation,
@@ -218,6 +218,10 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 78 | [AEP-078: Verify Small-Scale Backup, Restore, And Failover](tasks/AEP-078-verify-small-scale-backup-and-failover.md) | Not Started |
 | 79 | [AEP-079: Implement Repository Registration Control Plane](tasks/AEP-079-implement-repository-registration-control-plane.md) | Not Started |
 | 80 | [AEP-080: Route And Isolate Multiple Repository Registrations](tasks/AEP-080-route-and-isolate-multiple-repository-registrations.md) | Not Started |
+| 81 | [AEP-081: Define The Deterministic Model Selection Contract](tasks/AEP-081-define-deterministic-model-selection-contract.md) | Not Started |
+| 82 | [AEP-082: Implement The OpenRouter Model Provider Adapter](tasks/AEP-082-implement-openrouter-model-provider-adapter.md) | Not Started |
+| 83 | [AEP-083: Wire Model Selection Into Execution Budgets](tasks/AEP-083-wire-model-selection-into-execution-budgets.md) | Not Started |
+| 84 | [AEP-084: Expose Model Selection Decisions In Execution Inspection](tasks/AEP-084-expose-model-selection-decisions-in-inspection.md) | Not Started |
 
 ---
 
@@ -305,6 +309,10 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-078 | AEP-077 | Not Started |
 | AEP-079 | AEP-038, AEP-041, AEP-073, AEP-074, AEP-075, AEP-077 | Not Started |
 | AEP-080 | AEP-038, AEP-041, AEP-073, AEP-074, AEP-075, AEP-077, AEP-079 | Not Started |
+| AEP-081 | AEP-002, AEP-012, AEP-014, AEP-042, AEP-046, AEP-052, AEP-056, AEP-057, AEP-062 | Not Started |
+| AEP-082 | AEP-014, AEP-042, AEP-046, AEP-052, AEP-062, AEP-081 | Not Started |
+| AEP-083 | AEP-010, AEP-011, AEP-012, AEP-013, AEP-040, AEP-046, AEP-058, AEP-062, AEP-081, AEP-082 | Not Started |
+| AEP-084 | AEP-056, AEP-057, AEP-062, AEP-081, AEP-082, AEP-083 | Not Started |
 
 ---
 
@@ -328,6 +336,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | Distributed Storage And Execution | AEP-073, AEP-074, AEP-075, AEP-076 | Not Started |
 | Small-Scale Deployment And Recovery | AEP-077, AEP-078 | Not Started |
 | Multi-Repository Registration | AEP-079, AEP-080 | Not Started |
+| Model Selection And Routing | AEP-081, AEP-082, AEP-083, AEP-084 | Not Started |
 
 ---
 
