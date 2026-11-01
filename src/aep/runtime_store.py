@@ -31,9 +31,9 @@ KIND_IDENTITY_FIELDS: Final = {
 KIND_WRITE_ONCE_FIELDS: Final = {
     "TaskExecution": frozenset({
         "contextPackageId", "resolvedAgentId", "terminalEvidence",
-        "dispatchState", "dispatchOwnerId",
+        "dispatchState", "dispatchOwnerId", "executionBudget",
     }),
-    "WorkflowExecution": frozenset({"resolvedTaskPlan"}),
+    "WorkflowExecution": frozenset({"resolvedTaskPlan", "executionBudget"}),
 }
 STATUS_MANAGED_FIELDS: Final = frozenset({"status", "updatedAt", "completedAt"})
 

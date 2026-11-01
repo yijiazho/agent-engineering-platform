@@ -453,7 +453,10 @@ Budget allocation might be:
 | Policies   |     5% |
 
 Budgets are configurable by Task and are independent of
-`Model.spec.tokenLimit`, which limits model output. The deterministic
+`Model.spec.tokenLimit`, which limits model output, and independent of
+Workflow, Task, and Agent execution budgets, which aggregate invocations,
+provider input/output tokens, elapsed time, and optional monetary cost. The
+Context Builder neither charges nor enforces execution budgets. The deterministic
 provider-neutral estimate remains canonical UTF-8 JSON bytes divided by four;
 provider tokenizers do not participate in selection.
 

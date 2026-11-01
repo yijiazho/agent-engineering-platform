@@ -24,6 +24,10 @@
         "version": "1.0.0"
       }
     ],
+    "budget": {
+      "maxModelInvocations": 2,
+      "maxOutputTokens": 16000
+    },
     "outputSchema": {
       "type": "object",
       "additionalProperties": false,

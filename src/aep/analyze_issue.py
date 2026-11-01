@@ -12,6 +12,10 @@ from typing import Any
 from aep.agent_invocation import AgentInvocationContractError, invoke_agent
 from aep.agent_resolver import AgentResolutionError, AgentToolDeniedError, resolve_agent
 from aep.context_builder import ContextBuilder, ContextBuilderError
+from aep.execution_budgets import (
+    ExecutionBudgetExceeded,
+    TaskBudgetManager,
+)
 from aep.generated_artifact_store import GeneratedArtifactStore
 from aep.model_invocation import ModelAdapter, ModelConfiguration
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
@@ -74,6 +78,7 @@ class AnalyzeIssueTaskHandler:
         self._model_adapter = model_adapter
         self._event_resolver = event_resolver
         self._clock = clock
+        self._budget_manager = TaskBudgetManager(runtime_store, resources, clock)
 
     def execute(
         self, task: Resource, task_execution: RuntimeObject
@@ -136,6 +141,15 @@ class AnalyzeIssueTaskHandler:
                 ResourceRef.from_mapping(dict(saved_agent["modelRef"])), "Model"
             )
             model_configuration = _model_configuration(model)
+            budget = self._budget_manager.prepare(
+                workflow_execution=workflow,
+                task_execution=task_execution,
+                task=task,
+                agent=self._require_resource(
+                    ResourceRef.from_mapping(dict(saved_agent["agentRef"])), "Agent"
+                ),
+                model=model,
+            )
             invocation_id = self._runtime_id("agentinvocation", str(task_execution["id"]))
             model_invocation_id = self._runtime_id(
                 "modelinvocation", str(task_execution["id"])
@@ -155,6 +169,7 @@ class AnalyzeIssueTaskHandler:
                 output_validator=lambda output: self._invocation_output_errors(
                     task_execution, context_package, output
                 ),
+                budget=budget,
             )
             self._attach(
                 task_execution["id"],
@@ -235,6 +250,10 @@ class AnalyzeIssueTaskHandler:
                 {"generatedArtifactIds": [artifact["id"]]},
             )
             return TaskExecutionResult.success()
+        except ExecutionBudgetExceeded as error:
+            return TaskExecutionResult.failure(
+                FailureClass.POLICY, str(error.decision["message"])
+            )
         except AgentToolDeniedError as error:
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))
         except ContextBuilderError as error:

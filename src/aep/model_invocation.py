@@ -115,6 +115,20 @@ class ModelConfiguration:
             "rateLimitPolicy": deepcopy(dict(self.rate_limit_policy)),
         }
 
+    def with_token_limit(self, token_limit: int | None) -> "ModelConfiguration":
+        """Return a copy bounded by the remaining aggregate output budget."""
+
+        return ModelConfiguration(
+            model_ref=self.model_ref,
+            provider=self.provider,
+            model=self.model,
+            parameters=self.parameters,
+            token_limit=token_limit,
+            timeout_ms=self.timeout_ms,
+            retry_policy=self.retry_policy,
+            rate_limit_policy=self.rate_limit_policy,
+        )
+
 
 @dataclass(frozen=True)
 class ModelRequest:
@@ -154,12 +168,20 @@ class ModelResponse:
     latency_ms: int
     provider_metadata: JsonObject = field(default_factory=dict)
     cost: float | None = None
+    cost_source: str | None = None
 
     def __post_init__(self) -> None:
         if self.latency_ms < 0:
             raise ValueError("latency_ms must not be negative")
         if self.cost is not None and self.cost < 0:
             raise ValueError("cost must not be negative")
+        if self.cost_source is not None and self.cost_source not in {
+            "EXACT",
+            "CONFIGURED",
+            "ESTIMATED",
+            "UNAVAILABLE",
+        }:
+            raise ValueError("cost_source is not a supported cost classification")
         object.__setattr__(self, "output", deepcopy(self.output))
         object.__setattr__(self, "provider_metadata", _mapping(self.provider_metadata))
 

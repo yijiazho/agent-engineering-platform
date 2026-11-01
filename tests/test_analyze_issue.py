@@ -623,31 +623,41 @@ def setup_handler(
 
 def resource_collection(
     output_schema: dict | None = None,
+    *,
+    workflow_budget: dict | None = None,
+    task_budget: dict | None = None,
+    agent_budget: dict | None = None,
+    model_pricing: dict | None = None,
 ) -> tuple[ResourceCollection, Resource]:
     schema = output_schema or ISSUE_ANALYSIS_SCHEMA
     workspace = resource("Workspace", "local", {"repository": "octo/repo"})
-    task = resource(
-        "Task",
-        "analyze-issue",
-        {
-            "objective": "Analyze the normalized GitHub issue.",
-            "agentRef": ref("Agent", "issue-analyzer"),
-            "outputs": schema,
-            "requiredContext": ["issue"],
-            "inputContextTokenBudget": 32_000,
-            "evaluations": [ref("Evaluation", "issue-analysis-schema")],
-        },
-    )
-    agent = resource(
-        "Agent",
-        "issue-analyzer",
-        {
-            "role": "Issue Analyzer",
-            "promptRef": ref("Prompt", "issue-analysis"),
-            "modelRef": ref("Model", "fake-reasoning"),
-            "outputSchema": schema,
-        },
-    )
+    workflow_spec = {
+        "triggers": [{"eventRef": ref("Event", "github-issue-created")}],
+        "tasks": [{"taskRef": ref("Task", "analyze-issue")}],
+    }
+    if workflow_budget is not None:
+        workflow_spec["budget"] = workflow_budget
+    workflow = resource("Workflow", "issue-to-pr", workflow_spec)
+    task_spec = {
+        "objective": "Analyze the normalized GitHub issue.",
+        "agentRef": ref("Agent", "issue-analyzer"),
+        "outputs": schema,
+        "requiredContext": ["issue"],
+        "inputContextTokenBudget": 32_000,
+        "evaluations": [ref("Evaluation", "issue-analysis-schema")],
+    }
+    if task_budget is not None:
+        task_spec["budget"] = task_budget
+    task = resource("Task", "analyze-issue", task_spec)
+    agent_spec = {
+        "role": "Issue Analyzer",
+        "promptRef": ref("Prompt", "issue-analysis"),
+        "modelRef": ref("Model", "fake-reasoning"),
+        "outputSchema": schema,
+    }
+    if agent_budget is not None:
+        agent_spec["budget"] = agent_budget
+    agent = resource("Agent", "issue-analyzer", agent_spec)
     prompt = resource(
         "Prompt",
         "issue-analysis",
@@ -656,23 +666,22 @@ def resource_collection(
             "formatting": "Return JSON matching the output schema.",
         },
     )
-    model = resource(
-        "Model",
-        "fake-reasoning",
-        {
-            "provider": "local",
-            "model": "fake-analyzer-v1",
-            "parameters": {"temperature": 0},
-            "tokenLimit": 4_096,
-            "timeoutMs": 5_000,
-        },
-    )
+    model_spec = {
+        "provider": "local",
+        "model": "fake-analyzer-v1",
+        "parameters": {"temperature": 0},
+        "tokenLimit": 4_096,
+        "timeoutMs": 5_000,
+    }
+    if model_pricing is not None:
+        model_spec["pricing"] = model_pricing
+    model = resource("Model", "fake-reasoning", model_spec)
     evaluation = resource(
         "Evaluation",
         "issue-analysis-schema",
         {"type": "schema", "inputSchema": schema},
     )
-    values = (workspace, task, agent, prompt, model, evaluation)
+    values = (workspace, workflow, task, agent, prompt, model, evaluation)
     return ResourceCollection(workspace=workspace, resources=values), task
 
 
@@ -811,3 +820,117 @@ def normalized_event() -> dict:
         "receivedAt": TIMESTAMP,
         "deduplicationKey": "github:delivery:analyze-0001",
     }
+
+
+def retry_task_execution() -> dict:
+    execution = deepcopy(task_execution())
+    execution.update({
+        "id": "taskexecution-cccccccccccc",
+        "attempt": 2,
+        "createdAt": "2026-08-06T12:00:01Z",
+        "updatedAt": "2026-08-06T12:00:01Z",
+        "startedAt": "2026-08-06T12:00:01Z",
+    })
+    return execution
+
+
+def test_execution_budget_exact_invocation_limit_blocks_retry_attempt() -> None:
+    resources, task = resource_collection(
+        task_budget={"maxModelInvocations": 1}
+    )
+    store, handler, task, adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=19),
+            latency_ms=12,
+        ),
+        resource_set=(resources, task),
+    )
+
+    first = handler.execute(task, store.get(TASK_EXECUTION_ID))
+    assert first.succeeded is True
+    assert len(adapter.requests) == 1
+    workflow = store.get(WORKFLOW_ID)
+    assert workflow["budgetConsumption"]["workflow"]["modelInvocations"] == 1
+    assert workflow["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]["modelInvocations"] == 1
+
+    retry = retry_task_execution()
+    store.create(retry, deterministic_key="task-retry")
+    result = handler.execute(task, store.get(retry["id"]))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.POLICY
+    assert "execution budget exhausted" in result.message
+    assert len(adapter.requests) == 1
+    failed = store.get(retry["id"])
+    assert failed["budgetDecision"]["allowed"] is False
+    assert failed["budgetDecision"]["reason"] == "BUDGET_EXHAUSTED"
+    assert failed["budgetDecision"]["dimension"] == "maxModelInvocations"
+    assert "agentInvocationIds" not in failed
+
+
+def test_execution_budget_rejects_input_before_model_invocation() -> None:
+    resources, task = resource_collection(task_budget={"maxInputTokens": 1})
+    store, handler, task, adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=19),
+            latency_ms=12,
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.POLICY
+    assert adapter.requests == []
+    failed = store.get(TASK_EXECUTION_ID)
+    assert failed["budgetDecision"]["dimension"] == "maxInputTokens"
+
+
+def test_execution_budget_clamps_provider_output_limit_and_records_exhaustion() -> None:
+    resources, task = resource_collection(task_budget={"maxOutputTokens": 5})
+    store, handler, task, adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=5),
+            latency_ms=12,
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    assert adapter.requests[0].configuration.token_limit == 5
+    workflow = store.get(WORKFLOW_ID)
+    consumption = workflow["budgetConsumption"]["workflow"]
+    assert consumption["outputTokens"] == 5
+    assert consumption["costStatus"] == "UNAVAILABLE"
+    invocation = store.get(store.get(TASK_EXECUTION_ID)["agentInvocationIds"][0])
+    assert invocation["budgetCharge"]["outputTokens"] == 5
+    assert invocation["budgetCharge"]["costStatus"] == "UNAVAILABLE"
+
+
+def test_execution_budget_cost_limit_without_pricing_blocks_before_dispatch() -> None:
+    resources, task = resource_collection(task_budget={"maxCostUsd": 1})
+    store, handler, task, adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=19),
+            latency_ms=12,
+            cost=0.25,
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is False
+    assert result.failure_class is FailureClass.POLICY
+    assert adapter.requests == []
+    failed = store.get(TASK_EXECUTION_ID)
+    assert failed["budgetDecision"]["reason"] == "BUDGET_COST_UNAVAILABLE"

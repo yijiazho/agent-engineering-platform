@@ -584,6 +584,163 @@ invocation identity.
 
 ---
 
+# 8.1 Execution Budgets
+
+Execution budgets are declarative Resource limits enforced by the control
+plane. An Agent is never asked to stop spending, and provider-specific usage
+accounting cannot decide whether a declared AEP hard limit applies.
+
+Budgets declare only positive bounded limits:
+
+| Field | Meaning |
+| ----- | ------- |
+| `maxModelInvocations` | Dispatched ModelInvocation units, including provider attempts reported by an adapter |
+| `maxInputTokens` | Aggregated provider-reported input tokens |
+| `maxOutputTokens` | Aggregated provider-reported output tokens; independent of `Model.spec.tokenLimit` |
+| `maxElapsedMs` | Wall-clock duration of the budget scope |
+| `maxCostUsd` | Optional monetary cost when reliable pricing or provider cost is available |
+
+The same shape is accepted at these scopes:
+
+* `Workflow.spec.budget` bounds the entire WorkflowExecution.
+* `Task.spec.budget` bounds every attempt of that Task identity.
+* `Agent.spec.budget` bounds every invocation of that Agent in the execution.
+* `WorkflowExecution.budgetOverrides` optionally narrows the Workflow budget
+  for one execution, such as a replay or evaluation case under a tighter cap.
+* `Model.spec.tokenLimit` remains a per-invocation provider output cap. It is
+  not an aggregate budget and is never treated as one.
+* `Task.spec.inputContextTokenBudget` remains the Context Builder's input
+  selection budget. It is independent of output-token and aggregate budgets.
+
+## Precedence
+
+Resolution intersects every applicable scope, field by field. The most
+restrictive value wins. Equal values are attributed to the most specific scope
+in this order: Execution override, Task, Agent, Workflow. A lower scope may
+only narrow a parent; the Resource Loader rejects a Task or Agent declaration
+that widens the Workflow or Task limit it inherits. An execution override is
+validated against the Workflow limit before dispatch. No implicit provider
+default, zero cost, or floating price becomes AEP policy.
+
+A Task and Agent limit are separate consumption scopes. The effective limit for
+one invocation is the minimum across the Workflow, Task, and Agent scopes; a
+narrow Agent limit cannot be widened by a broader Task declaration, and the
+reverse is also true.
+
+## Admission and Reconciliation
+
+Before creating an AgentInvocation or ModelInvocation, the coordinator
+resolves the effective budget and checks the known minimum requirement:
+
+* one more invocation unit must fit every applicable invocation limit;
+* the immutable ContextPackage `tokenCount` must fit the remaining input-token
+  allowance;
+* at least one output token must fit the remaining output-token allowance;
+* the configured Model output limit is clamped to the remaining aggregate
+  output allowance, so the provider request cannot knowingly exceed the budget;
+* elapsed time must leave room for another invocation; and
+* a monetary budget requires reliable Model pricing and a minimum estimated
+  cost that fits the remaining allowance.
+
+An allowed check writes a durable reservation before dispatch. Reservation
+prevents two concurrent local Tasks from spending the same remaining unit and
+leaves a safe over-count if a worker stops after dispatch. After each
+invocation, actual provider usage replaces the reservation. The coordinator
+records input and output tokens, latency, the provider/model identity, the
+attempt count, and cost evidence classified as `EXACT` (provider-reported),
+`CONFIGURED` (declared fixed cost), `ESTIMATED` (Model pricing multiplied by
+usage), or `UNAVAILABLE`. An overrun remains visible and blocks further work;
+it is never hidden by resetting a counter.
+
+When no invocation can be admitted, no AgentInvocation or ModelInvocation is
+created. The Task fails with `POLICY` and a stable budget decision containing
+`BUDGET_EXHAUSTED` or `BUDGET_COST_UNAVAILABLE`, the dimension, the responsible
+scope, the Resource reference, the limit, consumed and remaining amounts, and
+the required minimum. The Agent never receives an instruction to ignore the
+limit.
+
+## Retry, Resume, and Replay
+
+* Adapter-level provider attempts are charged to the owning ModelInvocation
+  through the provider-reported attempt count. A failed request still consumes
+  dispatched invocation units.
+* A scheduler retry creates a new TaskExecution attempt but reuses the same
+  Workflow, Task-identity, and Agent consumption records. Retrying cannot reset
+  a budget.
+* Resuming a WorkflowExecution continues the same durable ledger. Successful
+  prior work remains charged.
+* A replay creates a new WorkflowExecution and therefore a new budget attempt.
+  It may inherit `budgetOverrides`, but it does not inherit consumed amounts.
+* Non-model Tasks do not consume invocation, token, or cost budgets. They do
+  observe the elapsed budget when they invoke a model-backed handler.
+
+## Evidence and Inspection
+
+`WorkflowExecution.executionBudget` stores the resolved Workflow limits and
+`WorkflowExecution.budgetConsumption.workflow` stores the aggregate ledger.
+Task and Agent consumption are keyed by explicit Task and Agent references in
+`budgetConsumption.tasks` and `budgetConsumption.agents`. Each TaskExecution
+retains its resolved scopes, a consumption snapshot, and the last budget
+decision. AgentInvocation and ModelInvocation records retain a `budgetCharge`
+with provider/model identity and cost classification.
+
+`aep executions show <id>` renders configured, consumed, reserved, and
+remaining amounts plus the responsible rule. `aep explain <id>` reports
+`BUDGET_BLOCKED` and names the blocking Task, dimension, scope, and Resource.
+Budget counters and cost classifications are safe to inspect; prompts, model
+output, provider bodies, credentials, and raw request identity remain redacted.
+
+## Bounded Issue-To-PR Example
+
+```yaml
+kind: Workflow
+metadata:
+  name: issue-to-pr
+  version: 2.0.0
+spec:
+  budget:
+    maxModelInvocations: 8
+    maxInputTokens: 240000
+    maxOutputTokens: 80000
+    maxElapsedMs: 1800000
+    maxCostUsd: 6
+  tasks:
+    - taskRef: { kind: Task, name: analyze-issue, version: 2.0.0 }
+    - taskRef: { kind: Task, name: build-implementation-plan, version: 2.0.0 }
+      dependsOn: [{ kind: Task, name: analyze-issue, version: 2.0.0 }]
+```
+
+The cognitive Tasks may narrow the same dimensions, for example one
+`maxOutputTokens: 24000` for planning. Validation is independent for every
+Task and Agent in the graph.
+
+## Bounded Evaluation-Suite Example
+
+Each evaluation case that dispatches a Workflow creates its own
+WorkflowExecution and therefore its own ledger. A suite can keep each case
+bounded without pooling consumption across cases:
+
+```yaml
+kind: EvaluationSuite
+metadata:
+  name: issue-to-pr-regression
+  version: 2.0.0
+spec:
+  workflowRef: { kind: Workflow, name: issue-to-pr, version: 2.0.0 }
+  evaluationRefs:
+    - { kind: Evaluation, name: workflow-acceptance, version: 2.0.0 }
+  cases:
+    - id: bounded-small-issue
+      kind: historical
+      workflowExecutionId: workflowexecution-...
+```
+
+The workflow's own budget applies to each case execution. An operator wanting a
+tighter regression cap passes an execution-level override when that case's
+WorkflowExecution is created; it may narrow but not widen the Workflow limit.
+
+---
+
 # 9. Context Validation
 
 Before invoking an Agent, the runtime validates the ContextPackage.

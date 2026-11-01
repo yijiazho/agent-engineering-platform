@@ -750,6 +750,20 @@ across calls, provider versions, and nondeterministic sampling, so later
 rebuilt contexts can fail their identity check after an earlier model output
 changes.
 
+AEP-062 adds first-class execution budgets. Workflow, Task, and Agent
+Resources accept positive bounded limits for `maxModelInvocations`,
+`maxInputTokens`, `maxOutputTokens`, `maxElapsedMs`, and optional
+`maxCostUsd`. The runtime intersects every applicable scope, persists a
+durable reservation before dispatch, clamps the provider output allowance to
+the remaining aggregate budget, and reconciles actual provider usage after the
+invocation. A WorkflowExecution may carry a narrowing execution-level override;
+a replay starts a new ledger. Context input budgets remain independent from
+aggregate token budgets. `aep executions show` renders configured, consumed,
+reserved, and remaining amounts, and `aep explain` reports `BUDGET_BLOCKED`
+with the responsible Task, dimension, scope, and Resource. See
+[Execution Budgets](docs/architecture/workflow-runtime.md#81-execution-budgets)
+for bounded issue-to-PR and evaluation-suite examples.
+
 ## Key Documents
 
 * [Product Requirements](docs/prd.md)
@@ -777,7 +791,7 @@ changes.
 ## Current Status
 
 This repository is in active MVP implementation. The declarative and runtime
-contracts are established, and 62 of the 80 implementation tasks are complete.
+contracts are established, and 63 of the 84 implementation tasks are complete.
 
 The implementation plan is split into independent task files under [docs/tasks](docs/tasks/). Each task includes context, dependencies, deliverable, and acceptance criteria.
 

@@ -217,6 +217,99 @@ def test_rejects_workspace_resources_outside_workspace_file(tmp_path: Path) -> N
         ResourceLoader(tmp_path).load()
 
 
+def test_accepts_nested_execution_budgets_that_only_narrow(tmp_path: Path) -> None:
+    write_budget_bundle(
+        tmp_path,
+        workflow_budget={"maxModelInvocations": 10, "maxOutputTokens": 1000},
+        task_budget={"maxModelInvocations": 5},
+        agent_budget={"maxModelInvocations": 2, "maxOutputTokens": 500},
+    )
+
+    collection = ResourceLoader(tmp_path).load()
+
+    task = next(item for item in collection.resources if item.kind == "Task")
+    assert task.data["spec"]["budget"]["maxModelInvocations"] == 5
+
+
+def test_rejects_task_budget_wider_than_workflow(tmp_path: Path) -> None:
+    write_budget_bundle(
+        tmp_path,
+        workflow_budget={"maxModelInvocations": 10},
+        task_budget={"maxModelInvocations": 20},
+    )
+
+    with pytest.raises(ResourceValidationError, match="widens Workflow"):
+        ResourceLoader(tmp_path).load()
+
+
+def test_rejects_agent_budget_wider_than_task(tmp_path: Path) -> None:
+    write_budget_bundle(
+        tmp_path,
+        workflow_budget={"maxModelInvocations": 10},
+        task_budget={"maxModelInvocations": 5},
+        agent_budget={"maxModelInvocations": 6},
+    )
+
+    with pytest.raises(ResourceValidationError, match="widens Task"):
+        ResourceLoader(tmp_path).load()
+
+
+def test_rejects_non_positive_execution_budget(tmp_path: Path) -> None:
+    write_budget_bundle(
+        tmp_path,
+        workflow_budget={"maxModelInvocations": 0},
+    )
+
+    with pytest.raises(ResourceValidationError, match="maxModelInvocations"):
+        ResourceLoader(tmp_path).load()
+
+
+def write_budget_bundle(
+    tmp_path: Path,
+    *,
+    workflow_budget: dict[str, object] | None = None,
+    task_budget: dict[str, object] | None = None,
+    agent_budget: dict[str, object] | None = None,
+) -> None:
+    write_valid_workspace(tmp_path, default_policies=[])
+    write_resource(tmp_path, "events/github-issue-created.yaml", resource("Event", "github-issue-created", "1.0.0", {
+        "source": "github",
+        "type": "github.issue.created",
+        "schema": {"type": "object"},
+    }))
+    write_resource(tmp_path, "models/default-reasoning.yaml", resource("Model", "default-reasoning", "1.0.0", {
+        "provider": "local",
+        "model": "deterministic-test-model",
+        "tokenLimit": 4096,
+    }))
+    write_resource(tmp_path, "prompts/issue-analysis.yaml", resource("Prompt", "issue-analysis", "1.0.0", {
+        "system": "Analyze the issue.",
+    }))
+    agent_spec: dict[str, object] = {
+        "promptRef": ref("Prompt", "issue-analysis"),
+        "modelRef": ref("Model", "default-reasoning"),
+    }
+    if agent_budget is not None:
+        agent_spec["budget"] = agent_budget
+    write_resource(tmp_path, "agents/issue-analyzer.yaml", resource("Agent", "issue-analyzer", "1.0.0", agent_spec))
+    task_spec: dict[str, object] = {
+        "objective": "Analyze issue.",
+        "agentRef": ref("Agent", "issue-analyzer"),
+        "inputContextTokenBudget": 32_000,
+        "outputs": {"type": "object"},
+    }
+    if task_budget is not None:
+        task_spec["budget"] = task_budget
+    write_resource(tmp_path, "tasks/analyze-issue.yaml", resource("Task", "analyze-issue", "1.0.0", task_spec))
+    workflow_spec: dict[str, object] = {
+        "triggers": [{"eventRef": ref("Event", "github-issue-created")}],
+        "tasks": [{"taskRef": ref("Task", "analyze-issue")}],
+    }
+    if workflow_budget is not None:
+        workflow_spec["budget"] = workflow_budget
+    write_resource(tmp_path, "workflows/issue-to-pr.yaml", resource("Workflow", "issue-to-pr", "1.0.0", workflow_spec))
+
+
 def write_valid_workspace(tmp_path: Path, default_policies: list[dict[str, str]] | None = None) -> None:
     spec = {
         "repository": {

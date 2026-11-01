@@ -12,6 +12,10 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
+from aep.execution_budgets import (
+    ExecutionBudgetError,
+    validate_budget_narrowing,
+)
 from aep.provider_schema import StrictProviderSchemaError, validate_openai_strict_schema
 
 
@@ -180,6 +184,8 @@ class ResourceLoader:
                     agent.path, "spec.outputSchema", agent_spec["outputSchema"]
                 )
 
+        _validate_execution_budget_hierarchy(index, resources)
+
         for task in (item for item in resources if item.kind == "Task"):
             task_spec = task.data["spec"]
             agent_ref_value = task_spec.get("agentRef")
@@ -256,6 +262,58 @@ class ResourceLoader:
 
 def load_resources(repo_root: Path | str) -> ResourceCollection:
     return ResourceLoader(repo_root).load()
+
+
+def _validate_execution_budget_hierarchy(
+    index: dict[ResourceRef, Resource],
+    resources: list[Resource],
+) -> None:
+    """Reject any Task or Agent budget that widens its Workflow/Task parent."""
+
+    for workflow in (item for item in resources if item.kind == "Workflow"):
+        workflow_spec = workflow.data.get("spec")
+        if not isinstance(workflow_spec, dict):
+            continue
+        workflow_budget = workflow_spec.get("budget")
+        for entry in workflow_spec.get("tasks", ()):
+            if not isinstance(entry, dict) or not isinstance(entry.get("taskRef"), dict):
+                continue
+            task = index.get(ResourceRef.from_mapping(entry["taskRef"]))
+            if task is None or task.kind != "Task":
+                continue
+            task_spec = task.data.get("spec")
+            if not isinstance(task_spec, dict):
+                continue
+            agent_ref = task_spec.get("agentRef")
+            agent = (
+                index.get(ResourceRef.from_mapping(agent_ref))
+                if isinstance(agent_ref, dict)
+                else None
+            )
+            agent_spec = agent.data.get("spec") if agent is not None else None
+            try:
+                validate_budget_narrowing(
+                    workflow_budget=workflow_budget,
+                    task_budget=task_spec.get("budget"),
+                    agent_budget=agent_spec.get("budget")
+                    if isinstance(agent_spec, dict)
+                    else None,
+                    workflow_ref=_resource_ref_record(workflow),
+                    task_ref=_resource_ref_record(task),
+                    agent_ref=_resource_ref_record(agent)
+                    if agent is not None
+                    else None,
+                )
+            except ExecutionBudgetError as error:
+                raise ResourceValidationError(f"{task.path}: {error}") from None
+
+
+def _resource_ref_record(resource: Resource) -> dict[str, str]:
+    return {
+        "kind": resource.kind,
+        "name": resource.name,
+        "version": resource.version,
+    }
 
 
 def _validate_openai_output_schema(path: Path, field: str, schema: Any) -> None:

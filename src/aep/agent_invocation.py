@@ -20,12 +20,18 @@ from referencing import Registry, Resource as SchemaResource
 from referencing.jsonschema import DRAFT202012
 
 from aep.context_identity import context_identity
+from aep.execution_budgets import (
+    ExecutionBudgetExceeded,
+    ExecutionBudgetError,
+    TaskBudget,
+)
 from aep.model_invocation import (
     ModelAdapter,
     ModelConfiguration,
     ModelErrorClass,
     ModelInvocationError,
     ModelRequest,
+    ModelResponse,
 )
 from aep.observability import (
     CorrelationContext,
@@ -57,6 +63,7 @@ def invoke_agent(
     completed_at: str,
     lifecycle_logger: StructuredLifecycleLogger | None = None,
     output_validator: Callable[[Any], Sequence[str]] | None = None,
+    budget: TaskBudget | None = None,
 ) -> RuntimeObject:
     """Run one bounded model-backed reasoning unit and persist all evidence.
 
@@ -108,11 +115,6 @@ def invoke_agent(
         "startedAt": started_at,
     }
     _validate_runtime(agent_record, "AgentInvocation")
-    request = ModelRequest(
-        configuration=model_configuration,
-        input=assembled_input,
-        correlation=correlation,
-    )
     input_address = _content_address(assembled_input)
     model_provenance = {
         "actor": f"model-adapter:{model_configuration.provider}",
@@ -157,6 +159,33 @@ def invoke_agent(
                 "AgentInvocation is running"
             )
 
+    effective_configuration = model_configuration
+    budget_reservation = None
+    if budget is not None:
+        try:
+            budget_reservation = budget.preflight(
+                estimated_input_tokens=_context_input_tokens(package),
+                configured_output_token_limit=model_configuration.token_limit,
+                timestamp=started_at,
+            )
+        except ExecutionBudgetExceeded:
+            raise
+        except ExecutionBudgetError as error:
+            raise AgentInvocationContractError(str(error)) from error
+        if budget_reservation.effective_output_token_limit is None:
+            budget.release()
+            raise AgentInvocationContractError(
+                "execution budget cannot admit a bounded output-token request"
+            )
+        effective_configuration = model_configuration.with_token_limit(
+            budget_reservation.effective_output_token_limit
+        )
+    request = ModelRequest(
+        configuration=effective_configuration,
+        input=assembled_input,
+        correlation=correlation,
+    )
+
     pair = {
         "agentInvocationId": invocation_id,
         "modelInvocationId": model_invocation_id,
@@ -166,24 +195,39 @@ def invoke_agent(
     )
     if not claimed:
         if dict(prior_pair) != pair:
+            if budget is not None:
+                budget.release()
             raise AgentInvocationContractError(
                 f"AgentInvocation {invocation_id!r} is claimed for a different "
                 "ModelInvocation"
             )
+        if budget is not None:
+            budget.release()
         current = store.get(invocation_id)
         return current if current is not None else agent_record
     if existing_model is not None:
         # A RUNNING child without an earlier pair claim has uncertain provider
         # state. Do not risk repeating that external side effect.
+        if budget is not None:
+            budget.release()
         return existing_agent
 
-    saved_agent = store.create(
-        agent_record, deterministic_key=f"agent-invocation:{invocation_id}"
-    )
+    try:
+        saved_agent = store.create(
+            agent_record, deterministic_key=f"agent-invocation:{invocation_id}"
+        )
+    except Exception:
+        if budget is not None:
+            budget.release()
+        raise
     _validate_existing_agent(saved_agent, agent_record)
     if saved_agent.get("status") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+        if budget is not None:
+            budget.release()
         return saved_agent
     if saved_agent.get("status") != "RUNNING" or dict(saved_agent) != agent_record:
+        if budget is not None:
+            budget.release()
         raise AgentInvocationContractError(
             f"AgentInvocation {invocation_id!r} already exists with conflicting state"
         )
@@ -194,6 +238,8 @@ def invoke_agent(
             model_record, deterministic_key=f"model-invocation:{model_invocation_id}"
         )
     except RuntimeObjectAlreadyExistsError as error:
+        if budget is not None:
+            budget.release()
         failure = {
             "class": "CONFIGURATION",
             "message": f"ModelInvocation identity conflict: {model_invocation_id}",
@@ -210,6 +256,8 @@ def invoke_agent(
         _emit(lifecycle_logger, "AgentInvocationFailed", failed_agent, completed_at)
         raise AgentInvocationContractError(failure["message"]) from error
     if dict(saved_model) != model_record:
+        if budget is not None:
+            budget.release()
         failure = {
             "class": "CONFIGURATION",
             "message": f"ModelInvocation identity conflict: {model_invocation_id}",
@@ -243,30 +291,37 @@ def invoke_agent(
         _emit_provider_decisions(
             lifecycle_logger, saved_model, error.provider_metadata, completed_at
         )
+        budget_charge = _record_failed_budget_charge(
+            budget, error, completed_at
+        )
+        failed_model_changes: dict[str, Any] = {
+            "providerMetadata": {
+                **deepcopy(dict(error.provider_metadata)),
+                "errorCode": error.code,
+            },
+            "failure": failure,
+            **_budget_changes(budget_reservation, budget_charge),
+        }
         failed_model = store.update_status(
             model_invocation_id,
             "FAILED",
             expected_status="RUNNING",
             updated_at=completed_at,
-            changes={
-                "providerMetadata": {
-                    **deepcopy(dict(error.provider_metadata)),
-                    "errorCode": error.code,
-                },
-                "failure": failure,
-            },
+            changes=failed_model_changes,
         )
         _validate_runtime(failed_model, "ModelInvocation")
         _emit(lifecycle_logger, "ModelInvocationFailed", failed_model, completed_at)
+        failed_agent_changes: dict[str, Any] = {
+            "modelInvocationIds": [model_invocation_id],
+            "failure": failure,
+            **_budget_changes(budget_reservation, budget_charge),
+        }
         failed_agent = store.update_status(
             invocation_id,
             "FAILED",
             expected_status="RUNNING",
             updated_at=completed_at,
-            changes={
-                "modelInvocationIds": [model_invocation_id],
-                "failure": failure,
-            },
+            changes=failed_agent_changes,
         )
         _validate_runtime(failed_agent, "AgentInvocation")
         _emit(lifecycle_logger, "AgentInvocationFailed", failed_agent, completed_at)
@@ -275,6 +330,7 @@ def invoke_agent(
     _emit_provider_decisions(
         lifecycle_logger, saved_model, response.provider_metadata, completed_at
     )
+    budget_charge = _record_success_budget_charge(budget, response, completed_at)
     output, serialization_error = _json_output(response.output)
     validation_errors = (
         [serialization_error]
@@ -296,6 +352,7 @@ def invoke_agent(
                 "providerMetadata": deepcopy(dict(response.provider_metadata)),
                 "schemaValidation": "FAILED",
                 "failure": failure,
+                **_budget_changes(budget_reservation, budget_charge),
             }
             if serialization_error is None:
                 failed_model_changes["outputAddress"] = _content_address(output)
@@ -315,6 +372,7 @@ def invoke_agent(
                 "outputSchemaValidation": "FAILED",
                 "tokenUsage": response.usage.as_record(),
                 "failure": failure,
+                **_budget_changes(budget_reservation, budget_charge),
             }
             if serialization_error is None:
                 failed_agent_changes["output"] = output
@@ -336,6 +394,7 @@ def invoke_agent(
         "latencyMs": response.latency_ms,
         "providerMetadata": deepcopy(dict(response.provider_metadata)),
         "schemaValidation": validation,
+        **_budget_changes(budget_reservation, budget_charge),
     }
     if serialization_error is None:
         model_changes["outputAddress"] = _content_address(output)
@@ -355,6 +414,7 @@ def invoke_agent(
         "modelInvocationIds": [model_invocation_id],
         "outputSchemaValidation": validation,
         "tokenUsage": response.usage.as_record(),
+        **_budget_changes(budget_reservation, budget_charge),
     }
     if serialization_error is None:
         agent_changes["output"] = output
@@ -383,6 +443,69 @@ def invoke_agent(
         completed_at,
     )
     return completed_agent
+
+
+def _context_input_tokens(package: Mapping[str, Any]) -> int:
+    """Use the immutable ContextPackage count as the known minimum input."""
+
+    value = package.get("tokenCount")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return 1
+
+
+def _attempt_count(metadata: Mapping[str, Any]) -> int:
+    value = metadata.get("attemptCount", 1)
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return 1
+
+
+def _budget_changes(
+    reservation: Any, charge: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    changes: dict[str, Any] = {}
+    if reservation is not None and reservation.effective_output_token_limit is not None:
+        changes["effectiveOutputTokenLimit"] = reservation.effective_output_token_limit
+    if charge is not None:
+        changes["budgetCharge"] = deepcopy(dict(charge))
+    return changes
+
+
+def _record_failed_budget_charge(
+    budget: TaskBudget | None,
+    error: ModelInvocationError,
+    completed_at: str,
+) -> dict[str, Any] | None:
+    if budget is None:
+        return None
+    return budget.record(
+        input_tokens=0,
+        output_tokens=0,
+        latency_ms=0,
+        cost=None,
+        cost_status="UNAVAILABLE",
+        invocation_count=_attempt_count(error.provider_metadata),
+        timestamp=completed_at,
+    )
+
+
+def _record_success_budget_charge(
+    budget: TaskBudget | None,
+    response: ModelResponse,
+    completed_at: str,
+) -> dict[str, Any] | None:
+    if budget is None:
+        return None
+    return budget.record(
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+        latency_ms=response.latency_ms,
+        cost=response.cost,
+        cost_status=response.cost_source,
+        invocation_count=_attempt_count(response.provider_metadata),
+        timestamp=completed_at,
+    )
 
 
 def _validate_inputs(

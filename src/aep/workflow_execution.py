@@ -45,6 +45,7 @@ class WorkflowExecutionCreator:
         repository_revision: str,
         knowledge_graph_version: str,
         timestamp: str,
+        budget_overrides: Mapping[str, Any] | None = None,
     ) -> RuntimeObject:
         """Persist an initial WorkflowExecution and its creation event.
 
@@ -91,6 +92,12 @@ class WorkflowExecutionCreator:
             "startedAt": created_at,
             "taskExecutionIds": [],
         }
+        if budget_overrides is not None:
+            if not isinstance(budget_overrides, Mapping) or not budget_overrides:
+                raise InvalidWorkflowExecutionInputError(
+                    "budget_overrides must be a non-empty object"
+                )
+            record["budgetOverrides"] = deepcopy(dict(budget_overrides))
         creation_event = _started_event(record)
         _validate_runtime_record(record, "workflowexecution.schema.json")
         _validate_runtime_record(creation_event, "executionevent.schema.json")

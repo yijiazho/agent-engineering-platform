@@ -286,6 +286,69 @@
       "type": "integer",
       "minimum": 1
     },
+    "executionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "maxModelInvocations": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "maxInputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000000
+        },
+        "maxElapsedMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400000
+        },
+        "maxCostUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000000
+        }
+      }
+    },
+    "modelPricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inputPerMillionTokens",
+        "outputPerMillionTokens",
+        "currency"
+      ],
+      "properties": {
+        "inputPerMillionTokens": {
+          "type": "number",
+          "minimum": 0
+        },
+        "outputPerMillionTokens": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "const": "USD"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "effectiveAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "retryPolicy": {
       "type": "object",
       "additionalProperties": false,

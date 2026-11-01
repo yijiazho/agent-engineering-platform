@@ -1,6 +1,6 @@
 # AEP-062: Add First-Class Execution Budgets
 
-**Status:** Not Started
+**Status:** Completed
 
 ## Context
 
@@ -38,3 +38,24 @@ Define inheritance and precedence rules between Workflow, Task, Agent/Model, and
 * AEP-056 shows configured limits, consumed amounts, remaining amounts, and the budget rule responsible for a blocked task.
 * Tests cover exact-limit success, pre-invocation rejection, post-invocation exhaustion, nested scope precedence, missing cost metadata, retry/resume accounting, and provider usage normalization.
 * Documentation includes examples for bounded issue-to-PR and evaluation-suite executions.
+
+## Implementation State
+
+Workflow, Task, and Agent schemas now accept the shared `executionBudget`
+definition, and Model Resources accept optional pinned USD pricing. The
+`aep.execution_budgets` module resolves Workflow, Task, Agent, Model, and
+execution-level limits by intersection, rejects widening declarations at
+Resource load time, and persists reservations, consumption, and stable
+decisions on WorkflowExecution, TaskExecution, AgentInvocation, and
+ModelInvocation evidence. `aep executions show` renders configured, consumed,
+reserved, and remaining amounts, while `aep explain` reports
+`BUDGET_BLOCKED` with the responsible scope, dimension, Resource, and rule.
+
+Retries reuse Task-identity consumption, resume continues the same
+WorkflowExecution ledger, and replay starts a new ledger while preserving only
+explicit execution-level overrides. Context Builder input budgets remain a
+separate contract. Credential-free tests cover exact-limit success,
+pre-invocation rejection, post-invocation exhaustion, nested precedence,
+missing cost metadata, retry accounting, provider usage normalization, and
+inspection. Bounded issue-to-PR and evaluation-suite examples are documented in
+[Workflow Runtime](../architecture/workflow-runtime.md#81-execution-budgets).

@@ -23,6 +23,7 @@ from aep.analyze_issue import (
     _spec,
 )
 from aep.context_builder import ContextBuilderError
+from aep.execution_budgets import ExecutionBudgetExceeded
 from aep.filesystem_tool import FilesystemTool
 from aep.generated_artifact_store import GeneratedArtifactStoreError
 from aep.git_tool import GitTool
@@ -252,6 +253,15 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             model = self._require_resource(
                 ResourceRef.from_mapping(dict(saved_agent["modelRef"])), "Model"
             )
+            budget = self._budget_manager.prepare(
+                workflow_execution=workflow,
+                task_execution=task_execution,
+                task=task,
+                agent=self._require_resource(
+                    ResourceRef.from_mapping(dict(saved_agent["agentRef"])), "Agent"
+                ),
+                model=model,
+            )
             invocation_id = self._runtime_id(
                 "agentinvocation", str(task_execution["id"])
             )
@@ -269,6 +279,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 adapter=self._model_adapter,
                 started_at=self._timestamp(),
                 completed_at=self._timestamp(),
+                budget=budget,
             )
             self._attach(task_execution["id"], {"agentInvocationIds": [invocation_id]})
             if invocation["status"] != "SUCCEEDED":
@@ -587,6 +598,11 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
             artifact = self._artifact_store.publish(metadata, patch_text)
             self._attach(task_execution["id"], {"generatedArtifactIds": [artifact["id"]]})
             return TaskExecutionResult.success()
+        except ExecutionBudgetExceeded as error:
+            self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
+            return TaskExecutionResult.failure(
+                FailureClass.POLICY, str(error.decision["message"])
+            )
         except AgentToolDeniedError as error:
             self._rollback_if_needed(task_execution, active_invocation_id, filesystem_write_ref, targets_by_path, applied)
             return TaskExecutionResult.failure(FailureClass.POLICY, str(error))

@@ -24,9 +24,9 @@ or `Blocked` as implementation state changes.
 
 | Status | Count |
 | ------ | ----: |
-| Completed | 62 |
+| Completed | 63 |
 | In Progress | 2 |
-| Not Started | 20 |
+| Not Started | 19 |
 | Blocked | 0 |
 | Total | 84 |
 
@@ -129,6 +129,10 @@ operator and security runbook.
 The issue #120 live run and its replay exposed an unowned documentation scope
 criterion during AnalyzeIssue. AEP-072 tracks a typed changed-path evaluator
 contract before that issue shape can support the AEP-043 live pilot.
+First-class execution budgets now resolve Workflow, Task, Agent, Model, and
+execution-level limits by intersection, persist pre-dispatch reservations and
+post-invocation provider usage, block exhausted work with stable evidence, and
+expose configured, consumed, and remaining amounts through AEP-056 inspection.
 
 ---
 
@@ -201,7 +205,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | 61 | [AEP-059: Implement Artifact-Bound Human Approval Gates](tasks/AEP-059-implement-artifact-bound-human-approval-gates.md) | Completed |
 | 62 | [AEP-060: Build Evaluation Suites for AI Regression Testing](tasks/AEP-060-build-evaluation-suites-for-ai-regression-testing.md) | Completed |
 | 63 | [AEP-061: Implement Versioned AI Configuration Experiments](tasks/AEP-061-implement-versioned-ai-configuration-experiments.md) | Completed |
-| 64 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Not Started |
+| 64 | [AEP-062: Add First-Class Execution Budgets](tasks/AEP-062-add-first-class-execution-budgets.md) | Completed |
 | 65 | [AEP-063: Build Symbol-Aware Repository Knowledge Graph](tasks/AEP-063-build-symbol-aware-repository-knowledge-graph.md) | Not Started |
 | 66 | [AEP-064: Add Pull Request Review Workflow](tasks/AEP-064-add-pull-request-review-workflow.md) | Not Started |
 | 67 | [AEP-065: Integrate GitHub Actions Checks as Validation Evidence](tasks/AEP-065-integrate-github-actions-checks-as-validation-evidence.md) | Not Started |
@@ -290,7 +294,7 @@ The following order respects task dependencies and keeps contract work ahead of 
 | AEP-059 | AEP-002, AEP-010, AEP-011, AEP-020, AEP-028, AEP-036, AEP-051, AEP-056 | Completed |
 | AEP-060 | AEP-025, AEP-026, AEP-027, AEP-033, AEP-051, AEP-052, AEP-056, AEP-057 | Completed |
 | AEP-061 | AEP-052, AEP-055, AEP-057, AEP-060 | Completed |
-| AEP-062 | AEP-010, AEP-011, AEP-014, AEP-042, AEP-045, AEP-046, AEP-051, AEP-056, AEP-058 | Not Started |
+| AEP-062 | AEP-010, AEP-011, AEP-014, AEP-042, AEP-045, AEP-046, AEP-051, AEP-056, AEP-058 | Completed |
 | AEP-063 | AEP-015, AEP-016, AEP-017, AEP-039, AEP-045 | Not Started |
 | AEP-064 | AEP-007, AEP-010, AEP-013, AEP-017, AEP-024, AEP-025, AEP-028, AEP-038, AEP-041, AEP-056, AEP-058 | Not Started |
 | AEP-065 | AEP-019, AEP-020, AEP-024, AEP-027, AEP-028, AEP-041, AEP-051, AEP-056 | Not Started |
