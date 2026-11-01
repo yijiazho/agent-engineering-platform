@@ -280,6 +280,7 @@ class GeneratePatchTaskHandler(AnalyzeIssueTaskHandler):
                 started_at=self._timestamp(),
                 completed_at=self._timestamp(),
                 budget=budget,
+                clock=self._timestamp,
             )
             self._attach(task_execution["id"], {"agentInvocationIds": [invocation_id]})
             if invocation["status"] != "SUCCEEDED":

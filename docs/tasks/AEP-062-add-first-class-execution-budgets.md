@@ -70,7 +70,9 @@ cross-process writer fence. Deferred requests and pre-transport adapter validati
 dispatched attempts release their reservation without charging an invocation.
 Dispatched failures with unavailable usage retain only the reservation for
 their unreconciled attempts; unused granted attempts are released, and a
-successful final attempt replaces its reservation with actual usage. Task ceilings do not consume the shared Agent
+successful final attempt replaces its reservation with actual usage. Elapsed
+reconciliation captures a post-dispatch completion timestamp, including failed
+invocations, so model latency counts against the elapsed budget. Task ceilings do not consume the shared Agent
 ledger, execution overrides are validated against declared limits before
 narrowing admission, and temporary reservation exhaustion is reevaluated after
 reconciliation. Pre-dispatch pricing rejections are local rather than sticky.

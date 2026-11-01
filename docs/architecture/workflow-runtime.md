@@ -687,9 +687,12 @@ an absent `Model.spec.tokenLimit` remains absent. A dispatched request that
 returns no reliable usage under a monetary limit records an enforceable
 `BUDGET_COST_UNAVAILABLE` decision instead of reusing an unchanged balance.
 The same applies when a retry eventually succeeds after one or more earlier
-dispatched attempts whose usage is unavailable. Monetary estimates, charges,
-and remaining amounts use fixed-point arithmetic normalized to twelve decimal
-places, so exact boundaries are not rejected by binary floating-point addition.
+dispatched attempts whose usage is unavailable. Elapsed-budget reconciliation
+uses a completion timestamp captured after the adapter returns, including
+failed invocations, so model latency is charged to the elapsed allowance.
+Monetary estimates, charges, and remaining amounts use fixed-point arithmetic
+normalized to twelve decimal places, so exact boundaries are not rejected by
+binary floating-point addition.
 A pre-dispatch pricing rejection is local to the attempted invocation, so a
 later Task using a correctly priced Model can still run. Ordinary exhaustion caused by a temporary
 reservation is recomputed after reconciliation; only unreconciled dispatched

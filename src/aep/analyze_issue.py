@@ -166,6 +166,7 @@ class AnalyzeIssueTaskHandler:
                 adapter=self._model_adapter,
                 started_at=started_at,
                 completed_at=self._timestamp(),
+                clock=self._timestamp,
                 output_validator=lambda output: self._invocation_output_errors(
                     task_execution, context_package, output
                 ),

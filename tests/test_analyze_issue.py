@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 import json
 from copy import deepcopy
 from pathlib import Path
@@ -591,6 +592,8 @@ def setup_handler(
     *,
     include_event: bool = True,
     resource_set: tuple[ResourceCollection, Resource] | None = None,
+    clock=None,
+    adapter=None,
 ) -> tuple[
     InMemoryRuntimeObjectStore,
     AnalyzeIssueTaskHandler,
@@ -607,7 +610,8 @@ def setup_handler(
         artifact_store=artifact_store,
         runtime_store=store,
     )
-    adapter = FakeModelAdapter([outcome])
+    clock = clock or (lambda: TIMESTAMP)
+    adapter = adapter or FakeModelAdapter([outcome])
     event = normalized_event() if include_event else None
     handler = AnalyzeIssueTaskHandler(
         resources=resources,
@@ -616,7 +620,7 @@ def setup_handler(
         artifact_store=artifact_store,
         model_adapter=adapter,
         event_resolver=lambda event_id: event if event_id == EVENT_ID else None,
-        clock=lambda: TIMESTAMP,
+        clock=clock,
     )
     return store, handler, task, adapter
 
@@ -1025,6 +1029,47 @@ def test_execution_budget_retains_tokens_for_failed_dispatched_request() -> None
     assert blocked.failure_class is FailureClass.POLICY
     assert blocked.message.startswith("execution budget exhausted")
     assert len(adapter.requests) == 1
+
+
+def test_execution_budget_elapsed_uses_post_dispatch_completion_time() -> None:
+    current = [datetime.fromisoformat(TIMESTAMP.replace("Z", "+00:00"))]
+
+    def clock() -> str:
+        return current[0].isoformat().replace("+00:00", "Z")
+
+    class AdvancingAdapter(FakeModelAdapter):
+        def invoke(self, request):
+            current[0] += timedelta(seconds=10)
+            return super().invoke(request)
+
+    resources, task = resource_collection(task_budget={"maxElapsedMs": 5_000})
+    response = ModelResponse(
+        output=VALID_ANALYSIS,
+        usage=ModelUsage(input_tokens=31, output_tokens=19),
+        latency_ms=10_000,
+    )
+    adapter = AdvancingAdapter([response])
+    store, handler, task, _adapter = setup_handler(
+        response,
+        resource_set=(resources, task),
+        clock=clock,
+        adapter=adapter,
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["elapsedMs"] >= 10_000
+
+    retry = retry_task_execution()
+    store.create(retry, deterministic_key="task-retry-elapsed")
+    blocked = handler.execute(task, store.get(retry["id"]))
+    assert blocked.succeeded is False
+    assert blocked.failure_class is FailureClass.POLICY
+    assert "maxElapsedMs" in blocked.message
 
 
 def test_execution_budget_cost_limit_without_pricing_blocks_before_dispatch() -> None:

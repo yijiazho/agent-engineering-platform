@@ -64,6 +64,7 @@ def invoke_agent(
     lifecycle_logger: StructuredLifecycleLogger | None = None,
     output_validator: Callable[[Any], Sequence[str]] | None = None,
     budget: TaskBudget | None = None,
+    clock: Callable[[], str] | None = None,
 ) -> RuntimeObject:
     """Run one bounded model-backed reasoning unit and persist all evidence.
 
@@ -277,6 +278,8 @@ def invoke_agent(
     try:
         response = adapter.invoke(request)
     except ModelInvocationError as error:
+        if clock is not None:
+            completed_at = clock()
         failure = {
             "class": error.classification.value,
             "message": str(error) or error.code,
@@ -324,6 +327,8 @@ def invoke_agent(
         _emit(lifecycle_logger, "AgentInvocationFailed", failed_agent, completed_at)
         return failed_agent
 
+    if clock is not None:
+        completed_at = clock()
     _emit_provider_decisions(
         lifecycle_logger, saved_model, response.provider_metadata, completed_at
     )
