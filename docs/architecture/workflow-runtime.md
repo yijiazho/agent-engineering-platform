@@ -670,10 +670,14 @@ the provider/model identity, the attempt count, and cost evidence classified as
 (Model pricing multiplied by usage), or `UNAVAILABLE`.
 
 A request deferred before any provider dispatch reports zero attempts and
-releases its reservation without charging an invocation. A dispatched request
-that returns no reliable token usage retains its token reservation
-conservatively instead of releasing already-spent allowance. An invocation-only,
-input-only, or elapsed-only budget does not require a Model output-token limit;
+releases its reservation without charging an invocation. Adapter validation
+failures that occur before the transport also report zero attempts, so they
+cannot charge or poison a shared monetary ledger. A dispatched request that
+returns no reliable token usage retains only the reservation attributable to
+its unreconciled attempts; unused granted attempts are released, and a
+successful final attempt replaces its reservation with actual usage. An
+invocation-only, input-only, or elapsed-only budget does not require a Model
+output-token limit;
 an absent `Model.spec.tokenLimit` remains absent. A dispatched request that
 returns no reliable usage under a monetary limit records an enforceable
 `BUDGET_COST_UNAVAILABLE` decision instead of reusing an unchanged balance.

@@ -684,6 +684,44 @@ def test_provider_attempts_and_output_allowance_share_remaining_output_budget() 
     assert consumption["reservedOutputTokens"] == 2
 
 
+def test_retry_reconciliation_releases_unused_attempt_reservations() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxOutputTokens": 30}
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    reservation = budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=30,
+        configured_provider_attempts=3,
+        timestamp=TIMESTAMP,
+    )
+    assert reservation.max_provider_attempts == 3
+    assert reservation.effective_output_token_limit == 10
+
+    budget.record(
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=1,
+        invocation_count=2,
+        unreconciled_dispatched_attempts=1,
+        timestamp=LATER,
+    )
+
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["outputTokens"] == 1
+    assert consumption["reservedOutputTokens"] == 10
+    next_reservation = budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=30,
+        configured_provider_attempts=3,
+        timestamp=LATER,
+    )
+    assert next_reservation.max_provider_attempts == 3
+
+
 def test_failed_dispatched_request_retains_token_reservation() -> None:
     store, workflow, task, resources = budget_runtime(
         task_budget={"maxOutputTokens": 5}
@@ -715,6 +753,44 @@ def test_failed_dispatched_request_retains_token_reservation() -> None:
             timestamp=LATER,
         )
     assert raised.value.decision["dimension"] == "maxOutputTokens"
+
+
+def test_zero_attempt_adapter_failure_does_not_poison_cost_budget() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxCostUsd": 100},
+        model_pricing={
+            "inputPerMillionTokens": 1000,
+            "outputPerMillionTokens": 1000,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        configured_provider_attempts=1,
+        timestamp=TIMESTAMP,
+    )
+    budget.record(
+        invocation_count=0,
+        unreconciled_dispatched_attempts=0,
+        cost=None,
+        cost_status="UNAVAILABLE",
+        timestamp=TIMESTAMP,
+    )
+
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert "blockedDecision" not in consumption
+    budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        configured_provider_attempts=1,
+        timestamp=LATER,
+    )
 
 
 def test_adapter_retry_allowance_is_clamped_to_remaining_invocations() -> None:

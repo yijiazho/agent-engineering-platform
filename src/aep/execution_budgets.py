@@ -511,6 +511,13 @@ class TaskBudget:
             "outputTokens": 0,
             "costUsd": 0.0,
         }
+        granted_attempts = max(1, int(reservation.get("modelInvocations", 1)))
+        retained_attempts = min(
+            max(0, int(unreconciled_dispatched_attempts)), granted_attempts
+        )
+        per_attempt_input = int(reservation["inputTokens"]) // granted_attempts
+        per_attempt_output = int(reservation["outputTokens"]) // granted_attempts
+        per_attempt_cost = float(reservation["costUsd"]) / granted_attempts
         dispatched = invocation_count > 0
         status, actual_cost = (
             _cost_evidence(
@@ -536,18 +543,27 @@ class TaskBudget:
                     record["reservedModelInvocations"]
                     - int(reservation.get("modelInvocations", 1)),
                 )
-                if unreconciled_dispatched_attempts == 0:
-                    record["reservedInputTokens"] = max(
-                        0,
-                        record["reservedInputTokens"] - int(reservation["inputTokens"]),
+                record["reservedInputTokens"] = max(
+                    0,
+                    record["reservedInputTokens"] - int(reservation["inputTokens"]),
+                )
+                record["reservedOutputTokens"] = max(
+                    0,
+                    record["reservedOutputTokens"] - int(reservation["outputTokens"]),
+                )
+                record["reservedCostUsd"] = max(
+                    0.0,
+                    record["reservedCostUsd"] - float(reservation["costUsd"]),
+                )
+                if retained_attempts:
+                    record["reservedInputTokens"] += (
+                        per_attempt_input * retained_attempts
                     )
-                    record["reservedOutputTokens"] = max(
-                        0,
-                        record["reservedOutputTokens"] - int(reservation["outputTokens"]),
+                    record["reservedOutputTokens"] += (
+                        per_attempt_output * retained_attempts
                     )
-                    record["reservedCostUsd"] = max(
-                        0.0,
-                        record["reservedCostUsd"] - float(reservation["costUsd"]),
+                    record["reservedCostUsd"] += round(
+                        per_attempt_cost * retained_attempts, 12
                     )
                 record["modelInvocations"] += invocation_count
                 record["inputTokens"] += input_tokens

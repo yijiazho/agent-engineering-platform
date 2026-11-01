@@ -727,6 +727,7 @@ def test_stateful_or_adapter_owned_parameters_are_rejected(parameter):
 
     assert raised.value.code == "invalid_configuration"
     assert raised.value.recoverable is False
+    assert raised.value.provider_metadata["attemptCount"] == 0
     assert transport.requests == []
 
 
@@ -738,6 +739,7 @@ def test_missing_timeout_is_rejected_instead_of_using_an_unrecorded_default():
 
     assert raised.value.code == "invalid_configuration"
     assert raised.value.recoverable is False
+    assert raised.value.provider_metadata["attemptCount"] == 0
     assert transport.requests == []
 
 
@@ -756,6 +758,7 @@ def test_nonfinite_assembled_input_is_a_permanent_normalized_failure():
 
     assert raised.value.code == "invalid_configuration"
     assert raised.value.recoverable is False
+    assert raised.value.provider_metadata["attemptCount"] == 0
 
 
 def test_unsupported_provider_and_missing_credentials_fail_fast(tmp_path: Path):
@@ -767,6 +770,7 @@ def test_unsupported_provider_and_missing_credentials_fail_fast(tmp_path: Path):
         adapter(ScriptedTransport([success()])).invoke(model_request(provider="local"))
     assert raised.value.code == "invalid_configuration"
     assert raised.value.recoverable is False
+    assert raised.value.provider_metadata["attemptCount"] == 0
 
 
 def test_environment_factory_reads_secret_file_but_readiness_and_verification_do_not_expose_it(

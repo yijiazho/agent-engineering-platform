@@ -62,9 +62,11 @@ Each granted provider attempt receives a bounded share of the remaining output
 budget. Admission,
 immutable execution-budget initialization, and reconciliation run as one atomic
 workflow/task budget transaction, serialized by the durable store's
-cross-process writer fence. Deferred requests with zero dispatched attempts
-release their reservation without charging an invocation; dispatched failures
-with unavailable usage retain their token reservation conservatively. Task ceilings do not consume the shared Agent
+cross-process writer fence. Deferred requests and pre-transport adapter validation failures with zero
+dispatched attempts release their reservation without charging an invocation.
+Dispatched failures with unavailable usage retain only the reservation for
+their unreconciled attempts; unused granted attempts are released, and a
+successful final attempt replaces its reservation with actual usage. Task ceilings do not consume the shared Agent
 ledger, execution overrides are validated against declared limits before
 narrowing admission, and temporary reservation exhaustion is reevaluated after
 reconciliation. Pre-dispatch pricing rejections are local rather than sticky.
