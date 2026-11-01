@@ -652,9 +652,12 @@ resolves the effective budget and checks the known minimum requirement:
 
 An allowed check writes a durable reservation before dispatch. The reservation
 covers the full provider-attempt allowance granted to that invocation, so two
-concurrent Tasks cannot each receive the same remaining units. After each
-invocation, actual provider usage replaces the reservation and unused attempt
-units are released. The coordinator records input and output tokens, latency,
+concurrent Tasks cannot each receive the same remaining units. Admission and
+reconciliation execute as one atomic workflow/task budget transaction. The
+durable store serializes that transaction under its cross-process writer fence;
+the runtime does not rely on a process-local lock for the concurrency
+guarantee. After each invocation, actual provider usage replaces the
+reservation and unused attempt units are released. The coordinator records input and output tokens, latency,
 the provider/model identity, the attempt count, and cost evidence classified as
 `EXACT` (provider-reported), `CONFIGURED` (declared fixed cost), `ESTIMATED`
 (Model pricing multiplied by usage), or `UNAVAILABLE`.
@@ -666,8 +669,10 @@ an absent `Model.spec.tokenLimit` remains absent. A dispatched request that
 returns no reliable usage under a monetary limit records an enforceable
 `BUDGET_COST_UNAVAILABLE` decision instead of reusing an unchanged balance.
 The same applies when a retry eventually succeeds after one or more earlier
-dispatched attempts whose usage is unavailable. Ordinary exhaustion caused by
-a temporary reservation is recomputed after reconciliation; only unreconciled
+dispatched attempts whose usage is unavailable. A pre-dispatch pricing
+rejection is local to the attempted invocation, so a later Task using a
+correctly priced Model can still run. Ordinary exhaustion caused by a temporary
+reservation is recomputed after reconciliation; only unreconciled dispatched
 monetary spend is sticky. An overrun remains visible and blocks further work;
 it is never hidden by resetting a counter.
 

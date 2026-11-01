@@ -12,7 +12,6 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite
-from threading import RLock
 from typing import Any
 
 
@@ -29,8 +28,6 @@ BUDGET_COST_UNAVAILABLE = "BUDGET_COST_UNAVAILABLE"
 BUDGET_ALLOWED = "BUDGET_ALLOWED"
 
 _SCOPE_SPECIFICITY = {"Execution": 0, "Task": 1, "Agent": 2, "Workflow": 3}
-_LOCKS: dict[str, RLock] = {}
-_LOCKS_GUARD = RLock()
 
 
 class ExecutionBudgetError(ValueError):
@@ -406,8 +403,11 @@ class TaskBudget:
         """Reserve budget or raise ``ExecutionBudgetExceeded`` before dispatch."""
 
         estimated = max(1, int(estimated_input_tokens))
-        with _workflow_lock(self.workflow_execution_id):
-            workflow, task = self._load_runtime()
+        outcome: dict[str, Any] = {}
+
+        def mutate(
+            workflow: Mapping[str, Any], task: Mapping[str, Any]
+        ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
             state = self._load_state(workflow, task, timestamp)
             decision, remaining_output = self._evaluate(
                 state,
@@ -416,8 +416,9 @@ class TaskBudget:
                 timestamp=timestamp,
             )
             if decision is not None:
-                self._persist_blocked(workflow, task, state, decision)
-                raise ExecutionBudgetExceeded(decision)
+                self._apply_block_decision(state, decision)
+                outcome["decision"] = decision
+                return self._changes_for_state(workflow, state, decision=decision)
 
             effective_output = _effective_output_limit(
                 configured_output_token_limit, remaining_output
@@ -443,14 +444,7 @@ class TaskBudget:
                     "estimatedInputTokens": estimated,
                     "decidedAt": timestamp,
                 }
-            self._persist_state(workflow, task, state)
-            self._reservation = {
-                "modelInvocations": reserved_invocations,
-                "inputTokens": estimated,
-                "outputTokens": reserved_output,
-                "costUsd": reserved_cost,
-            }
-            return BudgetReservation(
+            outcome["reservation"] = BudgetReservation(
                 effective_output_token_limit=effective_output,
                 max_provider_attempts=max_provider_attempts,
                 estimated_input_tokens=estimated,
@@ -464,6 +458,27 @@ class TaskBudget:
                     "decidedAt": timestamp,
                 },
             )
+            outcome["reservedModelInvocations"] = reserved_invocations
+            outcome["reservedInputTokens"] = estimated
+            outcome["reservedOutputTokens"] = reserved_output
+            outcome["reservedCostUsd"] = reserved_cost
+            return self._changes_for_state(workflow, state)
+
+        self._store.mutate_execution_budget(
+            self.workflow_execution_id,
+            self.task_execution_id,
+            mutate=mutate,
+            updated_at=timestamp,
+        )
+        if "decision" in outcome:
+            raise ExecutionBudgetExceeded(outcome["decision"])
+        self._reservation = {
+            "modelInvocations": outcome["reservedModelInvocations"],
+            "inputTokens": outcome["reservedInputTokens"],
+            "outputTokens": outcome["reservedOutputTokens"],
+            "costUsd": outcome["reservedCostUsd"],
+        }
+        return outcome["reservation"]
 
     def record(
         self,
@@ -505,8 +520,11 @@ class TaskBudget:
             if dispatched
             else ("UNAVAILABLE", None)
         )
-        with _workflow_lock(self.workflow_execution_id):
-            workflow, task = self._load_runtime()
+        outcome: dict[str, Any] = {}
+
+        def mutate(
+            workflow: Mapping[str, Any], task: Mapping[str, Any]
+        ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
             state = self._load_state(workflow, task, timestamp)
             for scope_name in state["scopeNames"]:
                 record = state[scope_name]
@@ -560,6 +578,7 @@ class TaskBudget:
                                 "monetary budget cannot be reconciled because a "
                                 "dispatched provider attempt returned no reliable usage"
                             ),
+                            sticky=True,
                         )
                         record["blockedReason"] = BUDGET_COST_UNAVAILABLE
                         record["blockedDecision"] = decision
@@ -569,9 +588,20 @@ class TaskBudget:
                     "decidedAt": timestamp,
                 }
             self._apply_overruns(state)
-            self._persist_state(workflow, task, state)
-            self._reservation = None
-            remaining = self._remaining_by_scope(state)
+            outcome["effectiveOutputTokenLimit"] = _effective_output_limit(
+                self.resolved.model_output_token_limit,
+                self._minimum_remaining_output(state),
+            )
+            outcome["remaining"] = self._remaining_by_scope(state)
+            return self._changes_for_state(workflow, state)
+
+        self._store.mutate_execution_budget(
+            self.workflow_execution_id,
+            self.task_execution_id,
+            mutate=mutate,
+            updated_at=timestamp,
+        )
+        self._reservation = None
         return {
             "invocationCount": invocation_count,
             "unreconciledDispatchedAttempts": unreconciled_dispatched_attempts,
@@ -583,11 +613,8 @@ class TaskBudget:
             "provider": self.provider,
             "model": self.model,
             "chargedAt": timestamp,
-            "effectiveOutputTokenLimit": _effective_output_limit(
-                self.resolved.model_output_token_limit,
-                self._minimum_remaining_output(state),
-            ),
-            "remaining": remaining,
+            "effectiveOutputTokenLimit": outcome["effectiveOutputTokenLimit"],
+            "remaining": outcome["remaining"],
         }
 
     def release(self) -> None:
@@ -596,9 +623,12 @@ class TaskBudget:
         reservation = self._reservation
         if reservation is None:
             return
-        with _workflow_lock(self.workflow_execution_id):
-            workflow, task = self._load_runtime()
-            state = self._load_state(workflow, task, self._now())
+        timestamp = self._now()
+
+        def mutate(
+            workflow: Mapping[str, Any], task: Mapping[str, Any]
+        ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+            state = self._load_state(workflow, task, timestamp)
             for record in state["records"]:
                 record["reservedModelInvocations"] = max(
                     0,
@@ -614,24 +644,75 @@ class TaskBudget:
                 record["reservedCostUsd"] = max(
                     0.0, record["reservedCostUsd"] - float(reservation["costUsd"])
                 )
-            self._persist_state(workflow, task, state)
-            self._reservation = None
+            return self._changes_for_state(workflow, state)
+
+        self._store.mutate_execution_budget(
+            self.workflow_execution_id,
+            self.task_execution_id,
+            mutate=mutate,
+            updated_at=timestamp,
+        )
+        self._reservation = None
 
     def _now(self) -> str:
         return datetime.now().astimezone().isoformat()
 
-    def _load_runtime(self) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
-        workflow = self._store.get(self.workflow_execution_id)
-        task = self._store.get(self.task_execution_id)
-        if not isinstance(workflow, Mapping) or workflow.get("kind") != "WorkflowExecution":
-            raise ExecutionBudgetContractError("budget WorkflowExecution is unavailable")
-        if workflow.get("status") != "RUNNING":
-            raise ExecutionBudgetContractError("budget WorkflowExecution is not RUNNING")
-        if not isinstance(task, Mapping) or task.get("kind") != "TaskExecution":
-            raise ExecutionBudgetContractError("budget TaskExecution is unavailable")
-        if task.get("status") != "RUNNING":
-            raise ExecutionBudgetContractError("budget TaskExecution is not RUNNING")
-        return workflow, task
+    def _changes_for_state(
+        self,
+        workflow: Mapping[str, Any],
+        state: Mapping[str, Any],
+        *,
+        decision: Mapping[str, Any] | None = None,
+    ) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+        existing = (
+            deepcopy(dict(workflow.get("budgetConsumption", {})))
+            if isinstance(workflow.get("budgetConsumption"), Mapping)
+            else {}
+        )
+        tasks = (
+            deepcopy(dict(existing.get("tasks", {})))
+            if isinstance(existing.get("tasks"), Mapping)
+            else {}
+        )
+        agents = (
+            deepcopy(dict(existing.get("agents", {})))
+            if isinstance(existing.get("agents"), Mapping)
+            else {}
+        )
+        tasks[self.task_key] = deepcopy(state["task"])
+        agents[self.agent_key] = deepcopy(state["agent"])
+        consumption = {
+            **existing,
+            "workflow": deepcopy(state["workflow"]),
+            "tasks": tasks,
+            "agents": agents,
+        }
+        task_changes: dict[str, Any] = {
+            "budgetConsumption": {
+                "workflow": deepcopy(state["workflow"]),
+                "task": deepcopy(state["task"]),
+                "agent": deepcopy(state["agent"]),
+            }
+        }
+        if decision is not None:
+            consumption["lastDecision"] = deepcopy(dict(decision))
+            task_changes["budgetDecision"] = deepcopy(dict(decision))
+        return {"budgetConsumption": consumption}, task_changes
+
+    def _apply_block_decision(
+        self, state: Mapping[str, Any], decision: Mapping[str, Any]
+    ) -> None:
+        scope = str(
+            decision.get("internalScope") or decision.get("scope", "")
+        ).casefold()
+        record = state.get(scope)
+        if not isinstance(record, dict):
+            return
+        record["lastDecision"] = deepcopy(dict(decision))
+        record["updatedAt"] = decision["decidedAt"]
+        if decision.get("sticky") is True:
+            record["blockedReason"] = decision["reason"]
+            record["blockedDecision"] = deepcopy(dict(decision))
 
     def _load_state(
         self,
@@ -699,103 +780,6 @@ class TaskBudget:
                     remaining_output, remaining
                 )
         return None, remaining_output
-
-    def _persist_state(
-        self,
-        workflow: Mapping[str, Any],
-        task: Mapping[str, Any],
-        state: Mapping[str, Any],
-    ) -> None:
-        existing = (
-            deepcopy(dict(workflow.get("budgetConsumption", {})))
-            if isinstance(workflow.get("budgetConsumption"), Mapping)
-            else {}
-        )
-        tasks = (
-            deepcopy(dict(existing.get("tasks", {})))
-            if isinstance(existing.get("tasks"), Mapping)
-            else {}
-        )
-        agents = (
-            deepcopy(dict(existing.get("agents", {})))
-            if isinstance(existing.get("agents"), Mapping)
-            else {}
-        )
-        tasks[self.task_key] = deepcopy(state["task"])
-        agents[self.agent_key] = deepcopy(state["agent"])
-        consumption = {
-            **existing,
-            "workflow": deepcopy(state["workflow"]),
-            "tasks": tasks,
-            "agents": agents,
-        }
-        self._store.update_status(
-            self.workflow_execution_id,
-            "RUNNING",
-            expected_status="RUNNING",
-            changes={"budgetConsumption": consumption},
-        )
-        snapshot = {
-            "workflow": deepcopy(state["workflow"]),
-            "task": deepcopy(state["task"]),
-            "agent": deepcopy(state["agent"]),
-        }
-        self._store.update_status(
-            self.task_execution_id,
-            "RUNNING",
-            expected_status="RUNNING",
-            changes={"budgetConsumption": snapshot},
-        )
-
-    def _persist_blocked(
-        self,
-        workflow: Mapping[str, Any],
-        task: Mapping[str, Any],
-        state: Mapping[str, Any],
-        decision: Mapping[str, Any],
-    ) -> None:
-        scope = str(decision.get("scope", "")).casefold()
-        record = state.get(scope)
-        if isinstance(record, dict):
-            record["lastDecision"] = deepcopy(dict(decision))
-            record["updatedAt"] = decision["decidedAt"]
-            if decision.get("reason") == BUDGET_COST_UNAVAILABLE:
-                record["blockedReason"] = decision["reason"]
-                record["blockedDecision"] = deepcopy(dict(decision))
-        consumption = (
-            deepcopy(dict(workflow.get("budgetConsumption", {})))
-            if isinstance(workflow.get("budgetConsumption"), Mapping)
-            else {}
-        )
-        consumption.setdefault("workflow", deepcopy(state["workflow"]))
-        consumption.setdefault("tasks", {})
-        consumption.setdefault("agents", {})
-        if scope in {"task", "agent"} and isinstance(consumption.get(f"{scope}s"), dict):
-            consumption[f"{scope}s"][self.task_key if scope == "task" else self.agent_key] = deepcopy(
-                state[scope]
-            )
-        else:
-            consumption["workflow"] = deepcopy(state["workflow"])
-        consumption["lastDecision"] = deepcopy(dict(decision))
-        self._store.update_status(
-            self.workflow_execution_id,
-            "RUNNING",
-            expected_status="RUNNING",
-            changes={"budgetConsumption": consumption},
-        )
-        self._store.update_status(
-            self.task_execution_id,
-            "RUNNING",
-            expected_status="RUNNING",
-            changes={
-                "budgetDecision": deepcopy(dict(decision)),
-                "budgetConsumption": {
-                    "workflow": deepcopy(state["workflow"]),
-                    "task": deepcopy(state["task"]),
-                    "agent": deepcopy(state["agent"]),
-                },
-            },
-        )
 
     def _apply_overruns(self, state: Mapping[str, Any]) -> None:
         for scope_name in ("workflow", "task", "agent"):
@@ -1036,12 +1020,10 @@ def _check_scope(
     pricing: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     blocked = record.get("blockedDecision")
-    if (
-        isinstance(blocked, Mapping)
-        and blocked.get("reason") == BUDGET_COST_UNAVAILABLE
-    ):
-        # Only unreconciled monetary spend is sticky. Ordinary exhaustion is
-        # reevaluated against current consumption after reservations release.
+    if isinstance(blocked, Mapping) and blocked.get("sticky") is True:
+        # Only unreconciled monetary spend is sticky. Ordinary exhaustion and
+        # pre-dispatch pricing failures are reevaluated after reservations
+        # release or a correctly priced Model is chosen.
         return deepcopy(dict(blocked))
     checks = (
         ("maxModelInvocations", "modelInvocations", "reservedModelInvocations", 1),
@@ -1110,6 +1092,7 @@ def _blocked_decision(
     timestamp: str,
     reason: str = BUDGET_EXHAUSTED,
     message: str | None = None,
+    sticky: bool = False,
 ) -> dict[str, Any]:
     remaining = round(float(limit.value) - float(consumed), 12)
     scope_label = limit.scope
@@ -1132,6 +1115,7 @@ def _blocked_decision(
         "reserved": reserved,
         "remaining": remaining,
         "required": required,
+        "sticky": sticky,
         "message": message
         or (
             f"execution budget exhausted: {scope_label} {ref_label} "
@@ -1286,8 +1270,3 @@ def _reference_record(value: Mapping[str, Any] | None) -> dict[str, str] | None:
         "name": str(values["name"]),
         "version": str(values["version"]),
     }
-
-
-def _workflow_lock(workflow_execution_id: str) -> RLock:
-    with _LOCKS_GUARD:
-        return _LOCKS.setdefault(workflow_execution_id, RLock())

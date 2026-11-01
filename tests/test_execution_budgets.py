@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 
@@ -16,7 +17,10 @@ from aep.execution_budgets import (
 )
 from aep.inspection_cli import main
 from aep.resource_loader import Resource, ResourceCollection, ResourceRef
-from aep.runtime_store import InMemoryRuntimeObjectStore
+from aep.runtime_store import (
+    DurableJsonRuntimeObjectStore,
+    InMemoryRuntimeObjectStore,
+)
 
 
 TIMESTAMP = "2026-10-31T00:00:00Z"
@@ -333,6 +337,114 @@ def test_temporary_output_reservation_does_not_poison_workflow_budget() -> None:
         timestamp=LATER,
     )
     assert second_reservation.effective_output_token_limit == 9
+
+
+def test_durable_budget_admission_is_atomic_across_store_instances(tmp_path) -> None:
+    path = tmp_path / "objects.json"
+    first_store = DurableJsonRuntimeObjectStore(path)
+    first_store.create(workflow_execution(), deterministic_key="workflow")
+    first_store.create(
+        task_execution(execution_id="taskexecution-budget00031"),
+        deterministic_key="task-first",
+    )
+    second_ref = {"kind": "Task", "name": "plan", "version": "1.0.0"}
+    first_store.create(
+        {
+            **task_execution(execution_id="taskexecution-budget00032"),
+            "taskRef": second_ref,
+        },
+        deterministic_key="task-second",
+    )
+    resources = two_task_runtime(
+        workflow_budget={"maxModelInvocations": 1}
+    )[4]
+    second_store = DurableJsonRuntimeObjectStore(path)
+    first_budget = TaskBudgetManager(
+        first_store, resources, lambda: TIMESTAMP
+    ).prepare(
+        workflow_execution=first_store.get(WORKFLOW_ID),
+        task_execution=first_store.get("taskexecution-budget00031"),
+        task=resources.get(ResourceRef.from_mapping(TASK_REF)),
+        agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
+        model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
+    )
+    second_budget = TaskBudgetManager(
+        second_store, resources, lambda: TIMESTAMP
+    ).prepare(
+        workflow_execution=second_store.get(WORKFLOW_ID),
+        task_execution=second_store.get("taskexecution-budget00032"),
+        task=resources.get(ResourceRef("Task", "plan", "1.0.0")),
+        agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
+        model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
+    )
+    assert first_budget is not None and second_budget is not None
+
+    def admit(budget) -> str:
+        try:
+            budget.preflight(
+                estimated_input_tokens=10,
+                configured_output_token_limit=100,
+                timestamp=TIMESTAMP,
+            )
+            return "admitted"
+        except ExecutionBudgetExceeded:
+            return "blocked"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = sorted(pool.map(admit, (first_budget, second_budget)))
+
+    assert outcomes == ["admitted", "blocked"]
+    reserved = first_store.get(WORKFLOW_ID)["budgetConsumption"]["workflow"][
+        "reservedModelInvocations"
+    ]
+    assert reserved == 1
+
+
+def test_predispatch_pricing_rejection_is_not_sticky() -> None:
+    store, workflow, task, resources = budget_runtime(
+        workflow_budget={"maxCostUsd": 1},
+        task_budget={"maxCostUsd": 1},
+    )
+    unpriced = prepare(store, resources, workflow, task)
+    assert unpriced is not None
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        unpriced.preflight(
+            estimated_input_tokens=10,
+            configured_output_token_limit=10,
+            timestamp=TIMESTAMP,
+        )
+    assert raised.value.decision["reason"] == BUDGET_COST_UNAVAILABLE
+    workflow_record = store.get(WORKFLOW_ID)["budgetConsumption"]["workflow"]
+    assert "blockedDecision" not in workflow_record
+
+    retry = store.create(
+        task_execution(attempt=2, execution_id="taskexecution-budget00033"),
+        deterministic_key="task-retry-priced",
+    )
+    priced_resources = budget_resources(
+        workflow_budget={"maxCostUsd": 1},
+        task_budget={"maxCostUsd": 1},
+        model_pricing={
+            "inputPerMillionTokens": 1000,
+            "outputPerMillionTokens": 1000,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    priced = TaskBudgetManager(store, priced_resources, lambda: TIMESTAMP).prepare(
+        workflow_execution=workflow,
+        task_execution=retry,
+        task=priced_resources.get(ResourceRef.from_mapping(TASK_REF)),
+        agent=priced_resources.get(ResourceRef.from_mapping(AGENT_REF)),
+        model=priced_resources.get(ResourceRef.from_mapping(MODEL_REF)),
+    )
+    assert priced is not None
+    reservation = priced.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        timestamp=LATER,
+    )
+    assert reservation.effective_output_token_limit == 10
 
 
 def test_input_and_output_budgets_are_independent_and_exhaustable() -> None:

@@ -208,6 +208,20 @@ class RuntimeObjectStore(ABC):
                                 updated_at: str) -> RuntimeObject:
         raise NotImplementedError("store does not support atomic approval request creation")
 
+    def mutate_execution_budget(
+        self,
+        workflow_execution_id: str,
+        task_execution_id: str,
+        *,
+        mutate: Callable[
+            [RuntimeObject, RuntimeObject],
+            tuple[RuntimeObject, RuntimeObject],
+        ],
+        updated_at: str,
+    ) -> tuple[RuntimeObject, RuntimeObject]:
+        """Atomically read and update one workflow/task budget ledger pair."""
+        raise NotImplementedError("store does not support atomic budget mutation")
+
 
 class InMemoryRuntimeObjectStore(RuntimeObjectStore):
     """Thread-safe in-memory store intended for tests and local execution."""
@@ -416,6 +430,56 @@ class InMemoryRuntimeObjectStore(RuntimeObjectStore):
                 task["approvalId"] = persisted_id
                 task["updatedAt"] = updated_at
                 return persisted
+            except Exception:
+                self._restore_memory_snapshot(snapshot)
+                raise
+
+    def mutate_execution_budget(
+        self,
+        workflow_execution_id: str,
+        task_execution_id: str,
+        *,
+        mutate: Callable[
+            [RuntimeObject, RuntimeObject],
+            tuple[RuntimeObject, RuntimeObject],
+        ],
+        updated_at: str,
+    ) -> tuple[RuntimeObject, RuntimeObject]:
+        with self._lock:
+            snapshot = self._memory_snapshot()
+            try:
+                workflow = self._require(workflow_execution_id)
+                task = self._require(task_execution_id)
+                if workflow.get("kind") != "WorkflowExecution":
+                    raise ValueError("budget mutation requires a WorkflowExecution")
+                if workflow.get("status") != "RUNNING":
+                    raise ValueError("budget WorkflowExecution is not RUNNING")
+                if task.get("kind") != "TaskExecution":
+                    raise ValueError("budget mutation requires a TaskExecution")
+                if task.get("status") != "RUNNING":
+                    raise ValueError("budget TaskExecution is not RUNNING")
+                if task.get("workflowExecutionId") != workflow_execution_id:
+                    raise ValueError("budget TaskExecution belongs to another workflow")
+                workflow_changes, task_changes = mutate(
+                    _snapshot(workflow), _snapshot(task)
+                )
+                updated_workflow = InMemoryRuntimeObjectStore.update_status(
+                    self,
+                    workflow_execution_id,
+                    "RUNNING",
+                    expected_status="RUNNING",
+                    updated_at=updated_at,
+                    changes=workflow_changes,
+                )
+                updated_task = InMemoryRuntimeObjectStore.update_status(
+                    self,
+                    task_execution_id,
+                    "RUNNING",
+                    expected_status="RUNNING",
+                    updated_at=updated_at,
+                    changes=task_changes,
+                )
+                return updated_workflow, updated_task
             except Exception:
                 self._restore_memory_snapshot(snapshot)
                 raise
@@ -692,6 +756,27 @@ class DurableJsonRuntimeObjectStore(InMemoryRuntimeObjectStore):
             expected_current_approval_id=expected_current_approval_id,
             updated_at=updated_at,
         ))
+
+    def mutate_execution_budget(
+        self,
+        workflow_execution_id: str,
+        task_execution_id: str,
+        *,
+        mutate: Callable[
+            [RuntimeObject, RuntimeObject],
+            tuple[RuntimeObject, RuntimeObject],
+        ],
+        updated_at: str,
+    ) -> tuple[RuntimeObject, RuntimeObject]:
+        return self._mutate(
+            lambda: InMemoryRuntimeObjectStore.mutate_execution_budget(
+                self,
+                workflow_execution_id,
+                task_execution_id,
+                mutate=mutate,
+                updated_at=updated_at,
+            )
+        )
 
     def update_status(
         self,
