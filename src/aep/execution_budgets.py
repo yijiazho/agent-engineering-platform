@@ -914,6 +914,34 @@ class TaskBudget:
         remaining_cost = self._minimum_remaining(
             state, "maxCostUsd", "costUsd", "reservedCostUsd"
         )
+        if (
+            remaining_output is None
+            and per_attempt_output is None
+            and remaining_cost is not None
+            and self.resolved.model_pricing is not None
+        ):
+            output_price = (
+                _decimal(self.resolved.model_pricing["outputPerMillionTokens"])
+                / Decimal(1_000_000)
+            )
+            if output_price > 0:
+                input_cost = (
+                    _decimal(estimated_input_tokens)
+                    * _decimal(self.resolved.model_pricing["inputPerMillionTokens"])
+                    / Decimal(1_000_000)
+                )
+                output_budget = (
+                    _decimal(remaining_cost) / attempt_limit - input_cost
+                )
+                if output_budget >= output_price:
+                    per_attempt_output = max(
+                        1,
+                        int(
+                            (output_budget / output_price).to_integral_value(
+                                rounding=ROUND_FLOOR
+                            )
+                        ),
+                    )
         if remaining_cost is not None and self.resolved.model_pricing is not None:
             for _ in range(3):
                 minimum_cost = _estimate_cost(

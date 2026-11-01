@@ -60,8 +60,10 @@ remaining invocation, input-token, output-token, and monetary allowances, so
 concurrent Tasks cannot over-admit provider attempts or hold unrelated units.
 Each granted provider attempt receives a bounded share of the remaining output
 budget, and monetary budgets reserve the priced output allowance even without
-an aggregate output-token limit. Cost comparisons use normalized fixed-point
-arithmetic. Admission,
+an aggregate output-token limit. When the Model omits `tokenLimit`, a finite
+per-attempt output cap is derived from the remaining monetary allowance, or
+admission is rejected if no safely priced bound exists. Cost comparisons use
+normalized fixed-point arithmetic. Admission,
 immutable execution-budget initialization, and reconciliation run as one atomic
 workflow/task budget transaction, serialized by the durable store's
 cross-process writer fence. Deferred requests and pre-transport adapter validation failures with zero

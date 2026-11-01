@@ -865,6 +865,47 @@ def test_cost_budget_reserves_the_granted_output_allowance() -> None:
     assert raised.value.decision["dimension"] == "maxCostUsd"
 
 
+def test_monetary_budget_derives_output_cap_when_model_omits_it() -> None:
+    store, workflow, task, resources = budget_runtime(
+        workflow_budget={"maxCostUsd": 1},
+        model_token_limit=None,
+        model_pricing={
+            "inputPerMillionTokens": 0,
+            "outputPerMillionTokens": 10_000,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+
+    reservation = budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=None,
+        configured_provider_attempts=1,
+        timestamp=TIMESTAMP,
+    )
+
+    assert reservation.effective_output_token_limit == 100
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["workflow"]
+    assert consumption["reservedCostUsd"] == pytest.approx(1.0)
+
+    retry = store.create(
+        task_execution(attempt=2, execution_id="taskexecution-budget00042"),
+        deterministic_key="task-cost-uncapped",
+    )
+    second = prepare(store, resources, store.get(WORKFLOW_ID), retry)
+    assert second is not None
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        second.preflight(
+            estimated_input_tokens=1,
+            configured_output_token_limit=None,
+            configured_provider_attempts=1,
+            timestamp=LATER,
+        )
+    assert raised.value.decision["dimension"] == "maxCostUsd"
+
+
 def test_exact_monetary_boundary_is_admitted() -> None:
     store, workflow, task, resources = budget_runtime(
         workflow_budget={"maxCostUsd": 0.3},
@@ -1027,7 +1068,7 @@ def budget_runtime(
     task_budget: dict | None = None,
     agent_budget: dict | None = None,
     model_pricing: dict | None = None,
-    model_token_limit: int = 100,
+    model_token_limit: int | None = 100,
 ):
     store = InMemoryRuntimeObjectStore()
     workflow = store.create(workflow_execution(), deterministic_key="workflow")
@@ -1129,7 +1170,7 @@ def budget_resources(
     task_budget: dict | None = None,
     agent_budget: dict | None = None,
     model_pricing: dict | None = None,
-    model_token_limit: int = 100,
+    model_token_limit: int | None = 100,
 ) -> ResourceCollection:
     workspace = _resource("Workspace", "local", {"repository": "octo/repo"})
     workflow_spec = {
@@ -1158,9 +1199,10 @@ def budget_resources(
     model_spec = {
         "provider": "local",
         "model": "fake-reasoning",
-        "tokenLimit": model_token_limit,
         "timeoutMs": 1000,
     }
+    if model_token_limit is not None:
+        model_spec["tokenLimit"] = model_token_limit
     if model_pricing is not None:
         model_spec["pricing"] = model_pricing
     model = _resource("Model", "default-reasoning", model_spec)

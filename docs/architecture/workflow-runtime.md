@@ -653,7 +653,10 @@ resolves the effective budget and checks the known minimum requirement:
 * a monetary budget requires reliable Model pricing and reserves the priced
   output allowance for every granted attempt, even when no aggregate
   output-token limit is declared, so concurrent Tasks cannot each receive an
-  unpriced share of the same ceiling.
+  unpriced share of the same ceiling. If the Model also omits `tokenLimit`, the
+  coordinator derives a finite per-attempt output cap from the remaining
+  monetary allowance; when no safely priced bound can be established, the
+  invocation is blocked.
 
 An allowed check writes a durable reservation before dispatch. The reservation
 covers the full provider-attempt, input-token, output-token, and cost allowance
