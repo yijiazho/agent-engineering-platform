@@ -172,11 +172,6 @@ def invoke_agent(
             raise
         except ExecutionBudgetError as error:
             raise AgentInvocationContractError(str(error)) from error
-        if budget_reservation.effective_output_token_limit is None:
-            budget.release()
-            raise AgentInvocationContractError(
-                "execution budget cannot admit a bounded output-token request"
-            )
         effective_configuration = model_configuration.with_budget_bounds(
             token_limit=budget_reservation.effective_output_token_limit,
             max_provider_attempts=budget_reservation.max_provider_attempts,
@@ -502,13 +497,15 @@ def _record_success_budget_charge(
 ) -> dict[str, Any] | None:
     if budget is None:
         return None
+    attempt_count = _attempt_count(response.provider_metadata)
     return budget.record(
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
         latency_ms=response.latency_ms,
         cost=response.cost,
         cost_status=response.cost_source,
-        invocation_count=_attempt_count(response.provider_metadata),
+        invocation_count=attempt_count,
+        unreconciled_dispatched_attempts=max(0, attempt_count - 1),
         timestamp=completed_at,
     )
 

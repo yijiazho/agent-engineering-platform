@@ -629,6 +629,7 @@ def resource_collection(
     agent_budget: dict | None = None,
     model_pricing: dict | None = None,
     model_retry_policy: dict | None = None,
+    model_token_limit: int | None = 4_096,
 ) -> tuple[ResourceCollection, Resource]:
     schema = output_schema or ISSUE_ANALYSIS_SCHEMA
     workspace = resource("Workspace", "local", {"repository": "octo/repo"})
@@ -671,9 +672,10 @@ def resource_collection(
         "provider": "local",
         "model": "fake-analyzer-v1",
         "parameters": {"temperature": 0},
-        "tokenLimit": 4_096,
         "timeoutMs": 5_000,
     }
+    if model_token_limit is not None:
+        model_spec["tokenLimit"] = model_token_limit
     if model_pricing is not None:
         model_spec["pricing"] = model_pricing
     if model_retry_policy is not None:
@@ -936,6 +938,63 @@ def test_execution_budget_clamps_adapter_retry_policy_to_invocation_limit() -> N
 
     assert result.succeeded is True
     assert adapter.requests[0].configuration.max_attempts == 1
+
+
+def test_execution_budget_without_model_output_limit_still_runs() -> None:
+    resources, task = resource_collection(
+        task_budget={"maxModelInvocations": 1},
+        model_token_limit=None,
+    )
+    store, handler, task, adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=19),
+            latency_ms=12,
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    assert adapter.requests[0].configuration.token_limit is None
+
+
+def test_execution_budget_blocks_when_retry_success_hides_earlier_usage() -> None:
+    resources, task = resource_collection(
+        task_budget={"maxCostUsd": 100},
+        model_pricing={
+            "inputPerMillionTokens": 1,
+            "outputPerMillionTokens": 1,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    store, handler, task, _adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=19),
+            latency_ms=12,
+            cost=0.01,
+            provider_metadata={
+                "attemptCount": 2,
+                "attempts": [
+                    {"attempt": 1, "code": "timeout"},
+                    {"attempt": 2, "code": "succeeded"},
+                ],
+            },
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["blockedDecision"]["reason"] == "BUDGET_COST_UNAVAILABLE"
+    assert consumption["blockedDecision"]["dimension"] == "maxCostUsd"
 
 
 def test_execution_budget_cost_limit_without_pricing_blocks_before_dispatch() -> None:

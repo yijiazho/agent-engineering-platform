@@ -650,19 +650,26 @@ resolves the effective budget and checks the known minimum requirement:
 * a monetary budget requires reliable Model pricing and a minimum estimated
   cost that fits the remaining allowance.
 
-An allowed check writes a durable reservation before dispatch. Reservation
-prevents two concurrent local Tasks from spending the same remaining unit and
-leaves a safe over-count if a worker stops after dispatch. After each
-invocation, actual provider usage replaces the reservation. The coordinator
-records input and output tokens, latency, the provider/model identity, the
-attempt count, and cost evidence classified as `EXACT` (provider-reported),
-`CONFIGURED` (declared fixed cost), `ESTIMATED` (Model pricing multiplied by
-usage), or `UNAVAILABLE`. A request deferred before any provider dispatch
-reports zero attempts and releases its reservation without charging an
-invocation. A dispatched request that returns no reliable usage under a
-monetary limit records an enforceable `BUDGET_COST_UNAVAILABLE` decision
-instead of reusing an unchanged balance. An overrun remains visible and blocks
-further work; it is never hidden by resetting a counter.
+An allowed check writes a durable reservation before dispatch. The reservation
+covers the full provider-attempt allowance granted to that invocation, so two
+concurrent Tasks cannot each receive the same remaining units. After each
+invocation, actual provider usage replaces the reservation and unused attempt
+units are released. The coordinator records input and output tokens, latency,
+the provider/model identity, the attempt count, and cost evidence classified as
+`EXACT` (provider-reported), `CONFIGURED` (declared fixed cost), `ESTIMATED`
+(Model pricing multiplied by usage), or `UNAVAILABLE`.
+
+A request deferred before any provider dispatch reports zero attempts and
+releases its reservation without charging an invocation. An invocation-only,
+input-only, or elapsed-only budget does not require a Model output-token limit;
+an absent `Model.spec.tokenLimit` remains absent. A dispatched request that
+returns no reliable usage under a monetary limit records an enforceable
+`BUDGET_COST_UNAVAILABLE` decision instead of reusing an unchanged balance.
+The same applies when a retry eventually succeeds after one or more earlier
+dispatched attempts whose usage is unavailable. Ordinary exhaustion caused by
+a temporary reservation is recomputed after reconciliation; only unreconciled
+monetary spend is sticky. An overrun remains visible and blocks further work;
+it is never hidden by resetting a counter.
 
 When no invocation can be admitted, no AgentInvocation or ModelInvocation is
 created. The Task fails with `POLICY` and a stable budget decision containing

@@ -54,10 +54,15 @@ reserved, and remaining amounts, while `aep explain` reports
 Retries reuse Task-identity consumption, resume continues the same
 WorkflowExecution ledger, and replay starts a new ledger while preserving only
 explicit execution-level overrides. Provider retry policies are clamped to the
-remaining invocation allowance, deferred requests with zero dispatched attempts
-release their reservation, Task ceilings do not consume the shared Agent
-ledger, execution overrides are validated against declared limits before
-narrowing admission, and unreconciled monetary spend blocks further work.
+remaining invocation allowance and the full granted attempt allowance is
+reserved before dispatch, so concurrent Tasks cannot over-admit provider
+attempts. Deferred requests with zero dispatched attempts release their
+reservation without charging an invocation. Task ceilings do not consume the
+shared Agent ledger, execution overrides are validated against declared limits
+before narrowing admission, and temporary reservation exhaustion is
+reevaluated after reconciliation. Invocation-only budgets work without a Model
+output-token limit. Unreconciled monetary spend, including earlier failed
+attempts hidden by a later retry success, blocks further cost-budget work.
 Context Builder input budgets remain a separate contract. Credential-free tests cover exact-limit success,
 pre-invocation rejection, post-invocation exhaustion, nested precedence,
 missing cost metadata, retry accounting, provider usage normalization, and

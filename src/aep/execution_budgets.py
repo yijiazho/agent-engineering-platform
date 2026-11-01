@@ -423,6 +423,7 @@ class TaskBudget:
                 configured_output_token_limit, remaining_output
             )
             max_provider_attempts = self._invocation_allowance(state)
+            reserved_invocations = max_provider_attempts or 1
             reserved_output = 0 if remaining_output is None else int(effective_output or 0)
             reserved_cost = (
                 _estimate_cost(self.resolved.model_pricing, estimated, reserved_output)
@@ -430,7 +431,7 @@ class TaskBudget:
                 else 0.0
             )
             for record in state["records"]:
-                record["reservedModelInvocations"] += 1
+                record["reservedModelInvocations"] += reserved_invocations
                 record["reservedInputTokens"] += estimated
                 record["reservedOutputTokens"] += reserved_output
                 record["reservedCostUsd"] += reserved_cost
@@ -444,6 +445,7 @@ class TaskBudget:
                 }
             self._persist_state(workflow, task, state)
             self._reservation = {
+                "modelInvocations": reserved_invocations,
                 "inputTokens": estimated,
                 "outputTokens": reserved_output,
                 "costUsd": reserved_cost,
@@ -472,6 +474,7 @@ class TaskBudget:
         cost: float | None = None,
         cost_status: str | None = None,
         invocation_count: int = 1,
+        unreconciled_dispatched_attempts: int = 0,
         timestamp: str,
     ) -> dict[str, Any]:
         """Reconcile reservation with actual provider usage and persist evidence."""
@@ -480,7 +483,12 @@ class TaskBudget:
             raise ExecutionBudgetError("model usage must not be negative")
         if invocation_count < 0:
             raise ExecutionBudgetError("invocation_count must not be negative")
+        if unreconciled_dispatched_attempts < 0:
+            raise ExecutionBudgetError(
+                "unreconciled_dispatched_attempts must not be negative"
+            )
         reservation = self._reservation or {
+            "modelInvocations": 1,
             "inputTokens": 0,
             "outputTokens": 0,
             "costUsd": 0.0,
@@ -503,7 +511,9 @@ class TaskBudget:
             for scope_name in state["scopeNames"]:
                 record = state[scope_name]
                 record["reservedModelInvocations"] = max(
-                    0, record["reservedModelInvocations"] - 1
+                    0,
+                    record["reservedModelInvocations"]
+                    - int(reservation.get("modelInvocations", 1)),
                 )
                 record["reservedInputTokens"] = max(
                     0, record["reservedInputTokens"] - int(reservation["inputTokens"])
@@ -533,7 +543,11 @@ class TaskBudget:
                         next(iter(counts)) if len(counts) == 1 else "MIXED"
                     )
                     cost_limit = getattr(self.resolved, scope_name).get("maxCostUsd")
-                    if status == "UNAVAILABLE" and cost_limit is not None:
+                    unreconciled = (
+                        status == "UNAVAILABLE"
+                        or unreconciled_dispatched_attempts > 0
+                    )
+                    if unreconciled and cost_limit is not None:
                         decision = _blocked_decision(
                             scope_name,
                             cost_limit,
@@ -543,8 +557,8 @@ class TaskBudget:
                             timestamp=timestamp,
                             reason=BUDGET_COST_UNAVAILABLE,
                             message=(
-                                "monetary budget cannot be reconciled because the "
-                                "dispatched invocation returned no reliable usage"
+                                "monetary budget cannot be reconciled because a "
+                                "dispatched provider attempt returned no reliable usage"
                             ),
                         )
                         record["blockedReason"] = BUDGET_COST_UNAVAILABLE
@@ -560,6 +574,7 @@ class TaskBudget:
             remaining = self._remaining_by_scope(state)
         return {
             "invocationCount": invocation_count,
+            "unreconciledDispatchedAttempts": unreconciled_dispatched_attempts,
             "inputTokens": input_tokens,
             "outputTokens": output_tokens,
             "latencyMs": latency_ms,
@@ -586,7 +601,9 @@ class TaskBudget:
             state = self._load_state(workflow, task, self._now())
             for record in state["records"]:
                 record["reservedModelInvocations"] = max(
-                    0, record["reservedModelInvocations"] - 1
+                    0,
+                    record["reservedModelInvocations"]
+                    - int(reservation.get("modelInvocations", 1)),
                 )
                 record["reservedInputTokens"] = max(
                     0, record["reservedInputTokens"] - int(reservation["inputTokens"])
@@ -740,10 +757,11 @@ class TaskBudget:
         scope = str(decision.get("scope", "")).casefold()
         record = state.get(scope)
         if isinstance(record, dict):
-            record["blockedReason"] = decision["reason"]
-            record["blockedDecision"] = deepcopy(dict(decision))
             record["lastDecision"] = deepcopy(dict(decision))
             record["updatedAt"] = decision["decidedAt"]
+            if decision.get("reason") == BUDGET_COST_UNAVAILABLE:
+                record["blockedReason"] = decision["reason"]
+                record["blockedDecision"] = deepcopy(dict(decision))
         consumption = (
             deepcopy(dict(workflow.get("budgetConsumption", {})))
             if isinstance(workflow.get("budgetConsumption"), Mapping)
@@ -1018,7 +1036,12 @@ def _check_scope(
     pricing: Mapping[str, Any] | None,
 ) -> dict[str, Any] | None:
     blocked = record.get("blockedDecision")
-    if isinstance(blocked, Mapping):
+    if (
+        isinstance(blocked, Mapping)
+        and blocked.get("reason") == BUDGET_COST_UNAVAILABLE
+    ):
+        # Only unreconciled monetary spend is sticky. Ordinary exhaustion is
+        # reevaluated against current consumption after reservations release.
         return deepcopy(dict(blocked))
     checks = (
         ("maxModelInvocations", "modelInvocations", "reservedModelInvocations", 1),

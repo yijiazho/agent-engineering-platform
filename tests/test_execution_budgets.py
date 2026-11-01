@@ -256,6 +256,85 @@ def test_workflow_budget_evidence_remains_stable_for_later_tasks() -> None:
     )
 
 
+def test_concurrent_preflights_reserve_the_full_provider_attempt_allowance() -> None:
+    store, workflow, first, second, resources = two_task_runtime(
+        workflow_budget={"maxModelInvocations": 3}
+    )
+    first_budget, second_budget = prepare_two(
+        store, resources, workflow, first, second
+    )
+    assert first_budget is not None and second_budget is not None
+
+    first_reservation = first_budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        timestamp=TIMESTAMP,
+    )
+    assert first_reservation.max_provider_attempts == 3
+    workflow_consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["workflow"]
+    assert workflow_consumption["reservedModelInvocations"] == 3
+
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        second_budget.preflight(
+            estimated_input_tokens=10,
+            configured_output_token_limit=100,
+            timestamp=LATER,
+        )
+    assert raised.value.decision["dimension"] == "maxModelInvocations"
+
+    first_budget.record(
+        input_tokens=10,
+        output_tokens=4,
+        latency_ms=1,
+        invocation_count=1,
+        timestamp=LATER,
+    )
+    second_reservation = second_budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        timestamp=LATER,
+    )
+    assert second_reservation.max_provider_attempts == 2
+
+
+def test_temporary_output_reservation_does_not_poison_workflow_budget() -> None:
+    store, workflow, first, second, resources = two_task_runtime(
+        workflow_budget={"maxOutputTokens": 10}
+    )
+    first_budget, second_budget = prepare_two(
+        store, resources, workflow, first, second
+    )
+    assert first_budget is not None and second_budget is not None
+
+    first_reservation = first_budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=10,
+        timestamp=TIMESTAMP,
+    )
+    assert first_reservation.effective_output_token_limit == 10
+
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        second_budget.preflight(
+            estimated_input_tokens=1,
+            configured_output_token_limit=10,
+            timestamp=LATER,
+        )
+    assert raised.value.decision["dimension"] == "maxOutputTokens"
+
+    first_budget.record(
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=1,
+        timestamp=LATER,
+    )
+    second_reservation = second_budget.preflight(
+        estimated_input_tokens=1,
+        configured_output_token_limit=10,
+        timestamp=LATER,
+    )
+    assert second_reservation.effective_output_token_limit == 9
+
+
 def test_input_and_output_budgets_are_independent_and_exhaustable() -> None:
     store, workflow, task, resources = budget_runtime(
         task_budget={"maxInputTokens": 100, "maxOutputTokens": 10}
@@ -570,6 +649,77 @@ def budget_runtime(
         model_pricing=model_pricing,
     )
     return store, workflow, task, resources
+
+
+def two_task_runtime(
+    *, workflow_budget: dict | None = None
+):
+    store = InMemoryRuntimeObjectStore()
+    workflow = store.create(workflow_execution(), deterministic_key="workflow")
+    first = store.create(
+        task_execution(execution_id="taskexecution-budget00021"),
+        deterministic_key="task-first",
+    )
+    second_ref = {"kind": "Task", "name": "plan", "version": "1.0.0"}
+    second = store.create(
+        {
+            **task_execution(execution_id="taskexecution-budget00022"),
+            "taskRef": second_ref,
+        },
+        deterministic_key="task-second",
+    )
+    workspace = _resource("Workspace", "local", {"repository": "octo/repo"})
+    workflow_resource = _resource("Workflow", "issue-to-pr", {
+        "triggers": [{"eventRef": {"kind": "Event", "name": "github-issue-created", "version": "1.0.0"}}],
+        "tasks": [{"taskRef": TASK_REF}, {"taskRef": second_ref}],
+        "budget": workflow_budget or {},
+    })
+    first_task = _resource("Task", "analyze-issue", {
+        "objective": "Analyze.",
+        "agentRef": AGENT_REF,
+        "outputs": {"type": "object"},
+        "inputContextTokenBudget": 32_000,
+    })
+    second_task = _resource("Task", "plan", {
+        "objective": "Plan.",
+        "agentRef": AGENT_REF,
+        "outputs": {"type": "object"},
+        "inputContextTokenBudget": 32_000,
+    })
+    agent = _resource("Agent", "issue-analyzer", {
+        "promptRef": {"kind": "Prompt", "name": "issue-analysis", "version": "1.0.0"},
+        "modelRef": MODEL_REF,
+    })
+    model = _resource("Model", "default-reasoning", {
+        "provider": "local",
+        "model": "fake-reasoning",
+        "tokenLimit": 100,
+        "timeoutMs": 1000,
+    })
+    resources = ResourceCollection(
+        workspace, (workspace, workflow_resource, first_task, second_task, agent, model)
+    )
+    return store, workflow, first, second, resources
+
+
+def prepare_two(store, resources, workflow, first, second):
+    manager = TaskBudgetManager(store, resources, lambda: TIMESTAMP)
+    return (
+        manager.prepare(
+            workflow_execution=workflow,
+            task_execution=first,
+            task=resources.get(ResourceRef.from_mapping(TASK_REF)),
+            agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
+            model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
+        ),
+        manager.prepare(
+            workflow_execution=store.get(WORKFLOW_ID),
+            task_execution=second,
+            task=resources.get(ResourceRef("Task", "plan", "1.0.0")),
+            agent=resources.get(ResourceRef.from_mapping(AGENT_REF)),
+            model=resources.get(ResourceRef.from_mapping(MODEL_REF)),
+        ),
+    )
 
 
 def prepare(store, resources, workflow, task):
