@@ -625,7 +625,13 @@ default, zero cost, or floating price becomes AEP policy.
 A Task and Agent limit are separate consumption scopes. The effective limit for
 one invocation is the minimum across the Workflow, Task, and Agent scopes; a
 narrow Agent limit cannot be widened by a broader Task declaration, and the
-reverse is also true.
+reverse is also true. Task ceilings are charged to the Task ledger and never
+consume the shared Agent ledger. Only an explicit Agent declaration bounds
+consumption shared by multiple Tasks that use that Agent.
+
+An execution-level override is validated against the original declared
+Workflow limit, then applied to the effective admission ceiling. It cannot make
+an otherwise valid Task or Agent declaration appear to widen its parent.
 
 ## Admission and Reconciliation
 
@@ -638,6 +644,8 @@ resolves the effective budget and checks the known minimum requirement:
 * at least one output token must fit the remaining output-token allowance;
 * the configured Model output limit is clamped to the remaining aggregate
   output allowance, so the provider request cannot knowingly exceed the budget;
+* the Model retry policy is clamped to the remaining invocation allowance, so
+  adapter-level provider retries cannot exceed the hard invocation limit;
 * elapsed time must leave room for another invocation; and
 * a monetary budget requires reliable Model pricing and a minimum estimated
   cost that fits the remaining allowance.
@@ -649,8 +657,12 @@ invocation, actual provider usage replaces the reservation. The coordinator
 records input and output tokens, latency, the provider/model identity, the
 attempt count, and cost evidence classified as `EXACT` (provider-reported),
 `CONFIGURED` (declared fixed cost), `ESTIMATED` (Model pricing multiplied by
-usage), or `UNAVAILABLE`. An overrun remains visible and blocks further work;
-it is never hidden by resetting a counter.
+usage), or `UNAVAILABLE`. A request deferred before any provider dispatch
+reports zero attempts and releases its reservation without charging an
+invocation. A dispatched request that returns no reliable usage under a
+monetary limit records an enforceable `BUDGET_COST_UNAVAILABLE` decision
+instead of reusing an unchanged balance. An overrun remains visible and blocks
+further work; it is never hidden by resetting a counter.
 
 When no invocation can be admitted, no AgentInvocation or ModelInvocation is
 created. The Task fails with `POLICY` and a stable budget decision containing

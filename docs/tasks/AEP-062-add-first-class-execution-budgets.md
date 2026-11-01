@@ -53,8 +53,12 @@ reserved, and remaining amounts, while `aep explain` reports
 
 Retries reuse Task-identity consumption, resume continues the same
 WorkflowExecution ledger, and replay starts a new ledger while preserving only
-explicit execution-level overrides. Context Builder input budgets remain a
-separate contract. Credential-free tests cover exact-limit success,
+explicit execution-level overrides. Provider retry policies are clamped to the
+remaining invocation allowance, deferred requests with zero dispatched attempts
+release their reservation, Task ceilings do not consume the shared Agent
+ledger, execution overrides are validated against declared limits before
+narrowing admission, and unreconciled monetary spend blocks further work.
+Context Builder input budgets remain a separate contract. Credential-free tests cover exact-limit success,
 pre-invocation rejection, post-invocation exhaustion, nested precedence,
 missing cost metadata, retry accounting, provider usage normalization, and
 inspection. Bounded issue-to-PR and evaluation-suite examples are documented in

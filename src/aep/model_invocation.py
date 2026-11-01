@@ -118,6 +118,22 @@ class ModelConfiguration:
     def with_token_limit(self, token_limit: int | None) -> "ModelConfiguration":
         """Return a copy bounded by the remaining aggregate output budget."""
 
+        return self.with_budget_bounds(token_limit=token_limit)
+
+    def with_budget_bounds(
+        self,
+        *,
+        token_limit: int | None,
+        max_provider_attempts: int | None = None,
+    ) -> "ModelConfiguration":
+        """Return a copy whose provider attempts fit the remaining budget."""
+
+        retry_policy = dict(self.retry_policy)
+        if max_provider_attempts is not None:
+            configured = int(retry_policy.get("maxAttempts", 1))
+            retry_policy["maxAttempts"] = max(
+                1, min(configured, max_provider_attempts)
+            )
         return ModelConfiguration(
             model_ref=self.model_ref,
             provider=self.provider,
@@ -125,7 +141,7 @@ class ModelConfiguration:
             parameters=self.parameters,
             token_limit=token_limit,
             timeout_ms=self.timeout_ms,
-            retry_policy=self.retry_policy,
+            retry_policy=retry_policy,
             rate_limit_policy=self.rate_limit_policy,
         )
 

@@ -116,6 +116,7 @@ class BudgetReservation:
     """One durable pre-dispatch reservation reconciled after the invocation."""
 
     effective_output_token_limit: int | None
+    max_provider_attempts: int | None
     estimated_input_tokens: int
     reserved_output_tokens: int
     reserved_cost_usd: float
@@ -141,30 +142,31 @@ def resolve_execution_budget(
     attributed to the most specific scope.
     """
 
-    workflow_limits = _declared_limits(workflow_budget, "Workflow", workflow_ref)
+    declared_workflow = _declared_limits(workflow_budget, "Workflow", workflow_ref)
     execution_limits = _declared_limits(execution_budget, "Execution", None)
+    task_limits = _declared_limits(task_budget, "Task", task_ref)
+    agent_limits = _declared_limits(agent_budget, "Agent", agent_ref)
+
+    # Validate the declared Resource hierarchy before applying an execution
+    # override. An override may narrow admission, but it must not make an
+    # otherwise valid Task or Agent declaration appear to widen its parent.
     if execution_limits:
         _reject_widening(
-            workflow_limits,
+            declared_workflow,
             execution_limits,
             parent_scope="Workflow",
             child_scope="Execution",
         )
-        workflow_limits = _most_restrictive(workflow_limits, execution_limits)
-
-    task_limits = _declared_limits(task_budget, "Task", task_ref)
     if task_limits:
         _reject_widening(
-            workflow_limits,
+            declared_workflow,
             task_limits,
             parent_scope="Workflow",
             child_scope="Task",
         )
-
-    agent_limits = _declared_limits(agent_budget, "Agent", agent_ref)
     if agent_limits:
         _reject_widening(
-            workflow_limits,
+            declared_workflow,
             agent_limits,
             parent_scope="Workflow",
             child_scope="Agent",
@@ -177,8 +179,16 @@ def resolve_execution_budget(
                 child_scope="Agent",
             )
 
-    effective_task = _most_restrictive(workflow_limits, task_limits)
-    effective_agent = _most_restrictive(workflow_limits, task_limits, agent_limits)
+    effective_workflow = (
+        _most_restrictive(declared_workflow, execution_limits)
+        if execution_limits
+        else declared_workflow
+    )
+    effective_task = _most_restrictive(effective_workflow, task_limits)
+    # Task limits belong to the Task ledger. An Agent declaration alone bounds
+    # the shared Agent ledger; a Task ceiling must not leak into another Task
+    # that happens to use the same Agent.
+    effective_agent = _most_restrictive(effective_workflow, agent_limits)
 
     refs: dict[tuple[str, str, str], Mapping[str, str]] = {}
     for ref in (workflow_ref, task_ref, agent_ref):
@@ -189,7 +199,7 @@ def resolve_execution_budget(
             refs[key] = {"kind": key[0], "name": key[1], "version": key[2]}
 
     return ResolvedExecutionBudget(
-        workflow=workflow_limits,
+        workflow=effective_workflow,
         task=effective_task,
         agent=effective_agent,
         model_output_token_limit=_positive_int(
@@ -412,6 +422,7 @@ class TaskBudget:
             effective_output = _effective_output_limit(
                 configured_output_token_limit, remaining_output
             )
+            max_provider_attempts = self._invocation_allowance(state)
             reserved_output = 0 if remaining_output is None else int(effective_output or 0)
             reserved_cost = (
                 _estimate_cost(self.resolved.model_pricing, estimated, reserved_output)
@@ -439,6 +450,7 @@ class TaskBudget:
             }
             return BudgetReservation(
                 effective_output_token_limit=effective_output,
+                max_provider_attempts=max_provider_attempts,
                 estimated_input_tokens=estimated,
                 reserved_output_tokens=reserved_output,
                 reserved_cost_usd=reserved_cost,
@@ -466,24 +478,30 @@ class TaskBudget:
 
         if input_tokens < 0 or output_tokens < 0 or latency_ms < 0:
             raise ExecutionBudgetError("model usage must not be negative")
-        if invocation_count < 1:
-            raise ExecutionBudgetError("invocation_count must be positive")
+        if invocation_count < 0:
+            raise ExecutionBudgetError("invocation_count must not be negative")
         reservation = self._reservation or {
             "inputTokens": 0,
             "outputTokens": 0,
             "costUsd": 0.0,
         }
-        status, actual_cost = _cost_evidence(
-            cost,
-            cost_status,
-            self.resolved.model_pricing,
-            input_tokens,
-            output_tokens,
+        dispatched = invocation_count > 0
+        status, actual_cost = (
+            _cost_evidence(
+                cost,
+                cost_status,
+                self.resolved.model_pricing,
+                input_tokens,
+                output_tokens,
+            )
+            if dispatched
+            else ("UNAVAILABLE", None)
         )
         with _workflow_lock(self.workflow_execution_id):
             workflow, task = self._load_runtime()
             state = self._load_state(workflow, task, timestamp)
-            for record in state["records"]:
+            for scope_name in state["scopeNames"]:
+                record = state[scope_name]
                 record["reservedModelInvocations"] = max(
                     0, record["reservedModelInvocations"] - 1
                 )
@@ -502,19 +520,35 @@ class TaskBudget:
                 record["elapsedMs"] = max(
                     record["elapsedMs"], _elapsed_ms(record["startedAt"], timestamp)
                 )
-                if actual_cost is not None:
-                    record["costUsd"] = round(record["costUsd"] + actual_cost, 12)
-                counts = dict(record.get("costStatusCounts", {}))
-                counts[status] = counts.get(status, 0) + 1
-                record["costStatusCounts"] = counts
-                record["costStatus"] = (
-                    next(iter(counts)) if len(counts) == 1 else "MIXED"
-                )
                 record["updatedAt"] = timestamp
                 record["lastProvider"] = self.provider
                 record["lastModel"] = self.model
-                if status == "UNAVAILABLE" and self._scope_cost_limited(state, record):
-                    record["blockedReason"] = BUDGET_COST_UNAVAILABLE
+                if dispatched:
+                    if actual_cost is not None:
+                        record["costUsd"] = round(record["costUsd"] + actual_cost, 12)
+                    counts = dict(record.get("costStatusCounts", {}))
+                    counts[status] = counts.get(status, 0) + 1
+                    record["costStatusCounts"] = counts
+                    record["costStatus"] = (
+                        next(iter(counts)) if len(counts) == 1 else "MIXED"
+                    )
+                    cost_limit = getattr(self.resolved, scope_name).get("maxCostUsd")
+                    if status == "UNAVAILABLE" and cost_limit is not None:
+                        decision = _blocked_decision(
+                            scope_name,
+                            cost_limit,
+                            consumed=record["costUsd"] + record["reservedCostUsd"],
+                            reserved=record["reservedCostUsd"],
+                            required=0,
+                            timestamp=timestamp,
+                            reason=BUDGET_COST_UNAVAILABLE,
+                            message=(
+                                "monetary budget cannot be reconciled because the "
+                                "dispatched invocation returned no reliable usage"
+                            ),
+                        )
+                        record["blockedReason"] = BUDGET_COST_UNAVAILABLE
+                        record["blockedDecision"] = decision
                 record["lastDecision"] = {
                     "allowed": True,
                     "reason": BUDGET_ALLOWED,
@@ -745,16 +779,6 @@ class TaskBudget:
             },
         )
 
-    def _scope_cost_limited(
-        self, state: Mapping[str, Any], record: Mapping[str, Any]
-    ) -> bool:
-        for scope_name, candidate in state.items():
-            if not isinstance(candidate, Mapping) or candidate is not record:
-                continue
-            limits = getattr(self.resolved, scope_name)
-            return limits.get("maxCostUsd") is not None
-        return False
-
     def _apply_overruns(self, state: Mapping[str, Any]) -> None:
         for scope_name in ("workflow", "task", "agent"):
             limits = getattr(self.resolved, scope_name)
@@ -773,6 +797,19 @@ class TaskBudget:
                     overrun = True
             if overrun:
                 record["overrun"] = True
+
+    def _invocation_allowance(self, state: Mapping[str, Any]) -> int | None:
+        allowance: int | None = None
+        for scope_name in ("workflow", "task", "agent"):
+            limit = getattr(self.resolved, scope_name).get("maxModelInvocations")
+            if limit is None:
+                continue
+            record = state[scope_name]
+            available = int(limit.value) - (
+                record["modelInvocations"] + record["reservedModelInvocations"]
+            )
+            allowance = available if allowance is None else min(allowance, available)
+        return allowance
 
     def _minimum_remaining_output(self, state: Mapping[str, Any]) -> int | None:
         remaining: int | None = None

@@ -628,6 +628,7 @@ def resource_collection(
     task_budget: dict | None = None,
     agent_budget: dict | None = None,
     model_pricing: dict | None = None,
+    model_retry_policy: dict | None = None,
 ) -> tuple[ResourceCollection, Resource]:
     schema = output_schema or ISSUE_ANALYSIS_SCHEMA
     workspace = resource("Workspace", "local", {"repository": "octo/repo"})
@@ -675,6 +676,8 @@ def resource_collection(
     }
     if model_pricing is not None:
         model_spec["pricing"] = model_pricing
+    if model_retry_policy is not None:
+        model_spec["retryPolicy"] = model_retry_policy
     model = resource("Model", "fake-reasoning", model_spec)
     evaluation = resource(
         "Evaluation",
@@ -913,6 +916,26 @@ def test_execution_budget_clamps_provider_output_limit_and_records_exhaustion() 
     invocation = store.get(store.get(TASK_EXECUTION_ID)["agentInvocationIds"][0])
     assert invocation["budgetCharge"]["outputTokens"] == 5
     assert invocation["budgetCharge"]["costStatus"] == "UNAVAILABLE"
+
+
+def test_execution_budget_clamps_adapter_retry_policy_to_invocation_limit() -> None:
+    resources, task = resource_collection(
+        task_budget={"maxModelInvocations": 1},
+        model_retry_policy={"maxAttempts": 4, "backoffMs": 10},
+    )
+    store, handler, task, adapter = setup_handler(
+        ModelResponse(
+            output=VALID_ANALYSIS,
+            usage=ModelUsage(input_tokens=31, output_tokens=19),
+            latency_ms=12,
+        ),
+        resource_set=(resources, task),
+    )
+
+    result = handler.execute(task, store.get(TASK_EXECUTION_ID))
+
+    assert result.succeeded is True
+    assert adapter.requests[0].configuration.max_attempts == 1
 
 
 def test_execution_budget_cost_limit_without_pricing_blocks_before_dispatch() -> None:

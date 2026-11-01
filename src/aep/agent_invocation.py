@@ -177,8 +177,9 @@ def invoke_agent(
             raise AgentInvocationContractError(
                 "execution budget cannot admit a bounded output-token request"
             )
-        effective_configuration = model_configuration.with_token_limit(
-            budget_reservation.effective_output_token_limit
+        effective_configuration = model_configuration.with_budget_bounds(
+            token_limit=budget_reservation.effective_output_token_limit,
+            max_provider_attempts=budget_reservation.max_provider_attempts,
         )
     request = ModelRequest(
         configuration=effective_configuration,
@@ -455,8 +456,10 @@ def _context_input_tokens(package: Mapping[str, Any]) -> int:
 
 
 def _attempt_count(metadata: Mapping[str, Any]) -> int:
+    """Preserve an explicit zero so a deferred request is not charged."""
+
     value = metadata.get("attemptCount", 1)
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     return 1
 
@@ -467,6 +470,8 @@ def _budget_changes(
     changes: dict[str, Any] = {}
     if reservation is not None and reservation.effective_output_token_limit is not None:
         changes["effectiveOutputTokenLimit"] = reservation.effective_output_token_limit
+    if reservation is not None and reservation.max_provider_attempts is not None:
+        changes["effectiveProviderAttemptLimit"] = reservation.max_provider_attempts
     if charge is not None:
         changes["budgetCharge"] = deepcopy(dict(charge))
     return changes

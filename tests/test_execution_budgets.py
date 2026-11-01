@@ -141,6 +141,25 @@ def test_execution_level_override_narrows_but_cannot_widen_workflow_budget() -> 
         prepare(store, resources, workflow, task)
 
 
+def test_execution_override_validates_against_declared_not_narrowed_parent() -> None:
+    store, workflow, task, resources = budget_runtime(
+        workflow_budget={"maxModelInvocations": 10},
+        task_budget={"maxModelInvocations": 5},
+    )
+    store.update_status(
+        WORKFLOW_ID,
+        "RUNNING",
+        expected_status="RUNNING",
+        changes={"budgetOverrides": {"maxModelInvocations": 3}},
+    )
+
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    assert budget.resolved.workflow["maxModelInvocations"].value == 3
+    assert budget.resolved.task["maxModelInvocations"].value == 3
+    assert budget.resolved.task["maxModelInvocations"].scope == "Execution"
+
+
 def test_workflow_budget_evidence_remains_stable_for_later_tasks() -> None:
     store = InMemoryRuntimeObjectStore()
     workflow = store.create(workflow_execution(), deterministic_key="workflow")
@@ -167,14 +186,14 @@ def test_workflow_budget_evidence_remains_stable_for_later_tasks() -> None:
         "agentRef": AGENT_REF,
         "outputs": {"type": "object"},
         "inputContextTokenBudget": 32_000,
-        "budget": {"maxModelInvocations": 5},
+        "budget": {"maxModelInvocations": 1},
     })
     second_task = _resource("Task", "plan", {
         "objective": "Plan.",
         "agentRef": AGENT_REF,
         "outputs": {"type": "object"},
         "inputContextTokenBudget": 32_000,
-        "budget": {"maxModelInvocations": 4, "maxOutputTokens": 500},
+        "budget": {"maxModelInvocations": 1, "maxOutputTokens": 500},
     })
     agent = _resource("Agent", "issue-analyzer", {
         "promptRef": {"kind": "Prompt", "name": "issue-analysis", "version": "1.0.0"},
@@ -214,6 +233,27 @@ def test_workflow_budget_evidence_remains_stable_for_later_tasks() -> None:
     assert workflow_budget["resourceRefs"] == [WORKFLOW_REF]
     assert second_budget.resolved.task["maxOutputTokens"].value == 500
     assert second_budget.resolved.task["maxOutputTokens"].scope == "Task"
+    # Task ceilings stay on the Task ledger and must not consume the shared
+    # Agent ledger used by a different Task.
+    assert second_budget.resolved.agent["maxModelInvocations"].value == 10
+    assert second_budget.resolved.agent["maxModelInvocations"].scope == "Workflow"
+    first_charge = first_budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        timestamp=TIMESTAMP,
+    )
+    assert first_charge.max_provider_attempts == 1
+    first_budget.record(
+        input_tokens=10,
+        output_tokens=4,
+        latency_ms=1,
+        timestamp=TIMESTAMP,
+    )
+    second_budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=100,
+        timestamp=LATER,
+    )
 
 
 def test_input_and_output_budgets_are_independent_and_exhaustable() -> None:
@@ -333,6 +373,107 @@ def test_elapsed_budget_blocks_when_the_deadline_is_reached() -> None:
 
     assert raised.value.decision["dimension"] == "maxElapsedMs"
     assert raised.value.decision["scope"] == "Task"
+
+
+def test_zero_dispatched_attempts_release_without_charging_budget() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxModelInvocations": 1}
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        timestamp=TIMESTAMP,
+    )
+
+    charge = budget.record(invocation_count=0, timestamp=TIMESTAMP)
+
+    assert charge["invocationCount"] == 0
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["modelInvocations"] == 0
+    assert consumption["reservedModelInvocations"] == 0
+    # A deferred request must not permanently exhaust the one-invocation budget.
+    reservation = budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        timestamp=LATER,
+    )
+    assert reservation.max_provider_attempts == 1
+
+
+def test_adapter_retry_allowance_is_clamped_to_remaining_invocations() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxModelInvocations": 1}
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    reservation = budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        timestamp=TIMESTAMP,
+    )
+    assert reservation.max_provider_attempts == 1
+
+    from aep.model_invocation import ModelConfiguration
+
+    configured = ModelConfiguration(
+        model_ref=MODEL_REF,
+        provider="local",
+        model="fake-reasoning",
+        token_limit=100,
+        timeout_ms=1000,
+        retry_policy={"maxAttempts": 4, "backoffMs": 10},
+    )
+    bounded = configured.with_budget_bounds(
+        token_limit=10,
+        max_provider_attempts=reservation.max_provider_attempts,
+    )
+    assert bounded.max_attempts == 1
+    assert bounded.token_limit == 10
+
+
+def test_dispatched_usage_unavailable_blocks_further_cost_budget_work() -> None:
+    store, workflow, task, resources = budget_runtime(
+        task_budget={"maxCostUsd": 100},
+        model_pricing={
+            "inputPerMillionTokens": 1_000_000,
+            "outputPerMillionTokens": 1_000_000,
+            "currency": "USD",
+            "source": "fixture-prices",
+        },
+    )
+    budget = prepare(store, resources, workflow, task)
+    assert budget is not None
+    budget.preflight(
+        estimated_input_tokens=10,
+        configured_output_token_limit=10,
+        timestamp=TIMESTAMP,
+    )
+    budget.record(
+        input_tokens=0,
+        output_tokens=0,
+        latency_ms=1,
+        cost=None,
+        cost_status="UNAVAILABLE",
+        invocation_count=1,
+        timestamp=TIMESTAMP,
+    )
+
+    consumption = store.get(WORKFLOW_ID)["budgetConsumption"]["tasks"][
+        "Task|analyze-issue|1.0.0"
+    ]
+    assert consumption["blockedReason"] == BUDGET_COST_UNAVAILABLE
+    assert consumption["blockedDecision"]["reason"] == BUDGET_COST_UNAVAILABLE
+    with pytest.raises(ExecutionBudgetExceeded) as raised:
+        budget.preflight(
+            estimated_input_tokens=10,
+            configured_output_token_limit=10,
+            timestamp=LATER,
+        )
+    assert raised.value.decision["reason"] == BUDGET_COST_UNAVAILABLE
 
 
 def test_provider_usage_normalizes_into_budget_charge_evidence() -> None:
