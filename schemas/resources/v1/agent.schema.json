@@ -19,6 +19,7 @@
         "modelRef": { "$ref": "./resource-definitions.schema.json#/$defs/modelRef" },
         "toolRefs": { "$ref": "./resource-definitions.schema.json#/$defs/toolRefList" },
         "policyRefs": { "$ref": "./resource-definitions.schema.json#/$defs/policyRefList" },
+        "budget": { "$ref": "./resource-definitions.schema.json#/$defs/executionBudget" },
         "outputSchema": { "$ref": "./resource-definitions.schema.json#/$defs/jsonSchema" }
       }
     }

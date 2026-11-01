@@ -251,6 +251,7 @@ class OpenAIModelAdapter(ModelAdapter):
                 "model provider configuration is unsupported",
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
+                provider_metadata=_pre_dispatch_metadata(configuration.model),
             )
         unsupported_parameters = set(configuration.parameters) - _ALLOWED_PARAMETERS
         if unsupported_parameters:
@@ -258,12 +259,14 @@ class OpenAIModelAdapter(ModelAdapter):
                 "model provider configuration contains unsupported parameters",
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
+                provider_metadata=_pre_dispatch_metadata(configuration.model),
             )
         if configuration.timeout_ms is None:
             raise ModelInvocationError(
                 "OpenAI model provider configuration requires timeoutMs",
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
+                provider_metadata=_pre_dispatch_metadata(configuration.model),
             )
 
         try:
@@ -274,20 +277,13 @@ class OpenAIModelAdapter(ModelAdapter):
                 if isinstance(error, StrictProviderSchemaError)
                 else "$.outputSchema"
             )
-            metadata: dict[str, Any] = {
-                "provider": "openai",
-                "requestedModel": configuration.model,
-                "schemaPath": path,
-                "attemptCount": 0,
-                "attempts": [],
-                "retryDecision": "suppressed",
-                "quotaReserved": False,
-            }
             raise ModelInvocationError(
                 "model output schema is incompatible with the provider strict schema contract",
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_response_schema",
-                provider_metadata=metadata,
+                provider_metadata=_pre_dispatch_metadata(
+                    configuration.model, schema_path=path
+                ),
             ) from None
 
         timeout_ms = configuration.timeout_ms
@@ -324,6 +320,7 @@ class OpenAIModelAdapter(ModelAdapter):
                 "model provider configuration cannot be serialized safely",
                 classification=ModelErrorClass.PERMANENT,
                 code="invalid_configuration",
+                provider_metadata=_pre_dispatch_metadata(configuration.model),
             ) from None
         attempts: list[dict[str, Any]] = []
         started = self._monotonic()
@@ -822,6 +819,24 @@ def _http_failure(response: ProviderHttpResponse) -> ModelInvocationError | None
                 metadata={"httpStatus": 400, **details},
             )
     return _failure("provider_error", recoverable=False)
+
+
+def _pre_dispatch_metadata(
+    requested_model: str, *, schema_path: str | None = None
+) -> dict[str, Any]:
+    """Evidence for adapter validation failures that never reached the transport."""
+
+    metadata: dict[str, Any] = {
+        "provider": "openai",
+        "requestedModel": requested_model,
+        "attemptCount": 0,
+        "attempts": [],
+        "retryDecision": "suppressed",
+        "quotaReserved": False,
+    }
+    if schema_path is not None:
+        metadata["schemaPath"] = schema_path
+    return metadata
 
 
 def _failure(

@@ -38,6 +38,13 @@
         ]
       }
     ],
+    "budget": {
+      "maxModelInvocations": 8,
+      "maxInputTokens": 200000,
+      "maxOutputTokens": 80000,
+      "maxElapsedMs": 1800000,
+      "maxCostUsd": 5
+    },
     "parallelism": 1
   }
 }

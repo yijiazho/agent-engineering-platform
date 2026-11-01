@@ -12,6 +12,13 @@
       "temperature": 0.2
     },
     "tokenLimit": 32000,
+    "pricing": {
+      "inputPerMillionTokens": 1.25,
+      "outputPerMillionTokens": 10,
+      "currency": "USD",
+      "source": "fixture-price-catalog",
+      "effectiveAt": "2026-01-01T00:00:00Z"
+    },
     "timeoutMs": 60000,
     "retryPolicy": {
       "maxAttempts": 2,

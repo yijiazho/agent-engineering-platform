@@ -108,6 +108,7 @@ class ExecutionReplayService:
                 "id", "traceId", "createdAt", "updatedAt", "startedAt",
                 "completedAt", "status", "taskExecutionIds", "failure",
                 "resolvedTaskPlan", "sourceExecutionId", "replayProvenance",
+                "executionBudget", "budgetConsumption",
             }
         }
         record.update({

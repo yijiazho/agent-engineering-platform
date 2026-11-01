@@ -23,6 +23,7 @@
           }
         },
         "tokenLimit": { "type": "integer", "minimum": 1 },
+        "pricing": { "$ref": "./resource-definitions.schema.json#/$defs/modelPricing" },
         "timeoutMs": { "$ref": "./resource-definitions.schema.json#/$defs/durationMs" },
         "retryPolicy": { "$ref": "./resource-definitions.schema.json#/$defs/retryPolicy" },
         "rateLimitPolicy": {

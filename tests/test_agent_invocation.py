@@ -218,7 +218,9 @@ def test_adapter_configuration_failure_terminalizes_both_invocations() -> None:
     }
     assert model is not None and model["status"] == "FAILED"
     assert model["failure"] == result["failure"]
-    assert model["providerMetadata"] == {"errorCode": "invalid_configuration"}
+    assert model["providerMetadata"]["errorCode"] == "invalid_configuration"
+    assert model["providerMetadata"]["attemptCount"] == 0
+    assert model["providerMetadata"]["attempts"] == []
     assert "sk-must-not-leak" not in repr(logs)
     assert [entry["eventName"] for entry in logs] == [
         "AgentInvocationStarted",

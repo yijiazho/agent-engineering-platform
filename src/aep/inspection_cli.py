@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from aep.approval import ApprovalAuthorizationError, ApprovalError, ApprovalGate
 from aep.execution_replay import ExecutionReplayService, ReplayError
+from aep.execution_budgets import budget_evidence
 from aep.context_identity import context_identity
 from aep.runtime_store import DurableJsonRuntimeObjectStore, RuntimeStoreError
 from aep.evaluation_suites import EvaluationSuiteError, load_suite, run_suite
@@ -142,6 +143,7 @@ class ExecutionInspector:
             task_value = self._get(str(task["id"]))
             self._validate_owner(task_value, workflow, task_id=None)
             self._validate_task_references(task_value, workflow)
+            task["budget"] = _task_budget_summary(workflow, task_value)
         tasks.extend(_blocked_plan_nodes(workflow, [self._get(str(task["id"])) for task in tasks]))
         related = [item for item in self._objects.values() if _belongs_to_workflow(item, execution_id)]
         workflow_output = deepcopy(workflow)
@@ -160,6 +162,7 @@ class ExecutionInspector:
         return self._safe({
             "workflowExecution": workflow_output,
             "elapsed": _elapsed(workflow),
+            "budget": _workflow_budget_summary(workflow),
             "tasks": tasks,
             "relatedObjects": [_summary(item) for item in _ordered(related)],
         }, unsafe=unsafe)
@@ -186,6 +189,11 @@ class ExecutionInspector:
             for dependency_id in item.get("dependencyTaskExecutionIds", ())
         )]
         blocked.extend(_blocked_plan_nodes(execution, effective_tasks))
+        budget_blocked = [
+            item for item in effective_tasks
+            if isinstance(item.get("budgetDecision"), Mapping)
+            and item["budgetDecision"].get("allowed") is False
+        ]
         if denials:
             decisive, outcome, reason = denials[0], "DENIED", str(denials[0].get("reason", "policy denied action"))
         elif rejected:
@@ -193,6 +201,11 @@ class ExecutionInspector:
         elif unresolved:
             approval = approval_by_policy.get(unresolved[0].get("id"))
             decisive, outcome, reason = approval or unresolved[0], "APPROVAL_PENDING", "policy requires approval"
+        elif budget_blocked:
+            decision = budget_blocked[0]["budgetDecision"]
+            decisive = budget_blocked[0]
+            outcome = "BUDGET_BLOCKED"
+            reason = str(decision.get("message", "execution budget exhausted"))
         elif execution.get("status") == "SUCCEEDED":
             decisive, outcome, reason = execution, "SUCCEEDED", "all recorded tasks completed successfully"
         elif blocked:
@@ -390,8 +403,51 @@ class ExecutionInspector:
 
 
 def _summary(value: Mapping[str, Any]) -> dict[str, Any]:
-    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "sourceExecutionId", "replayProvenance", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance", "policyDecisionId", "requester", "approver", "requestedAt", "decidedAt", "expiresAt", "targetAction", "artifactRequestDigest", "governingPolicyRefs", "target", "artifactDigests", "publicationTarget")
+    fields = ("id", "kind", "status", "attempt", "outcome", "decision", "eventId", "eventRef", "taskRef", "workflowRef", "sourceExecutionId", "replayProvenance", "agentRef", "promptRef", "modelRef", "toolRef", "toolRefs", "policyRefs", "evaluationRef", "repositoryRevision", "createdAt", "completedAt", "failure", "reason", "mediaType", "contentAddress", "artifactType", "resolvedAgentId", "contextPackageId", "dependencyTaskExecutionIds", "agentInvocationIds", "toolInvocationIds", "generatedArtifactIds", "evaluationResultIds", "policyDecisionIds", "provenance", "policyDecisionId", "requester", "approver", "requestedAt", "decidedAt", "expiresAt", "targetAction", "artifactRequestDigest", "governingPolicyRefs", "target", "artifactDigests", "publicationTarget", "budgetOverrides", "executionBudget", "budgetConsumption", "budgetDecision", "budgetCharge", "effectiveOutputTokenLimit")
     return {field: deepcopy(value[field]) for field in fields if field in value}
+
+
+def _workflow_budget_summary(workflow: Mapping[str, Any]) -> dict[str, Any] | None:
+    execution_budget = workflow.get("executionBudget")
+    if not isinstance(execution_budget, Mapping):
+        return None
+    limits = execution_budget.get("limits")
+    consumption = workflow.get("budgetConsumption")
+    workflow_consumption = consumption.get("workflow") if isinstance(consumption, Mapping) else None
+    summary = budget_evidence(limits, workflow_consumption)
+    summary["resolvedAt"] = execution_budget.get("resolvedAt")
+    return summary
+
+
+def _task_budget_summary(workflow: Mapping[str, Any], task: Mapping[str, Any]) -> dict[str, Any] | None:
+    execution_budget = task.get("executionBudget")
+    if not isinstance(execution_budget, Mapping):
+        return None
+    scopes = execution_budget.get("scopes")
+    if not isinstance(scopes, Mapping):
+        return None
+    consumption = task.get("budgetConsumption")
+    if not isinstance(consumption, Mapping):
+        workflow_consumption = workflow.get("budgetConsumption")
+        task_key = _budget_key(task.get("taskRef"))
+        if isinstance(workflow_consumption, Mapping) and isinstance(workflow_consumption.get("tasks"), Mapping):
+            consumption = {
+                "task": (workflow_consumption.get("tasks") or {}).get(task_key)
+            }
+    result = {
+        scope: budget_evidence(scopes.get(scope), consumption.get(scope) if isinstance(consumption, Mapping) else None)
+        for scope in ("workflow", "task", "agent")
+        if isinstance(scopes.get(scope), Mapping)
+    }
+    result["blockedDecision"] = deepcopy(task.get("budgetDecision")) if isinstance(task.get("budgetDecision"), Mapping) else None
+    result["modelOutputTokenLimit"] = execution_budget.get("modelOutputTokenLimit")
+    return result
+
+
+def _budget_key(ref: Any) -> str:
+    if not isinstance(ref, Mapping):
+        return ""
+    return "|".join(str(ref.get(field, "")) for field in ("kind", "name", "version"))
 
 
 def _belongs_to_workflow(value: Mapping[str, Any], workflow_execution_id: str) -> bool:
@@ -403,7 +459,24 @@ def _belongs_to_workflow(value: Mapping[str, Any], workflow_execution_id: str) -
 
 def _is_sensitive_key(key: str) -> bool:
     normalized = key.lower().replace("_", "").replace("-", "")
-    if normalized in {"contentaddress", "inputaddress", "outputaddress", "logsaddress", "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate", "tokenusage", "tokenlimit", "inputtokens", "outputtokens", "totaltokens", "tokenusageinputtokens", "tokenusageoutputtokens", "tokenusagetotaltokens", "tokenusage.inputtokens", "tokenusage.outputtokens", "tokenusage.totaltokens", "promptref"}:
+    if normalized in {
+        "contentaddress", "inputaddress", "outputaddress", "logsaddress",
+        "evidenceaddress", "tokencount", "tokenbudget", "tokenestimate",
+        "tokenusage", "tokenlimit", "inputtokens", "outputtokens",
+        "totaltokens", "tokenusageinputtokens", "tokenusageoutputtokens",
+        "tokenusagetotaltokens", "tokenusage.inputtokens",
+        "tokenusage.outputtokens", "tokenusage.totaltokens", "promptref",
+        "executionbudget", "budgetconsumption", "budgetdecision",
+        "budgetcharge", "budgetoverrides", "maxmodelinvocations",
+        "maxinputtokens", "maxoutputtokens", "maxelapsedms", "maxcostusd",
+        "modelinvocations", "reservedmodelinvocations", "reservedinputtokens",
+        "reservedoutputtokens", "reservedelapsedms", "reservedcostusd",
+        "elapsedms", "costusd", "coststatus", "coststatuscounts",
+        "effectiveoutputtokenlimit", "modeloutputtokenlimit",
+        "configuredlimits", "remaining", "reserved", "consumed",
+        "blockeddecision", "blockedreason", "lastprovider", "lastmodel",
+        "estimatedinputtokens", "invocationcount",
+    }:
         return False
     return normalized in SENSITIVE_FIELDS or normalized in {"logs", "message"} or any(
         term in normalized for term in ("content", "body", "prompt", "credential", "secret", "token", "authorization", "password")
@@ -699,7 +772,9 @@ def _human(value: Any) -> str:
         elapsed_text = f"{duration} ms" if duration is not None else (
             "not started" if status == "PENDING" else "in progress" if status == "RUNNING" else "unknown"
         )
-        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Workflow: {workflow_ref.get('name', '')}:{workflow_ref.get('version', '')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", f"Elapsed: {elapsed_text}", "Tasks:"]
+        lines = [f"Workflow execution: {workflow['id']}", f"Status: {workflow.get('status', 'UNKNOWN')}", f"Workflow: {workflow_ref.get('name', '')}:{workflow_ref.get('version', '')}", f"Repository revision: {workflow.get('repositoryRevision', '')}", f"Elapsed: {elapsed_text}"]
+        lines.extend(_human_budget(value.get("budget")))
+        lines.append("Tasks:")
         for item in value.get("tasks", ()):
             dependencies = item.get("dependencyTaskExecutionIds") or _human_refs(item.get("dependencyTaskRefs"))
             evidence = _human_task_evidence(item)
@@ -707,6 +782,14 @@ def _human(value: Any) -> str:
             attempt = f" attempt {item['attempt']}" if "attempt" in item else ""
             line = f"- {item['id']}  {task_ref}{attempt}  {item.get('status', 'UNKNOWN')}  depends on {', '.join(dependencies) or 'none'}"
             lines.append(f"{line}\n  evidence: {evidence}" if evidence else line)
+            for budget_line in _human_budget(item.get("budget"), prefix="  "):
+                lines.append(budget_line)
+            decision = item.get("budgetDecision")
+            if isinstance(decision, Mapping) and decision.get("allowed") is False:
+                lines.append(
+                    f"  budget blocked: {decision.get('reason')} "
+                    f"({decision.get('scope')} {decision.get('dimension')})"
+                )
         if not value.get("tasks"):
             lines.append("- none")
         return "\n".join(lines)
@@ -758,6 +841,34 @@ def _human(value: Any) -> str:
     if isinstance(value, Mapping):
         return "\n".join(f"{key}: {item}" for key, item in value.items())
     return str(value)
+
+
+def _human_budget(value: Any, *, prefix: str = "") -> list[str]:
+    if not isinstance(value, Mapping):
+        return []
+    lines: list[str] = []
+    for scope in ("workflow", "task", "agent"):
+        nested = value.get(scope)
+        if isinstance(nested, Mapping) and isinstance(nested.get("configuredLimits"), Mapping):
+            lines.append(f"{prefix}{scope} scope:")
+            lines.extend(_human_budget(nested, prefix=prefix + "  "))
+    configured = value.get("configuredLimits")
+    consumed = value.get("consumed")
+    remaining = value.get("remaining")
+    if isinstance(configured, Mapping) and configured:
+        for field in sorted(configured):
+            rule = configured[field] if isinstance(configured[field], Mapping) else {}
+            lines.append(
+                f"{prefix}budget {field}: configured={rule.get('value')} "
+                f"consumed={consumed.get(field) if isinstance(consumed, Mapping) else '?'} "
+                f"remaining={remaining.get(field) if isinstance(remaining, Mapping) else '?'} "
+                f"rule={rule.get('scope')}"
+            )
+    if value.get("costStatus"):
+        lines.append(f"{prefix}budget cost status: {value['costStatus']}")
+    if value.get("blockedReason"):
+        lines.append(f"{prefix}budget blocked: {value['blockedReason']}")
+    return lines
 
 
 def _human_refs(value: Any) -> list[str]:
